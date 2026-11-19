@@ -7,7 +7,8 @@
 
 mod cell;
 mod error;
-mod schema;
+#[doc(hidden)] // Exposed for spikes and benchmarks; not a stable API.
+pub mod schema;
 mod store;
 
 pub use cell::{Cell, CellDiff, CellKind, Change, Provenance};

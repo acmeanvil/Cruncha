@@ -75,7 +75,7 @@ B keeps what Delta is good at (atomic versions, analytics-native data) and limit
 
 1. [x] `cruncha-store` v0: container create/open/lock, MERGE commits with actor metadata, time travel, history, diff, tags, restore, compact.
 2. [x] Spike S3 benchmark: [results](../spikes/S3-delta-store.md). Latency passes (p50 51 ms, p95 62 ms; time travel under 50 ms). **Storage amplification** is about 17 KiB per commit for a 200-cell doc, because MERGE rewrites the whole doc file.
-2b. [ ] Spike S3b: append-only vs bucketed `doc` table to fix the storage amplification; test a crash in the middle of a commit.
+2b. [x] Spike S3b: append-only beats MERGE and bucketed layouts, and the store survives SIGKILL mid-commit. See [results](../spikes/S3-delta-store.md) and ADR-0010 (proposed).
 3. [ ] `results/` and `data/<name>` tables; `assets/`.
 4. [ ] Text-mirror export/import; `.crunchaz` zip.
 5. [ ] Retention: "compact history" that materializes pinned refs before `VACUUM`.

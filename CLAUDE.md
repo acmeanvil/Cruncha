@@ -19,6 +19,7 @@ crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/schema.rs            Arrow schemas + row <-> struct conversion
   src/store.rs             Store: create/open/lock, commit (MERGE), time travel, history, diff, tag, restore, compact
   examples/store_bench.rs  spike S3 benchmark
+  examples/store_variants.rs  spike S3b: merge vs append-only vs bucketed layouts
   tests/                   integration tests (tempdir containers)
 docs/spikes/               spike write-ups with measured numbers
 docs/adr/  docs/design/  docs/research/
@@ -31,6 +32,8 @@ skills/                    Agent Skills (SKILL.md) for AI agents working inside 
 cargo build -p cruncha-store
 cargo test  -p cruncha-store
 cargo run   -p cruncha-store --release --example store_bench -- <commits>
+cargo run   -p cruncha-store --release --example store_variants -- <merge|append|bucketed|all> [commits] [cells] [squash_every]
+cargo test  -p cruncha-store --test crash      # SIGKILLs a writer process 8 times (~20 s)
 cargo clippy --all-targets -- -D warnings
 ```
 
@@ -51,6 +54,7 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
 - One `Store::commit` is one atomic Delta version. Batch changes (on cell submit or idle), never per keystroke.
 - Results do not live in `doc/`. They go in a separate `results/` table (planned).
+- Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).
 - Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind` and `cruncha.restoredFrom` (see `store.rs`).
 
 ## Decisions and docs as we go

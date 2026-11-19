@@ -46,10 +46,14 @@ pub const META_RESTORED_FROM: &str = "cruncha.restoredFrom";
 ///
 /// Delta's defaults expire log entries after 30 days, which silently destroys time travel.
 /// Cruncha keeps full history unless the user explicitly compacts it.
-const TABLE_PROPERTIES: [(&str, &str); 3] = [
+///
+/// Column statistics are kept only for the first column (`id` / `name`): statistics on the
+/// text columns cost about 1 KiB of log per commit and never help a query (spike S3b).
+const TABLE_PROPERTIES: [(&str, &str); 4] = [
     ("delta.enableExpiredLogCleanup", "false"),
     ("delta.logRetentionDuration", "interval 36500 days"),
     ("delta.deletedFileRetentionDuration", "interval 36500 days"),
+    ("delta.dataSkippingNumIndexedCols", "1"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

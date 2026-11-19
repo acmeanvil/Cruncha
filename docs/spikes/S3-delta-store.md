@@ -113,3 +113,77 @@ This reduces the **number** of commits, not the cost per commit. The design alre
 - Choose A if reading the latest version stays under about 20 ms between squashes. It is the only option that makes history cost proportional to *what changed*.
 - Add D later if prose-heavy documents need it, and move to C if delta-rs gains deletion-vector writes.
 - Switching `doc/` from "current document" to "log" changes the table semantics, so it needs a new ADR that refines ADR-0003.
+
+---
+
+# Spike S3b: layout comparison (merge vs append-only vs bucketed)
+
+*Date: 2026-11-18. Code: `examples/store_variants.rs`, and the crash test `tests/crash.rs`. Same machine.*
+
+## Method
+
+- Identical seeded workloads for every backend: a **2,000-cell** document and 1,000 commits of 1–3 cells each (90% edits, 7% inserts, 3% deletes).
+- Each run checks the final state cell by cell against the workload's model of the document. **All runs passed.**
+- Read latency is the best of 3, sampled one commit before every 200th commit. For the append layout that is the worst case, with the most rows since the last squash.
+
+```sh
+CRUNCHA_BENCH_STATS_COLS=1 cargo run -p cruncha-store --release --example store_variants -- append 1000 2000 50
+```
+
+## Round 1: layouts as designed
+
+| | Merge (today) | A: append, squash every 500 | B: 16 buckets |
+| --- | --- | --- | --- |
+| Commit p50 / p95 | **58 / 71 ms** | 122 / 216 ms | 106 / 147 ms |
+| Growth per commit | 57.6 KiB | **8.7 KiB** | 18.8 KiB |
+| Read latest | 5 → 10 ms | 8 → **145 ms** (sawtooth) | 16 → 54 ms (rising) |
+| Time travel | 33–48 ms | 38–64 ms | 42–70 ms |
+
+**Findings:**
+- **A's growth floor is about 6–8 KiB per commit, not 2 KiB.** Every Delta commit carries a fixed overhead: a Parquet footer for 13 columns plus a JSON log entry with per-column statistics. That overhead dominates when only 1–3 rows change.
+- **A slows down in proportion to the live files since the last squash.** With 500 tiny files, snapshot replay and the scan dominate both commits and reads.
+- **B gets the worst of both.** It adds about 3 files per commit, its MERGE overhead stays the same, and its reads degrade.
+
+## Round 2: tuning A
+
+Two changes:
+- **Squash far more often.** A squash costs about 40–60 ms and writes one file the size of the document.
+- **Keep column statistics only for `id`** (`delta.dataSkippingNumIndexedCols = 1`). Statistics on the text columns never help a query and cost about 1 KiB of log per commit.
+
+| A variant (2,000 cells) | Commit p50 / p95 / p99 | Growth per commit | Worst-case read latest | Time travel |
+| --- | --- | --- | --- | --- |
+| squash every 50, full stats | 24.8 / 36.5 / 121 ms | 7.9 KiB | 5–12 ms | 38–92 ms |
+| **squash every 50, stats on `id` only** | **17.3 / 26.9 / 79 ms** | **6.9 KiB** | **4.6–7.4 ms** | 33–54 ms |
+| squash every 100, stats on `id` only | 21.4 / 32.4 / 105 ms | 6.4 KiB | 4.9–6.1 ms* | 34–50 ms |
+| Merge, stats on `id` only (for comparison) | 54.5 / 68.8 / 145 ms | 56.9 KiB | 4.8–10.1 ms | 32–50 ms |
+
+\* This run used the earlier, biased sampling, which fell right after squashes.
+
+## Longer and smaller runs (A, squash every 50, stats on `id`)
+
+| Run | Commit p50 / p95 | Growth per commit | Worst read latest | Time travel (mid / v1) | Reopen |
+| --- | --- | --- | --- | --- | --- |
+| 3,000 commits, 2,000 cells | 24.5 / 36.8 ms | 7.9 KiB | 5.2–7.6 ms | 119 / 84 ms | 73 ms |
+| 1,000 commits, 200 cells | 17.7 / 25.9 ms | 6.0 KiB | 2.1–2.4 ms | 57 / 33 ms | 39 ms |
+
+## Crash safety (`tests/crash.rs`, current `Store`)
+
+A writer process committing two-cell pairs was SIGKILLed 8 times, at delays from 150 ms to 6.1 s, over 328 versions that crossed 3 checkpoint boundaries. After every kill:
+- the container reopened (the lock was released);
+- the history was complete (`len == version + 1`);
+- **no torn commit was ever visible**: both cells of each pair always showed the same counter, at the latest, previous and middle versions.
+
+The append layout uses the same Delta commit protocol, so it is expected to behave the same. Re-run the test after the switch.
+
+## Conclusions
+
+1. **Adopt A (append-only log, squash every 50 commits, stats on `id`).** Against today's MERGE at 2,000 cells:
+   - commits are **3.2× faster** (17 ms vs 55 ms p50);
+   - history grows **8.2× less** (6.9 vs 56.9 KiB per commit);
+   - worst-case reads are equal or better (under 8 ms), and time travel is the same.
+
+   A also stops depending on document size: its per-commit growth is close to the fixed floor whether the document has 200 or 2,000 cells. At a heavy 300 commits a day, that's about 2 MiB a day per document.
+2. **Reject B.** It is slower than MERGE and less effective than A.
+3. **The statistics change is already applied to `Store`.** It is harmless for MERGE (the growth there is dominated by rewriting the document) and essential for A.
+4. **Watch item: time travel and reopen latency grow with the total version count.** At 3,000 versions they reach 119 ms and 73 ms, up from about 50 ms and 30 ms at 1,000. This is probably snapshot replay of an ever-growing set of remove tombstones: `deletedFileRetentionDuration` is set to 100 years, so the tombstones are never dropped from checkpoints. We never VACUUM, so we can likely use a short tombstone retention without affecting time travel. **Verify this in a follow-up before relying on it.**
+5. **The fixed per-commit floor (about 6 KiB) is now the dominant cost.** Further cuts would come from fewer commits (cadence, design option E) or from batching inline-cell changes, not from layout.
