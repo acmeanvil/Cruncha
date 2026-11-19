@@ -1,0 +1,76 @@
+---
+name: cruncha-calc-authoring
+description: How to write Cruncha calc cells. Covers the Hurmet-style statement form (name = expression = ?? unit), the display selectors ?, %, @ and !, units and dimensional rules, placeholders, data frames with a units row, user functions, and @test assertions. Use it whenever you create or edit a calc cell or turn a hand calculation into a Cruncha calc.
+---
+
+# Authoring calc cells
+
+Calc syntax follows Hurmet's (see ADR-0002), with Cruncha's differences called out.
+
+## Statement forms
+
+| Form | Example | Meaning |
+| --- | --- | --- |
+| Assignment | `L = 3.1 m` | Defines `L` from a literal |
+| Placeholder | `p = 35 psi_` | A template input that a human must confirm; highlighted until they do |
+| Calculation | `M = w L^2 / 8 = ?? kip·ft` | Defines `M`, shows the full working, and displays the result in kip·ft |
+| Anonymous result | `2 L = ?` | Evaluates and displays the result without defining a name |
+| Multiple assignment | `A, I_x, w_s = W12x26["A", "Ix", "weight"] = !` | Unpacks a single row of a data frame |
+
+The display unit after the selector (`kip·ft`) must be dimensionally compatible with the result. If it isn't, the cell is an error; never pick a different unit to make the error go away.
+
+## Display selectors
+
+| Selector | Shows | Use for |
+| --- | --- | --- |
+| `?` | Formula, **blue echo** with every input value substituted, and the result | **Default for engineering checks.** Reviewers need the echo. |
+| `%` | Formula and result, no echo | Only when the inputs are defined directly above |
+| `@` | Result only | Table-like summaries |
+| `!` | Nothing (computed and stored) | Data frames and large intermediate values |
+
+Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware** (ADR-0007), so `?` and `??` behave the same.
+
+## Units
+
+- Write units after the number: `100 lbf/ft`, `25 MPa`, `3 ft 6 in`. Use `·` or a space for products, and `/` and `^` (or superscripts) in compound units.
+- Mixing systems is fine (`2 m × 4 ft`); conversion is automatic. Pick a display unit that suits the reader's practice.
+- Temperatures: `°C` and `°F` are absolute, and `Δ°C` is a difference. Don't add two absolute temperatures.
+- Unitless ratios (utilization, `ϕ`) are plain numbers. A result of `0.87` that should be unitless but carries `in/ft` means the formula is wrong.
+
+## Names
+
+- Names can be Unicode with subscripts: `f_c′`, `ϕM_n`, `L_b`, `Δ_max`. Case and boldface matter.
+- **Each name is defined exactly once in the whole document** (ADR-0004). For a second check of the same quantity, use a qualified name (`M_u,2`, `V_u,end`), not a redefinition.
+- Define inputs above their use. Upward references still compute, but they get a lint badge.
+
+## Data frames
+
+A literal data frame has headings in row 1, an optional **units row** in row 2, and data after that. `#` in the first heading makes column 1 the row key.
+
+```
+beam = ``#name	A	Ix	weight
+	in²	in⁴	lbf/ft
+W12x26	7.65	204	26
+W14x30	8.85	291	30`` = !
+```
+
+Access: `beam.W12x26.Ix`, `beam["W14x30", "A"]`, `beam.Ix` (the whole column). For anything beyond lookups (filtering, joins, large tables), use a Python cell with Polars (see `cruncha-code-cells`).
+
+## Functions and tests
+
+```
+function utilization(demand, capacity)
+    return demand / capacity
+end
+```
+
+- Functions are pure (they see only their parameters) and can be defined anywhere.
+- Assertions: `@test ϕM_n ≥ M_u`. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions.
+
+## Checklist before proposing a calc
+
+- [ ] Every input has a unit, and a cited source or a placeholder `_`.
+- [ ] `?` on every check result, so the echo is visible.
+- [ ] No duplicate names (`read_doc` / `check`).
+- [ ] An `@test` for each acceptance criterion.
+- [ ] Prose states the assumptions (support conditions, load combination, code edition).

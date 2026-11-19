@@ -1,0 +1,75 @@
+# ADR-0009: Agent interface: ACP client, Cruncha MCP server, and a built-in agent from looking_glass
+
+**Status:** Proposed
+**Date:** 2026-11-18
+**Deciders:** acmeanvil
+
+## Context
+
+Cruncha is AI-forward: agents read, author, check and explain documents. The engine computes every number, and agent edits are proposals (design 02 §6, `skills/cruncha-core`). Users will want **their own agent**:
+- Claude Code, Codex, Gemini CLI or Qwen Code;
+- or a built-in one using any model provider, including local ones.
+
+The interface should feel modern, unlike a terminal transcript. **looking_glass** (`~/Developer/looking_glass`, same owner, MIT, about 18.6k lines of Rust) already solves most of this:
+- **`lg-acp`** is a UI-agnostic **Agent Client Protocol** client. It keeps ACP schema types out of the UI behind its own neutral `Event`/`Command` model, and serves fs, terminal and permission requests with sandboxed writes. It also handles remote agents over ssh.
+- **`lg-agent`** is an ACP agent with 11 provider profiles:
+  - native Anthropic Messages, with prompt caching and thinking round-trips;
+  - OpenAI-compatible SSE, model listing, and usage reporting;
+  - an end-to-end test suite against mock providers.
+- **The app's UX:** streaming Markdown, tool cards, a pending diff before each permission prompt, Allow / Always / Reject, a plan panel, model and mode menus, history and resume, and handover when switching agents.
+
+Gaps found:
+- **No MCP:** `session/new` sends no `mcpServers`, and lg-agent isn't an MCP client.
+- **No skills support, and a hard-coded system prompt.**
+- **Four hard-coded coding tools** (read, list, write, run).
+- **Cancellation is global, not per session.**
+- **No session persistence in lg-agent.**
+- **lg-render has no math support.**
+
+The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are GPL-3 compatible.
+
+## Decision
+
+1. **`cruncha-mcp`** is the *only* way agents touch a document. It is an MCP server inside the engine process and exposes the tools in `skills/cruncha-core`: `read_doc`, `run`, `propose_edit`, `explain`, `check`, `history` and `query_data`. Edits become `ai:proposed` rows (ADR-0003), and agents never write the container directly.
+2. **Port `lg-acp`** into Cruncha's Rust backend (as `cruncha-acp`, keeping the MIT notice), and extend it:
+   - pass `cruncha-mcp` in `mcpServers` on `session/new` and `session/load`;
+   - **don't advertise `fs.write_text_file` or `terminal`** to agents working on a document;
+   - map the ACP updates it currently drops (images, resources, available commands, mode).
+3. **Built-in agent = `lg-agent`'s provider core**, run as an ACP subprocess, so Cruncha treats it exactly like Claude Code. Changes:
+   - an MCP client, or a tool registry, in place of the four coding tools;
+   - a system prompt per document plus a **skills loader**: `SKILL.md` front matter goes into the prompt, and the body loads on demand through `load_skill`;
+   - per-session cancellation, `session/load` persistence, and context compaction.
+4. **Skills** ship in `skills/` in the Agent Skills format. External agents discover them from the project, and the built-in agent loads them itself.
+5. **The agent panel** is rebuilt in the Tauri web UI (ADR-0008), using looking_glass as the UX spec:
+   - tool cards rendered as **cell proposals**, with a source diff and a result diff;
+   - Accept / Reject per proposal;
+   - a plan panel, model and mode menus, a usage pill, and a history of conversations linked to document versions.
+6. **Interim:** until the panel exists, use looking_glass itself as the agent console, pointing Claude Code or lg-agent at `cruncha-mcp`.
+
+## Options Considered
+
+### Option A: Built-in agent only (our own loop, no ACP)
+**Pros:** full control.
+**Cons:** users can't bring Claude Code or Codex; we would duplicate provider work that lg-agent already has.
+
+### Option B: MCP server only (agents run wherever the user likes)
+**Pros:** minimal work; works with any MCP-capable agent.
+**Cons:** no in-app experience, so no proposals UI next to the document.
+
+### Option C: ACP client plus MCP server plus a built-in ACP agent, reusing looking_glass (proposed)
+**Pros:** any agent, one UI, one tool surface, reuse of tested code.
+**Cons:** we maintain a fork of lg-acp and lg-agent. **Mitigation:** move them into a shared crate repo or workspace later, so looking_glass gains MCP and skills too.
+
+## Consequences
+
+- The tool surface (`cruncha-mcp`) and the skills become the agent-facing contract, so we should version them.
+- Every agent action is mediated by the engine, which keeps provenance and the single-writer rule intact.
+- Same owner, so code can move between looking_glass and Cruncha freely. The MIT notice is kept in Cruncha's copy.
+
+## Action Items
+
+1. [ ] `cruncha-mcp` with read-only tools first (`read_doc`, `history`), on top of `cruncha-store`.
+2. [ ] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills (unverified).
+3. [ ] Port `lg-acp` with the `mcpServers` and capability changes.
+4. [ ] lg-agent: MCP client (check the license of an MCP crate such as `rmcp`), skills loader, per-session cancellation.
+5. [ ] Consider upstreaming MCP and skills support to looking_glass.

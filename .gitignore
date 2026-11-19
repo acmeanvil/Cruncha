@@ -1,0 +1,3 @@
+/target
+*.cruncha.tmp
+.DS_Store
