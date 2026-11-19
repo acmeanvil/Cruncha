@@ -3,10 +3,13 @@
 
 use std::sync::{Arc, LazyLock};
 
+use std::collections::HashMap;
+
 use deltalake::arrow::array::{
-    Array, ArrayRef, Int64Array, ListArray, ListBuilder, RecordBatch, StringArray, StringBuilder,
-    TimestampMicrosecondArray,
+    Array, ArrayRef, BooleanArray, Int64Array, ListArray, ListBuilder, RecordBatch, StringArray,
+    StringBuilder, TimestampMicrosecondArray, UInt32Array, new_null_array,
 };
+use deltalake::arrow::compute::{concat_batches, take_record_batch};
 use deltalake::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 
 use crate::cell::{Cell, CellKind, Change, Provenance};
@@ -63,6 +66,28 @@ pub static DOC_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| Arc::new(Schema::n
 pub static DOC_MERGE_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
     let mut fields = doc_fields();
     fields.push(Field::new(OP_COLUMN, DataType::Utf8, false));
+    Arc::new(Schema::new(fields))
+});
+
+/// Revision column of the `doc` log (format 2, ADR-0010): the Delta version that wrote the row.
+pub const REV_COLUMN: &str = "rev";
+/// Tombstone column of the `doc` log: `true` marks the cell deleted as of `rev`.
+pub const DELETED_COLUMN: &str = "deleted";
+
+/// The columns the revision log adds to the cell columns. Nullable, so that rows written by
+/// format-1 containers (one row per cell, no revisions) remain readable: a null `rev` reads as
+/// -1 and a null `deleted` as `false`.
+pub fn log_extra_fields() -> Vec<Field> {
+    vec![
+        Field::new(REV_COLUMN, DataType::Int64, true),
+        Field::new(DELETED_COLUMN, DataType::Boolean, true),
+    ]
+}
+
+/// Schema of the `doc` table: an append-only log of cell revisions (ADR-0010).
+pub static DOC_LOG_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
+    let mut fields = doc_fields();
+    fields.extend(log_extra_fields());
     Arc::new(Schema::new(fields))
 });
 
@@ -148,6 +173,84 @@ pub fn changes_to_batch(changes: &[Change], modified_by: &str, now_us: i64) -> R
         Arc::new(op),
     ];
     Ok(RecordBatch::try_new(DOC_MERGE_SCHEMA.clone(), columns)?)
+}
+
+/// Build revision-log rows for one commit at version `rev`. Deletes become tombstone rows
+/// (`deleted = true`, other columns null).
+pub fn changes_to_log_batch(
+    changes: &[Change],
+    modified_by: &str,
+    now_us: i64,
+    rev: i64,
+) -> Result<RecordBatch> {
+    let m = changes_to_batch(changes, modified_by, now_us)?;
+    let mut columns: Vec<ArrayRef> = DOC_COLUMNS
+        .iter()
+        .map(|c| {
+            m.column_by_name(c)
+                .expect("merge batch has doc columns")
+                .clone()
+        })
+        .collect();
+    columns.push(Arc::new(Int64Array::from(vec![rev; changes.len()])));
+    columns.push(Arc::new(
+        changes
+            .iter()
+            .map(|c| Some(matches!(c, Change::Delete(_))))
+            .collect::<BooleanArray>(),
+    ));
+    Ok(RecordBatch::try_new(DOC_LOG_SCHEMA.clone(), columns)?)
+}
+
+/// Like [`conform`], but columns missing from `batch` are filled with nulls when the target
+/// field is nullable (used for rows predating a schema extension).
+fn conform_filling(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
+    let columns = schema
+        .fields()
+        .iter()
+        .map(|f| match batch.column_by_name(f.name()) {
+            Some(col) if col.data_type() == f.data_type() => Ok(col.clone()),
+            Some(col) => Ok(deltalake::arrow::compute::cast(col, f.data_type())?),
+            None if f.is_nullable() => Ok(new_null_array(f.data_type(), batch.num_rows())),
+            None => Err(Error::Corrupt(format!("column `{}` missing", f.name()))),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+}
+
+/// Reduce scanned revision-log rows to the document: the highest-`rev` row of each id,
+/// minus tombstones. Returns rows in the log schema (order unspecified).
+pub fn reduce_log(batches: &[RecordBatch]) -> Result<RecordBatch> {
+    let conformed = batches
+        .iter()
+        .map(|b| conform_filling(b, &DOC_LOG_SCHEMA))
+        .collect::<Result<Vec<_>>>()?;
+    let all = concat_batches(&DOC_LOG_SCHEMA, &conformed)?;
+    let ids = column::<StringArray>(&all, "id")?;
+    let revs = column::<Int64Array>(&all, REV_COLUMN)?;
+    let deleted = column::<BooleanArray>(&all, DELETED_COLUMN)?;
+    let rev_at = |i: usize| if revs.is_valid(i) { revs.value(i) } else { -1 };
+
+    let mut winners: HashMap<&str, usize> = HashMap::with_capacity(all.num_rows());
+    for i in 0..all.num_rows() {
+        let w = winners.entry(ids.value(i)).or_insert(i);
+        if rev_at(i) > rev_at(*w) {
+            *w = i;
+        } else if *w != i && rev_at(i) == rev_at(*w) {
+            return Err(Error::Corrupt(format!(
+                "two rows for cell {} at rev {}",
+                ids.value(i),
+                rev_at(i)
+            )));
+        }
+    }
+    let mut keep: Vec<u32> = winners
+        .into_values()
+        .filter(|&i| !(deleted.is_valid(i) && deleted.value(i)))
+        .map(|i| i as u32)
+        .collect();
+    keep.sort_unstable();
+    Ok(take_record_batch(&all, &UInt32Array::from(keep))?)
 }
 
 /// Cast a scanned batch to `schema` (by column name). Scans may return equivalent but

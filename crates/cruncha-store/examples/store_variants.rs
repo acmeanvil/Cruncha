@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Spike S3b: compare `doc` table layouts on an identical, seeded editing workload.
 //!
-//! - `merge`    — the current `Store`: one row per cell, copy-on-write MERGE per commit.
+//! - `store`    — the current `Store` (since ADR-0010 the append-only log itself). The original
+//!   one-row-per-cell MERGE layout was measured as `merge` at commit df02813; see
+//!   docs/spikes/S3-delta-store.md.
 //! - `append`   — option A: append-only log of cell revisions (`rev`, `deleted`), reduced to the
 //!   latest row per id on read; squashed (overwritten with current rows) every N commits.
 //! - `bucketed` — option B: one row per cell, partitioned by `hash(id) % 16`, MERGE with the
 //!   bucket in the predicate so only touched partitions are rewritten.
 //!
 //! ```sh
-//! cargo run -p cruncha-store --release --example store_variants -- <merge|append|bucketed|all> \
+//! cargo run -p cruncha-store --release --example store_variants -- <store|append|bucketed|all> \
 //!     [commits=1000] [cells=2000] [squash_every=500]
 //! ```
 
@@ -303,7 +305,7 @@ fn to_bucket_batch(changes: &[Change]) -> Res<RecordBatch> {
 // ---------------------------------------------------------------- backends
 
 enum Backend {
-    Merge(Store),
+    Current(Store),
     Append {
         table: DeltaTable,
         squash_every: usize,
@@ -319,7 +321,7 @@ enum Backend {
 impl Backend {
     async fn create(kind: &str, path: &Path, squash_every: usize) -> Res<Backend> {
         Ok(match kind {
-            "merge" => Backend::Merge(Store::create(path, "user:bench").await?),
+            "store" => Backend::Current(Store::create(path, "user:bench").await?),
             "append" => Backend::Append {
                 table: create(&path.join("doc"), &LOG_SCHEMA, &[]).await?,
                 squash_every,
@@ -340,7 +342,7 @@ impl Backend {
             Res::Ok(deltalake::open_table(url).await?)
         };
         Ok(match kind {
-            "merge" => Backend::Merge(Store::open(path).await?),
+            "store" => Backend::Current(Store::open(path).await?),
             "append" => Backend::Append {
                 table: open().await?,
                 squash_every,
@@ -356,7 +358,7 @@ impl Backend {
 
     fn version(&self) -> u64 {
         match self {
-            Backend::Merge(s) => s.version(),
+            Backend::Current(s) => s.version(),
             Backend::Append { table, .. } | Backend::Bucketed { table, .. } => {
                 table.version().unwrap_or(0)
             }
@@ -365,7 +367,7 @@ impl Backend {
 
     async fn commit(&mut self, changes: &[Change]) -> Res<()> {
         match self {
-            Backend::Merge(s) => {
+            Backend::Current(s) => {
                 s.commit(changes, "user:bench", "edit").await?;
             }
             Backend::Append {
@@ -442,7 +444,7 @@ impl Backend {
             }
         };
         match self {
-            Backend::Merge(s) => Ok(match version {
+            Backend::Current(s) => Ok(match version {
                 Some(v) => s.cells_at(v).await?,
                 None => s.cells().await?,
             }),
@@ -578,7 +580,7 @@ async fn main() -> Res<()> {
     let cells: usize = a.get(3).map(|s| s.parse()).transpose()?.unwrap_or(2000);
     let squash: usize = a.get(4).map(|s| s.parse()).transpose()?.unwrap_or(500);
     let kinds: Vec<&str> = if which == "all" {
-        vec!["merge", "append", "bucketed"]
+        vec!["store", "append", "bucketed"]
     } else {
         vec![which]
     };

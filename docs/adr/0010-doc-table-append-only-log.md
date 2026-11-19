@@ -57,7 +57,7 @@ Delta deletion vectors would avoid the rewrite while keeping the one-row-per-cel
 
 ## Action Items
 
-1. [ ] Implement in `cruncha-store`: log schema, append commit with the `rev` assertion, reduction, squash in `compact` and every N commits, and the format-version-2 migration.
-2. [ ] Re-run `tests/crash.rs` and `store_variants` against the new `Store`. Add a test that squash leaves every earlier version readable and identical.
+1. [x] Implement in `cruncha-store`: log schema, append commit with the `rev` assertion, reduction, squash in `compact` and every N commits, and the format-version-2 migration.
+2. [x] Re-run `tests/crash.rs` and `store_variants` against the new `Store`. Add a test that squash leaves every earlier version readable and identical.
 3. [ ] Follow-up spike: tombstone retention versus time-travel and reopen latency at 10,000 versions.
 4. [ ] Python `read_doc` helper and the DuckDB recipe in the docs.

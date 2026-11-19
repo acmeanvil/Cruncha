@@ -193,10 +193,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = stats?;
     let (files, bytes) = dir_stats(&path);
     println!(
-        "compact: {:.1} ms (removed {} files, added {}); container now {files} files, {:.1} KiB",
+        "compact: {:.1} ms (live doc files {} -> {}); container now {files} files, {:.1} KiB",
         ms(t_compact),
-        stats.files_removed,
-        stats.files_added,
+        stats.files_before,
+        stats.files_after,
         bytes as f64 / 1024.0
     );
     let (r, t_read2) = time(store.cells()).await;

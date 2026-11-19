@@ -296,7 +296,10 @@ async fn compact_preserves_content_and_history() {
         .unwrap();
 
     let stats = store.compact("system").await.unwrap();
-    assert!(stats.files_removed > 1, "{stats:?}");
+    assert!(
+        stats.files_before > 1 && stats.files_after == 1,
+        "{stats:?}"
+    );
     assert_eq!(store.version(), before_compact + 1);
 
     let now = store.cells().await.unwrap();
@@ -310,4 +313,219 @@ async fn compact_preserves_content_and_history() {
     drop(store);
     let reopened = Store::open(dir.path().join("t.cruncha")).await.unwrap();
     assert_eq!(reopened.cells().await.unwrap().len(), 20);
+}
+
+// ---- revision-log layout (ADR-0010) ----
+
+async fn snapshot_all(store: &Store) -> Vec<Vec<Cell>> {
+    let mut out = Vec::new();
+    for v in 0..=store.version() {
+        out.push(store.cells_at(v).await.unwrap());
+    }
+    out
+}
+
+fn same(a: &[Cell], b: &[Cell]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same_content(y))
+}
+
+#[tokio::test]
+async fn squash_leaves_every_earlier_version_identical() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = new_store(&dir).await;
+    store.set_squash_interval(1_000); // squash only when we say so
+    let mut cells: Vec<Cell> = (0..6)
+        .map(|i| calc(&format!("a{i}"), &format!("x{i} = {i}"), &[], &[]))
+        .collect();
+    for c in &cells {
+        store
+            .commit(&[Change::Upsert(c.clone())], "user:test", "add")
+            .await
+            .unwrap();
+    }
+    cells[2].source = "x2 = 22".into();
+    store
+        .commit(
+            &[
+                Change::Upsert(cells[2].clone()),
+                Change::Delete(cells[4].id.clone()),
+            ],
+            "user:test",
+            "edit",
+        )
+        .await
+        .unwrap();
+    let before = snapshot_all(&store).await;
+
+    store.compact("system").await.unwrap();
+    let after = snapshot_all(&store).await;
+    assert_eq!(
+        after.len(),
+        before.len() + 1,
+        "squash adds exactly one version"
+    );
+    for (v, (b, a)) in before.iter().zip(&after).enumerate() {
+        assert!(same(b, a), "version {v} changed after squash");
+    }
+    assert!(
+        same(after.last().unwrap(), before.last().unwrap()),
+        "squash changed content"
+    );
+
+    // Edits after a squash still win over squashed rows.
+    cells[2].source = "x2 = 222".into();
+    store
+        .commit(&[Change::Upsert(cells[2].clone())], "user:test", "edit")
+        .await
+        .unwrap();
+    let now = store.cells().await.unwrap();
+    assert_eq!(now.len(), 5);
+    assert!(now.iter().any(|c| c.source == "x2 = 222"));
+}
+
+#[tokio::test]
+async fn automatic_squash_keeps_live_files_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = new_store(&dir).await;
+    store.set_squash_interval(5);
+    let c = calc("a0", "x = 0", &["x"], &[]);
+    for i in 0..12 {
+        let mut c = c.clone();
+        c.source = format!("x = {i}");
+        store
+            .commit(&[Change::Upsert(c)], "user:test", "edit")
+            .await
+            .unwrap();
+    }
+    let h = store.history().await.unwrap();
+    let squashes = h
+        .iter()
+        .filter(|v| v.kind == CommitKind::Maintenance)
+        .count();
+    assert_eq!(squashes, 2, "squash after every 5 edits");
+    assert_eq!(store.cells().await.unwrap()[0].source, "x = 11");
+    // 12 edits + 2 squashes + create.
+    assert_eq!(store.version(), 14);
+}
+
+#[tokio::test]
+async fn empty_document_squashes_and_reopens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.cruncha");
+    let mut store = Store::create(&path, "user:test").await.unwrap();
+    let a = calc("a0", "x = 1", &["x"], &[]);
+    store
+        .commit(&[Change::Upsert(a.clone())], "user:test", "add")
+        .await
+        .unwrap();
+    store
+        .commit(&[Change::Delete(a.id.clone())], "user:test", "del")
+        .await
+        .unwrap();
+    store.compact("system").await.unwrap();
+    assert!(store.cells().await.unwrap().is_empty());
+    assert_eq!(store.cells_at(1).await.unwrap().len(), 1);
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    assert!(store.cells().await.unwrap().is_empty());
+}
+
+/// Build a format-1 container by hand (one row per cell, no rev/deleted columns), the way
+/// pre-ADR-0010 builds wrote it.
+async fn make_v1_container(path: &std::path::Path, versions: &[Vec<Cell>]) {
+    use cruncha_store::schema::{DOC_SCHEMA, REFS_SCHEMA, changes_to_batch, conform};
+    use deltalake::DeltaTable;
+    use deltalake::kernel::StructType;
+    use deltalake::kernel::engine::arrow_conversion::TryIntoKernel as _;
+    use deltalake::protocol::SaveMode;
+
+    std::fs::create_dir_all(path).unwrap();
+    for (name, schema) in [("doc", &*DOC_SCHEMA), ("refs", &*REFS_SCHEMA)] {
+        let p = path.join(name);
+        std::fs::create_dir_all(&p).unwrap();
+        let kernel: StructType = schema.as_ref().try_into_kernel().unwrap();
+        let url = url::Url::from_directory_path(p.canonicalize().unwrap()).unwrap();
+        let mut t = DeltaTable::try_from_url(url)
+            .await
+            .unwrap()
+            .create()
+            .with_columns(kernel.fields().cloned())
+            .with_configuration([("delta.enableExpiredLogCleanup", Some("false"))])
+            .await
+            .unwrap();
+        if name == "doc" {
+            // Each v1 version here is a full overwrite with that version's cells.
+            for cells in versions {
+                let changes: Vec<Change> = cells.iter().cloned().map(Change::Upsert).collect();
+                let batch = conform(
+                    &changes_to_batch(&changes, "user:v1", 1).unwrap(),
+                    &DOC_SCHEMA,
+                )
+                .unwrap();
+                t = t
+                    .write([batch])
+                    .with_save_mode(SaveMode::Overwrite)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+    let manifest = serde_json::json!({
+        "format": "cruncha-container", "format_version": 1,
+        "id": "01JV1CONTAINER000000000000", "created_at_us": 1
+    });
+    std::fs::write(
+        path.join("cruncha.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn format_1_container_migrates_with_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.cruncha");
+    let a = calc("a0", "x = 1", &["x"], &[]);
+    let b = calc("a1", "y = 2", &["y"], &[]);
+    let mut a2 = a.clone();
+    a2.source = "x = 10".into();
+    make_v1_container(&path, &[vec![a.clone()], vec![a2.clone(), b.clone()]]).await;
+
+    let mut store = Store::open(&path).await.unwrap();
+    assert_eq!(store.manifest().format_version, 2);
+    // v1 history is still readable: v1 = [a], v2 = [a2, b]; v3 = the migration.
+    assert_eq!(sources(&store.cells_at(1).await.unwrap()), vec!["x = 1"]);
+    assert_eq!(
+        sources(&store.cells_at(2).await.unwrap()),
+        vec!["x = 10", "y = 2"]
+    );
+    assert_eq!(
+        sources(&store.cells().await.unwrap()),
+        vec!["x = 10", "y = 2"]
+    );
+
+    // New-format edits win over migrated rows; deletes work on them too.
+    let mut a3 = a.clone();
+    a3.source = "x = 100".into();
+    store
+        .commit(
+            &[Change::Upsert(a3), Change::Delete(b.id.clone())],
+            "user:test",
+            "edit",
+        )
+        .await
+        .unwrap();
+    assert_eq!(sources(&store.cells().await.unwrap()), vec!["x = 100"]);
+    store.compact("system").await.unwrap();
+    assert_eq!(sources(&store.cells().await.unwrap()), vec!["x = 100"]);
+    assert_eq!(
+        sources(&store.cells_at(2).await.unwrap()),
+        vec!["x = 10", "y = 2"]
+    );
+
+    // Reopening a migrated container doesn't migrate again.
+    let v = store.version();
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(store.version(), v);
 }

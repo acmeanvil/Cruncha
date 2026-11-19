@@ -14,6 +14,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0008](0008-app-shell-tauri-web.md) | App shell: Tauri with a web UI (not GPUI) | Accepted |
 | [0009](0009-agent-interface-acp-mcp.md) | Agent interface: ACP client, Cruncha MCP server, built-in agent from looking_glass | Proposed |
 | [0010](0010-doc-table-append-only-log.md) | The `doc` table is an append-only revision log with periodic squash (refines 0003) | Accepted |
+| [0011](0011-user-configurable-history-retention.md) | User-configurable history retention: saves, size and activity-relative limits; dormant documents are never pruned | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

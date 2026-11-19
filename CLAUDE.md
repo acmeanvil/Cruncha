@@ -32,7 +32,7 @@ skills/                    Agent Skills (SKILL.md) for AI agents working inside 
 cargo build -p cruncha-store
 cargo test  -p cruncha-store
 cargo run   -p cruncha-store --release --example store_bench -- <commits>
-cargo run   -p cruncha-store --release --example store_variants -- <merge|append|bucketed|all> [commits] [cells] [squash_every]
+cargo run   -p cruncha-store --release --example store_variants -- <store|append|bucketed|all> [commits] [cells] [squash_every]
 cargo test  -p cruncha-store --test crash      # SIGKILLs a writer process 8 times (~20 s)
 cargo clippy --all-targets -- -D warnings
 ```
@@ -49,10 +49,11 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 
 ## Store invariants (do not break)
 
-- **History is never rewritten.** Rollback is a new commit (`Store::restore`). Never use Delta `RESTORE` or `VACUUM` on `doc/` without the retention work in ADR-0003's action items.
+- **History is never rewritten.** Rollback is a new commit (`Store::restore`). Never use Delta `RESTORE`. Only the planned `Store::prune` (ADR-0011) may `VACUUM` or expire logs, with explicit parameters derived from the document's policy, after pinning refs. **Never change Delta's retention table properties**: they act on wall-clock time during unrelated commits. A document with no new edits must never lose history.
+- `doc/` is an **append-only revision log** (ADR-0010, format 2). A commit appends the changed rows with `rev = version + 1`, and the store fails loudly if the committed version differs. Reads reduce to the highest `rev` per id. Every 50 commits the log is squashed (overwritten with current rows); old files stay, so time travel still works. Format-1 containers are migrated on open.
 - Container tables are created with expired-log cleanup **disabled**. Delta's default 30-day log retention would silently destroy time travel. `Store::history` relies on every version being present.
 - There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
-- One `Store::commit` is one atomic Delta version. Batch changes (on cell submit or idle), never per keystroke.
+- One `Store::commit` is one atomic Delta version (a squash, when due, adds a second, maintenance version). Batch changes (on cell submit or idle), never per keystroke.
 - Results do not live in `doc/`. They go in a separate `results/` table (planned).
 - Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).
 - Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind` and `cruncha.restoredFrom` (see `store.rs`).

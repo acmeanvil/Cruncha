@@ -5,18 +5,23 @@
 //! name.cruncha/
 //! ├── cruncha.json   container manifest (format version, id)
 //! ├── .lock          single-writer lock (held while a Store is open for writing)
-//! ├── doc/           Delta table: one row per cell; each commit = one document version
+//! ├── doc/           Delta table: append-only log of cell revisions; each commit = one version
 //! └── refs/          Delta table: named versions (append-only)
 //! ```
 //!
 //! Every [`Store::commit`] is one atomic Delta transaction, so there is no "save": a crash
 //! loses at most the changes not yet handed to `commit`.
+//!
+//! `doc/` layout (format 2, ADR-0010): a commit appends only the changed cells' rows, tagged
+//! with `rev` (the Delta version being written) and a `deleted` tombstone flag. Reading any
+//! version reduces the log to the highest-`rev` row per cell. Every [`DEFAULT_SQUASH_EVERY`]
+//! commits the table is *squashed* (overwritten with just the current rows) to keep reads
+//! fast; old files are never deleted, so every earlier version stays readable.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use deltalake::datafusion::prelude::{SessionContext, col, lit};
 use deltalake::kernel::StructType;
 use deltalake::kernel::engine::arrow_conversion::TryIntoKernel as _;
 use deltalake::kernel::transaction::CommitProperties;
@@ -29,10 +34,14 @@ use url::Url;
 
 use crate::cell::{Cell, CellDiff, Change};
 use crate::error::{Error, Result};
-use crate::schema::{self, DOC_COLUMNS, OP_COLUMN, OP_DELETE, OP_UPSERT, Ref};
+use crate::schema::{self, REV_COLUMN, Ref};
 
 pub const FORMAT: &str = "cruncha-container";
-pub const FORMAT_VERSION: u32 = 1;
+/// 1: `doc/` is one row per cell, updated by MERGE. 2: `doc/` is a revision log (ADR-0010).
+pub const FORMAT_VERSION: u32 = 2;
+/// Squash the revision log after this many commits (spike S3b: 50 balances commit latency,
+/// read latency and growth).
+pub const DEFAULT_SQUASH_EVERY: u64 = 50;
 const MANIFEST: &str = "cruncha.json";
 const LOCK: &str = ".lock";
 
@@ -92,8 +101,9 @@ pub struct VersionInfo {
 /// Result of [`Store::compact`].
 #[derive(Debug, Clone, Default)]
 pub struct CompactStats {
-    pub files_removed: u64,
-    pub files_added: u64,
+    /// Live `doc` data files before and after compaction.
+    pub files_before: u64,
+    pub files_after: u64,
     pub checkpointed_version: u64,
 }
 
@@ -103,7 +113,9 @@ pub struct Store {
     manifest: Manifest,
     doc: DeltaTable,
     refs: DeltaTable,
-    ctx: SessionContext,
+    /// Edit commits since the last squash.
+    since_squash: u64,
+    squash_every: u64,
     /// Held for the life of the store; released on drop.
     _lock: File,
 }
@@ -166,13 +178,20 @@ async fn create_table(
     Ok(table)
 }
 
-async fn collect_cells(table: DeltaTable) -> Result<Vec<Cell>> {
-    let (_, stream) = table.scan_table().await?;
-    let batches: Vec<_> = stream.try_collect().await?;
-    let mut cells = Vec::new();
-    for b in &batches {
-        schema::batch_to_cells(b, &mut cells)?;
-    }
+async fn scan(table: &DeltaTable) -> Result<Vec<deltalake::arrow::array::RecordBatch>> {
+    let (_, stream) = table.clone().scan_table().await?;
+    Ok(stream.try_collect().await?)
+}
+
+fn live_files(table: &DeltaTable) -> Result<u64> {
+    Ok(table.get_file_uris()?.count() as u64)
+}
+
+/// The document at the table's loaded version: the reduced revision log, in document order.
+async fn collect_cells(table: &DeltaTable) -> Result<Vec<Cell>> {
+    let current = schema::reduce_log(&scan(table).await?)?;
+    let mut cells = Vec::with_capacity(current.num_rows());
+    schema::batch_to_cells(&current, &mut cells)?;
     cells.sort_by(|a, b| a.order_key.cmp(&b.order_key).then_with(|| a.id.cmp(&b.id)));
     Ok(cells)
 }
@@ -188,7 +207,7 @@ impl Store {
         let root = root.canonicalize()?;
         let lock = acquire_lock(&root)?;
 
-        let doc = create_table(&root.join("doc"), "doc", &schema::DOC_SCHEMA, actor).await?;
+        let doc = create_table(&root.join("doc"), "doc", &schema::DOC_LOG_SCHEMA, actor).await?;
         let refs = create_table(&root.join("refs"), "refs", &schema::REFS_SCHEMA, actor).await?;
 
         // The manifest is written last, so a half-created directory is never mistaken for a
@@ -208,7 +227,8 @@ impl Store {
             manifest,
             doc,
             refs,
-            ctx: SessionContext::new(),
+            since_squash: 0,
+            squash_every: DEFAULT_SQUASH_EVERY,
             _lock: lock,
         })
     }
@@ -231,14 +251,66 @@ impl Store {
         let lock = acquire_lock(&root)?;
         let doc = deltalake::open_table(dir_url(&root.join("doc"))?).await?;
         let refs = deltalake::open_table(dir_url(&root.join("refs"))?).await?;
-        Ok(Store {
+        // Every append adds one data file and a squash leaves at most one, so the live file
+        // count recovers the squash counter across sessions.
+        let since_squash = live_files(&doc)?.saturating_sub(1);
+        let mut store = Store {
             root,
             manifest,
             doc,
             refs,
-            ctx: SessionContext::new(),
+            since_squash,
+            squash_every: DEFAULT_SQUASH_EVERY,
             _lock: lock,
-        })
+        };
+        if store.manifest.format_version < 2 {
+            store.migrate_to_v2().await?;
+        }
+        Ok(store)
+    }
+
+    /// Format 1 → 2: add the nullable `rev`/`deleted` columns. Format-1 rows (one per cell)
+    /// read as rev -1, so no data is rewritten and all history stays readable. Idempotent if
+    /// interrupted between the schema change and the manifest update.
+    async fn migrate_to_v2(&mut self) -> Result<()> {
+        let has_rev = self
+            .doc
+            .snapshot()?
+            .schema()
+            .fields()
+            .any(|f| f.name() == REV_COLUMN);
+        if !has_rev {
+            let extra = deltalake::arrow::datatypes::Schema::new(schema::log_extra_fields());
+            let kernel: StructType = (&extra).try_into_kernel()?;
+            let table = self
+                .doc
+                .clone()
+                .add_columns()
+                .with_fields(kernel.fields().cloned().collect::<Vec<_>>())
+                .with_commit_properties(commit_props(
+                    CommitKind::Maintenance,
+                    "system",
+                    "migrate container to format 2",
+                    None,
+                ))
+                .await?;
+            self.doc = table;
+        }
+        self.manifest.format_version = 2;
+        self.write_manifest()?;
+        Ok(())
+    }
+
+    fn write_manifest(&self) -> Result<()> {
+        let tmp = self.root.join(format!("{MANIFEST}.tmp"));
+        fs::write(&tmp, serde_json::to_vec_pretty(&self.manifest)?)?;
+        fs::rename(&tmp, self.root.join(MANIFEST))?;
+        Ok(())
+    }
+
+    /// Squash the revision log every `n` edit commits (minimum 1).
+    pub fn set_squash_interval(&mut self, n: u64) {
+        self.squash_every = n.max(1);
     }
 
     pub fn root(&self) -> &Path {
@@ -280,40 +352,51 @@ impl Store {
             }
         }
 
-        let batch = schema::changes_to_batch(changes, actor, now_us())?;
-        let source = self.ctx.read_batch(batch)?;
-        let s = |c: &str| col(format!("s.{c}"));
-
-        let (table, _metrics) = self
+        // The single-writer lock means the next Delta version is known before committing.
+        let rev = self.version() + 1;
+        let batch = schema::changes_to_log_batch(changes, actor, now_us(), rev as i64)?;
+        let table = self
             .doc
             .clone()
-            .merge(source, col("t.id").eq(col("s.id")))
-            .with_source_alias("s")
-            .with_target_alias("t")
+            .write([batch])
+            .with_save_mode(SaveMode::Append)
             .with_commit_properties(commit_props(kind, actor, message, extra))
-            .when_matched_delete(|d| d.predicate(s(OP_COLUMN).eq(lit(OP_DELETE))))?
-            .when_matched_update(|mut u| {
-                u = u.predicate(s(OP_COLUMN).eq(lit(OP_UPSERT)));
-                for c in &DOC_COLUMNS[1..] {
-                    u = u.update(*c, s(c));
-                }
-                u
-            })?
-            .when_not_matched_insert(|mut i| {
-                i = i.predicate(s(OP_COLUMN).eq(lit(OP_UPSERT)));
-                for c in DOC_COLUMNS {
-                    i = i.set(c, s(c));
-                }
-                i
-            })?
             .await?;
         self.doc = table;
-        Ok(self.version())
+        if self.version() != rev {
+            // Only possible if something other than this Store wrote to `doc/`: the rows just
+            // written carry the wrong `rev`, so stop before compounding it.
+            return Err(Error::Corrupt(format!(
+                "expected to commit version {rev}, committed {}; another writer touched doc/",
+                self.version()
+            )));
+        }
+        self.since_squash += 1;
+        if self.since_squash >= self.squash_every {
+            self.squash("system").await?;
+        }
+        Ok(rev)
+    }
+
+    /// Overwrite `doc/` with just the current rows (one Delta version, content unchanged).
+    /// The replaced files stay on disk, so earlier versions remain readable.
+    async fn squash(&mut self, actor: &str) -> Result<()> {
+        let current = schema::reduce_log(&scan(&self.doc).await?)?;
+        let table = self
+            .doc
+            .clone()
+            .write([current])
+            .with_save_mode(SaveMode::Overwrite)
+            .with_commit_properties(commit_props(CommitKind::Maintenance, actor, "squash", None))
+            .await?;
+        self.doc = table;
+        self.since_squash = 0;
+        Ok(())
     }
 
     /// All cells of the current version, in document order.
     pub async fn cells(&self) -> Result<Vec<Cell>> {
-        collect_cells(self.doc.clone()).await
+        collect_cells(&self.doc).await
     }
 
     /// All cells as of `version`, in document order (time travel).
@@ -326,7 +409,7 @@ impl Store {
         }
         let mut t = self.doc.clone();
         t.load_version(version).await?;
-        collect_cells(t).await
+        collect_cells(&t).await
     }
 
     /// Document history, newest first, including maintenance commits.
@@ -454,25 +537,15 @@ impl Store {
         self.cells_at(r.doc_version).await
     }
 
-    /// Compact the `doc` table's small files and write a checkpoint. Content and history are
-    /// unchanged (old files are kept for time travel); reads of the latest version get faster.
+    /// Squash the revision log now and write a checkpoint. Content and history are unchanged
+    /// (old files are kept for time travel); reads of the latest version get faster.
     pub async fn compact(&mut self, actor: &str) -> Result<CompactStats> {
-        let (table, metrics) = self
-            .doc
-            .clone()
-            .optimize()
-            .with_commit_properties(commit_props(
-                CommitKind::Maintenance,
-                actor,
-                "compact",
-                None,
-            ))
-            .await?;
-        self.doc = table;
+        let files_before = live_files(&self.doc)?;
+        self.squash(actor).await?;
         checkpoints::create_checkpoint(&self.doc, None).await?;
         Ok(CompactStats {
-            files_removed: metrics.num_files_removed,
-            files_added: metrics.num_files_added,
+            files_before,
+            files_after: live_files(&self.doc)?,
             checkpointed_version: self.version(),
         })
     }

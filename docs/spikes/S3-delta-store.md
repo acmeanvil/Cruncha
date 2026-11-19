@@ -187,3 +187,15 @@ The append layout uses the same Delta commit protocol, so it is expected to beha
 3. **The statistics change is already applied to `Store`.** It is harmless for MERGE (the growth there is dominated by rewriting the document) and essential for A.
 4. **Watch item: time travel and reopen latency grow with the total version count.** At 3,000 versions they reach 119 ms and 73 ms, up from about 50 ms and 30 ms at 1,000. This is probably snapshot replay of an ever-growing set of remove tombstones: `deletedFileRetentionDuration` is set to 100 years, so the tombstones are never dropped from checkpoints. We never VACUUM, so we can likely use a short tombstone retention without affecting time travel. **Verify this in a follow-up before relying on it.**
 5. **The fixed per-commit floor (about 6 KiB) is now the dominant cost.** Further cuts would come from fewer commits (cadence, design option E) or from batching inline-cell changes, not from layout.
+
+## Implemented (ADR-0010), `Store` format 2
+
+The same workload (2,000 cells, 1,000 commits) against the real `Store` (`store_variants -- store 1000 2000`), with a squash every 50 commits and statistics on `id` only:
+
+| Commit p50 / p95 / p99 | Growth per commit | Worst read latest | Time travel (mid / v1) | Reopen + first read |
+| --- | --- | --- | --- | --- |
+| 20.4 / 35.9 / 107 ms | 7.04 KiB | 6.4 ms | 67 / 37 ms | 41 + 7 ms |
+
+This matches the prototype within noise. Compared with the original MERGE store: **2.7× faster commits and 8.1× less growth.** All 16 store tests pass, including the SIGKILL crash test, whose kills now also land during automatic squashes.
+
+(The run header prints `squash_every=500`; that is the example's CLI default, which applies only to the `append` prototype. `Store` uses `DEFAULT_SQUASH_EVERY = 50`.)
