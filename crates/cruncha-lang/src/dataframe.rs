@@ -20,7 +20,7 @@ fn drop_last_10(s: &mut String) {
     }
 }
 
-pub(crate) fn quick_display(input: &str) -> String {
+pub fn quick_display(input: &str) -> String {
     if input.is_empty() {
         return String::new();
     }

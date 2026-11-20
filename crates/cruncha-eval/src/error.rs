@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Ported from Hurmet (https://hurmet.org), Copyright (c) 2026 Ronald Kok, MIT License; see LICENSE-HURMET.
+
+//! Hurmet's error messages (`error.js`). An error is an operand with `dtype` `ERROR` and the
+//! message as its value.
+
+use crate::value::{OUnit, Operand, V, dt};
+use cruncha_lang::hurmet::add_text_escapes;
+
+fn message(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "ERROR" => "Error. Hurmet does not understand the expression.",
+        "ERR_FUNC" => "@",
+        "BAD_FUN_NM" => "Error. Unrecognized function name \"@\".",
+        "DIV" => "Error. Divide by zero.",
+        "NAN" => "Error. Value of $@$ is not numeric.",
+        "NANARG" => "Error. Argument to function $@$ must be numeric.",
+        "NANEL" => {
+            "Error. A numeric vector must have numeric elements. The value of $@$ is not numeric."
+        }
+        "NULL" => "Error. Missing value for $@$.",
+        "BAD_EQ" => "Error. Use \"==\" instead of \"=\" to check for equality.",
+        "V_NAME" => "Error. Variable $@$ not found.",
+        "F_NAME" => "Error. Function @ not found.",
+        "NAN_OP" => "Error. Arithmetic operation on a non-numeric value.",
+        "UNIT_ADD" => "Error. Adding incompatible units.",
+        "UNIT_COMP" => "Error. Comparing incompatible units.",
+        "UNIT_APEND" => "Error. Apppending incompatible units.",
+        "UNIT_RES" => "Error. Calculated units are not compatible with the desired result unit:",
+        "UNIT_MISS" => "Error. No units specified for the result.",
+        "UNIT_IN" => "Error. Incorrect unit for input to function @.",
+        "UNIT_ARG" => "Error. Unit mis-match between arguments to function @.",
+        "UNIT_COL" => {
+            "Error. Data frame column @ has no units. Do not make a unit-aware call to it."
+        }
+        "UNIT_AWARE" => "Error. Calculation must be unit-aware in order to apply unit @",
+        "UNIT_UN" => "Error. Hurmet does not do unit aware calculations involving @",
+        "DATE" => "Error. Date required.",
+        "LOGIC" => "Error. Logic operation “@” on a non-boolean value.",
+        "FACT" => "Error. Factorial may be applied only to a unit-less non-negative integer.",
+        "PER" => "Error. Percentage may be applied only to a unit-less number.",
+        "BINOM" => "Error. Binomial may be applied only to unit-less numbers.",
+        "LOGF" => "Error. Argument to log!() must be a non-negative integer.",
+        "Γ0" => "Error. Γ(0) is infinite.",
+        "ΓPOLE" => "Error. Γ() of a negative integer is infinite.",
+        "LOGΓ" => "Error. Argument to Hurmet lgamma() must be a positive number.",
+        "TAN90" => "Error. tan($@$) is infinite.",
+        "ATRIG" => "Error. Input to @ must be between -1 and 1.",
+        "COT" => "Error. Input to @ must not be zero.",
+        "ASEC" => "Error. Absolute value of input to @ must be ≥ 1",
+        "STRING" => "Error. Text operand required.",
+        "NUMARGS" => "Error. Wrong number of arguments passed to function @.",
+        "NONSQUARE" => "Error. Only a square matrix can be inverted.",
+        "SINGULAR" => "Error. Matrix is singular and cannot be inverted.",
+        "BAD_ROW_NAME" => "Error. Data frame does not have a row named @.",
+        "BAD_COLUMN_NAME" => "Error. Data frame does not have a column named @.",
+        "BAD_COLUMN_TYPE" => "Error. A map must have only one data type and one unit.",
+        "SINGLE_ARG" => "Error. A call to a data frame must have two arguments in the brackets.",
+        "BAD_TYPE" => "Error. Unrecognized data type for $@$.",
+        "CONCAT" => "Error. Cannot add strings. Use \"&\" if concatenation is desired.",
+        "MATRIX_DIV" => "Error. Cannot divide one matrix by another.",
+        "MATRIX_MOD" => "Error. Cannot take the modulo of one matrix by another.",
+        "BAD_INDEX" => "Error. Index to a matrix must be numeric.",
+        "FUNC_LINE" => "Error in function @",
+        "DRAW_ARG" => "Error. Invalid arguments to drawing statement “@”.",
+        "BAD_BREAK" => "Error in function @. break called outside of a loop",
+        "FETCH" => "Error. A fetch() function must be the only item in its expression.",
+        "STR_INDEX" => "Error. The index to text may be only a real number or a range.",
+        "UNIT_NAME" => "Error. Unrecognized unit name: @",
+        "INT_NUM" => "Error. Number display type \"@\" must be an integer.",
+        "TWO_MAPS" => "Error. Both operands are maps. Hurmet accepts only one.",
+        "BAD_FORMAT" => "Error. Invalid format @.",
+        "BAD_PREC" => "Error. Significant digit specification must be between 1 and 15.",
+        "ZERO_ROOT" => "Error. Zeroth root.",
+        "BAD_ROOT" => "Error while taking root.",
+        "UNREAL" => "Error. Argument to function \"@\" must be a real number.",
+        "BIGINDEX" => "Error. Index too large.",
+        "MIS_ELNUM" => "Error. Mis-matched number of elements",
+        "CROSS" => {
+            "Error. Cross product can be performed only on three-vectors. Use * if you want element-wise multiplication."
+        }
+        "QUANT_NUM" => "Error. A Quantity must include a numeric magnitude.",
+        "CURRENCY" => {
+            "Error. Currency exchange rates must be defined before using a monetary unit."
+        }
+        "DF_UNIT" => "Invalid unit \"&\" in data frame.",
+        "FORM_FRAC" => "Error. Hurmet can do binary or hexadecimal format only on integers.",
+        "PRIVATE" => "Error. Function @ is not private.",
+        "INT_ARG" => "Error. The @ function can take only integers as arguments.",
+        "BAD_KEY" => "Error. Data structure does not contain key \"@\".",
+        "BAD_SHT_KEY" => "Error. Spreadsheet does not contain key \"@\".",
+        "NUM_KEY" => "Error. A key must be a string, not a number.",
+        "IMMUT_UDF" => {
+            "Error. Variable @ already contains a user-defined function.\n                Hurmet cannot assign a different value to @."
+        }
+        "NO_PROP" => {
+            "Error. Cannot call a property from variable \"@\" because it has no properties."
+        }
+        "NOT_ARRAY" => "Error. Cannot The second operand is not an array.",
+        "MULT_MIS" => "Error. Mismatch in number of multiple assignment.",
+        "COUNT" => "Error. The count() function works only on strings.",
+        "NOT_VECTOR" => "Error. Arguments to @() must be vectors.",
+        "BAD_DISPLAY" => "Error. Result may not be suppressed. Use '?' display selector.",
+        "NA_COMPL_OP" => "Error. \"@\" cannot be performed on a complex number.",
+        "NA_REAL" => "Error. \"@\" can be performed only a complex number.",
+        "ORIGIN" => "Error. Function \"@\" is undefined at the origin.",
+        "LOG_ZERO" => "Error. Logarithm of zero is negative infinity.",
+        "END_MISS" => "Error. Too few END statments in function @.",
+        "OLD_MACRO" => "Error in macro @. Macro delimiters are now ''' instead of \"\"\".",
+        "BAD_CONCAT" => "Error. Unmatched dimensions.",
+        "BAD_KEYSTR" => "Error. The key in a key:value pair must be a string.",
+        "BAD_APPEND" => "Error. Can not append a @",
+        "MAP_APPEND" => "Error. Can not append. Wrong data type.",
+        "BAD_TRANS" => "Error. Only a matrix can be transposed.",
+        "BAD_ARGS" => "Error. Wrong number of arguments to function @",
+        "BAD_SUM" => "Error. Second argument to sum function must be 1 or 2.",
+        "ZERO_STEP" => "Error. Step value must be > zero.",
+        "SHEET_INDEX" => "Error. Bad column or row index.",
+        "UNSAVED" => "Error. The current document has not been saved.",
+        "UNIT_IN_MAT" => {
+            "Error. Matrix elements cannot contain a unit. Write the unit outside the matrix."
+        }
+        "UNIT_IN_EL" => "Error. Use a non-unit-aware calculation to construct matrix elements.",
+        // Not in Hurmet: the port reports these where JavaScript would throw a TypeError.
+        "NOT_FINITE" => "Error. The result is not a finite number.",
+        "NOT_SUPPORTED" => "Error. Cruncha does not support “@” yet.",
+        _ => return None,
+    })
+}
+
+/// Hurmet's `errorOprnd(code, insert)`.
+pub(crate) fn err(code: &str, insert: &str) -> Operand {
+    let msg = match message(code) {
+        Some(m) if !code.is_empty() => m,
+        _ => return Operand::new(V::S("Error".into()), OUnit::Null, dt::ERROR),
+    };
+    let msg = if !insert.is_empty() {
+        msg.replace('@', &add_text_escapes(insert))
+    } else {
+        // msg.replace(/@ ?/, "")
+        match msg.find('@') {
+            Some(p) => {
+                let after = &msg[p + 1..];
+                let after = after.strip_prefix(' ').unwrap_or(after);
+                format!("{}{}", &msg[..p], after)
+            }
+            None => msg.to_string(),
+        }
+    };
+    Operand::new(V::S(msg), OUnit::Null, dt::ERROR)
+}
+
+pub(crate) fn err0(code: &str) -> Operand {
+    err(code, "")
+}
+
+/// An error with a message that is not from Hurmet's table (a thrown string).
+pub(crate) fn err_msg(msg: impl Into<String>) -> Operand {
+    Operand::new(V::S(msg.into()), OUnit::Null, dt::ERROR)
+}
+
+/// Convert a unit-parsing failure to Hurmet's error operand.
+pub(crate) fn unit_err(e: &cruncha_units::UnitError) -> Operand {
+    match e {
+        cruncha_units::UnitError::UnknownName(n) | cruncha_units::UnitError::Malformed(n) => {
+            err("UNIT_NAME", n)
+        }
+        cruncha_units::UnitError::Currency => err0("CURRENCY"),
+        cruncha_units::UnitError::DivideByZero => err0("DIV"),
+    }
+}

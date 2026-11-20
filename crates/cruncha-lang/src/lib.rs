@@ -27,6 +27,20 @@ mod utils;
 
 pub use lexer::{Token, Tt};
 
+/// Hurmet helpers that the evaluator (`cruncha-eval`) shares with the parser, so that both
+/// produce identical text. Not a stable API.
+#[doc(hidden)]
+pub mod hurmet {
+    pub use crate::dataframe::quick_display;
+    pub use crate::date::seconds_from_iso_string;
+    pub use crate::lexer::{IDENTIFIER_BODY, IDENTIFIER_START};
+    pub use crate::number::{formatted_decimal, formatted_integer};
+    pub use crate::utils::{
+        add_text_escapes, check_for_numeric_subscript, is_js_space, js_trim,
+        numeral_from_superscript, tabless_trim, unit_tex_from_string, utf16_len,
+    };
+}
+
 /// Number and date display formats (Hurmet's `formats`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Formats {

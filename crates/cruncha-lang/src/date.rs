@@ -47,7 +47,7 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 }
 
 /// Seconds after 1970-01-01 UTC, or `None` for an invalid date (JavaScript's `NaN`).
-pub(crate) fn seconds_from_iso_string(date_str: &str) -> Option<i64> {
+pub fn seconds_from_iso_string(date_str: &str) -> Option<i64> {
     let c = DATE_RE.captures(date_str)?;
     let y: i64 = c[1].parse().ok()?;
     let m: i64 = c[2].parse().ok()?;

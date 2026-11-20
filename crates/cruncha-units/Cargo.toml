@@ -1,0 +1,15 @@
+[package]
+name = "cruncha-units"
+description = "Cruncha units: Hurmet's unit database, exact rationals and dimension algebra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+libm = "0.2"
+
+[dev-dependencies]
+serde_json = "1"

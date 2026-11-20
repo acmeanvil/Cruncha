@@ -14,5 +14,6 @@ export default defineConfig({
     host: host || false,
     watch: { ignored: ["**/src-tauri/**"] },
   },
-  build: { target: "es2022" },
+  // Temml alone is ~500 kB; size matters little for a desktop app loading from disk.
+  build: { target: "es2022", chunkSizeWarningLimit: 1500 },
 });

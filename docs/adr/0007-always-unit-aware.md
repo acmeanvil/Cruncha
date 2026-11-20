@@ -1,6 +1,6 @@
 # ADR-0007: Calculations are always unit-aware
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Deciders:** acmeanvil
 

@@ -14,6 +14,8 @@ export const KEEP_EVERYTHING: Retention = { floor: 100 };
 
 export interface Prefs {
   defaultRetention: Retention;
+  /** Recently opened documents, most recent first (kept by the backend). */
+  recent?: string[];
 }
 
 export interface RefView {
@@ -91,8 +93,38 @@ export interface PruneResult {
   logFilesDeleted: number;
 }
 
+/** What a calc cell shows (app/src-tauri/src/engine.rs). */
+export interface CellResult {
+  /** The display line (echo and result) as TeX; empty if it never got to evaluation. */
+  tex: string;
+  error: string | null;
+  /** The plain-text result line. */
+  text?: string;
+  /** Names the cell defines. */
+  defines?: string[];
+  /** Lints: the cell runs, but something deserves a look. */
+  warnings?: string[];
+}
+
+export type Change = { op: "upsert"; cell: Cell } | { op: "delete"; id: string };
+
+export interface CommitView {
+  info: DocInfo;
+  results: Record<string, CellResult>;
+}
+
+/** A state of the document for `results`: the latest, a version, or a named version. */
+export interface At {
+  version?: number | null;
+  ref?: string | null;
+}
+
 export const api = {
   openDocument: (path: string) => invoke<DocInfo>("open_document", { path }),
+  createDocument: (path: string) => invoke<DocInfo>("create_document", { path }),
+  commit: (changes: Change[], message: string) => invoke<CommitView>("commit", { changes, message }),
+  results: (at: At) => invoke<Record<string, CellResult>>("results", { at }),
+  previewCalc: (source: string) => invoke<CellResult>("preview_calc", { source }),
   createSampleDocument: (path: string) => invoke<DocInfo>("create_sample_document", { path }),
   closeDocument: () => invoke<PruneResult | null>("close_document"),
   documentInfo: () => invoke<DocInfo | null>("document_info"),
@@ -101,6 +133,7 @@ export const api = {
   history: () => invoke<VersionView[]>("history"),
   getPrefs: () => invoke<Prefs>("get_prefs"),
   setPrefs: (prefs: Prefs) => invoke<void>("set_prefs", { prefs }),
+  forgetRecent: (path: string) => invoke<void>("forget_recent", { path }),
   setDocumentRetention: (policy: Retention | null) =>
     invoke<DocInfo>("set_document_retention", { policy }),
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),

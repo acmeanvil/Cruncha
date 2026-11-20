@@ -1,0 +1,10 @@
+[
+ "function isIn(item, array)\n  # Binary search to see if an item is in an array.\n  # This works only if the array is sorted.\n  iHigh = length(array)\n  if iHigh = 0\n     return false\n  end\n  iLow = 1\n  while iLow < iHigh\n     i = ⎿(iLow + iHigh) / 2⏌\n     if item > array[i]\n        iLow = i + 1\n     else\n        iHigh = i\n     end\n  end\n  return (item = array[iLow])\nend",
+ "function testFor(a, b)\n   sum = 0\n   for i in a:b\n      sum = sum + i\n   end\n   return sum\nend",
+ "function reverse(str)\n   rev = \"\"\n   for ch in str\n      rev = ch & rev\n   end\n   return rev\nend",
+ "function sumVec(V)\n  sum = 0\n  for el in V\n    sum = sum + el\n  end\n  return sum\nend",
+ "function testWhile(b)\n   sum = 0\n   i = 1\n   while i <= b\n      sum = sum + i\n      i = i + 1\n   end\n   return sum\nend",
+ "function testBreak()\n   print \"This is a print test.\"\n   sum = 0\n   for i in 1:100\n      if i > 3\n         break\n      end\n      sum = sum + i\n   end\n   return sum\nend",
+ "function testThrow()\n   sum = 0\n   for i in 1:100\n      if i > 3\n         throw \"Error.\"\n      end\n      sum = sum + i\n   end\n   return sum\nend",
+ "function newton(f, fPrime, guess; ε = 1e-15)\nx = guess\nfor i in 1:1000\n    fx = f(x)\n    if |fx| ≤ ε return x\n    x = x - fx / fPrime(x)\nend\nthrow \"Error. Function did not converge.\"\nend"
+]

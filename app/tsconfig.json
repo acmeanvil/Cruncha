@@ -7,7 +7,15 @@
     "strict": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "types": ["svelte"]
+    "types": [
+      "svelte"
+    ]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.svelte"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
 }

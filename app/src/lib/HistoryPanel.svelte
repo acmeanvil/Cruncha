@@ -37,7 +37,7 @@
     (selected.kind === "version" && selected.version === v.version);
 </script>
 
-<aside>
+<div class="history">
   {#if refs.length}
     <section>
       <h3>Named versions</h3>
@@ -88,13 +88,10 @@
       <p class="small muted end">Versions before {earliest} are no longer available.</p>
     {/if}
   </section>
-</aside>
+</div>
 
 <style>
-  aside {
-    border-right: 1px solid var(--border); background: var(--panel);
-    overflow: auto; padding: 8px 0;
-  }
+  .history { padding: 4px 0; }
   section { padding: 0 10px 12px; }
   h3 {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);

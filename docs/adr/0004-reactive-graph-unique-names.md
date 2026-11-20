@@ -1,6 +1,6 @@
 # ADR-0004: Reactive dependency graph with one definition per name
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Deciders:** acmeanvil
 

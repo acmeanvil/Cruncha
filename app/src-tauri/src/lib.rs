@@ -3,12 +3,18 @@
 //! `Store`, with a web UI in `app/src`. The skeleton views documents read-only (cells at any
 //! version, history, tags) and has the history-retention settings (ADR-0011).
 
+mod engine;
 mod session;
 
 use std::path::PathBuf;
 
 use cruncha_store::{Cell, Retention};
-use session::{DocInfo, Prefs, PreviewView, PruneView, Session, VersionView};
+use std::collections::HashMap;
+
+use engine::CellResult;
+use session::{
+    At, ChangeView, CommitView, DocInfo, Prefs, PreviewView, PruneView, Session, VersionView,
+};
 use tauri::{Manager, RunEvent, State};
 use tokio::sync::Mutex;
 
@@ -18,6 +24,30 @@ type Result<T> = session::Result<T>;
 #[tauri::command]
 async fn open_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
     s.lock().await.open(&path).await
+}
+
+#[tauri::command]
+async fn create_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.create(&path).await
+}
+
+#[tauri::command]
+async fn commit(
+    changes: Vec<ChangeView>,
+    message: String,
+    s: State<'_, Shared>,
+) -> Result<CommitView> {
+    s.lock().await.commit(changes, &message).await
+}
+
+#[tauri::command]
+async fn results(at: At, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.results(&at).await
+}
+
+#[tauri::command]
+async fn preview_calc(source: String, s: State<'_, Shared>) -> Result<CellResult> {
+    s.lock().await.preview_calc(&source)
 }
 
 #[tauri::command]
@@ -60,8 +90,16 @@ async fn get_prefs(s: State<'_, Shared>) -> Result<Prefs> {
 }
 
 #[tauri::command]
-async fn set_prefs(prefs: Prefs, s: State<'_, Shared>) -> Result<()> {
-    s.lock().await.set_prefs(prefs)
+async fn forget_recent(path: String, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.forget_recent(&path)
+}
+
+#[tauri::command]
+async fn set_prefs(mut prefs: Prefs, s: State<'_, Shared>) -> Result<()> {
+    let mut s = s.lock().await;
+    // The recent list is the backend's; the front end's copy may be stale.
+    prefs.recent = s.prefs().recent.clone();
+    s.set_prefs(prefs)
 }
 
 #[tauri::command]
@@ -95,7 +133,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            create_document,
             create_sample_document,
+            commit,
+            results,
+            preview_calc,
             close_document,
             document_info,
             cells,
@@ -103,6 +145,7 @@ pub fn run() {
             history,
             get_prefs,
             set_prefs,
+            forget_recent,
             set_document_retention,
             retention_preview,
             prune_now,

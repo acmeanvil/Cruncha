@@ -1,0 +1,16 @@
+[package]
+name = "cruncha-eval"
+description = "Cruncha calc evaluator: a port of Hurmet's unit-aware calculation engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cruncha-lang = { path = "../cruncha-lang" }
+cruncha-units = { path = "../cruncha-units" }
+num-bigint = "0.4"
+num-traits = "0.2"
+regex = "1"
+
+[dev-dependencies]
+serde_json = "1"

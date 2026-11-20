@@ -1,0 +1,8 @@
+[package]
+name = "cruncha-graph"
+description = "Cruncha's reactive dependency graph: evaluation order, invalidation and graph errors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

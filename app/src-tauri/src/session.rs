@@ -3,8 +3,10 @@
 //! around these methods, so everything here can be tested without a window.
 //!
 //! The app process is the single writer of any document it has open (ADR-0003): it holds the
-//! `Store` and its lock. The skeleton only views documents; edits will go through here too.
+//! `Store` and its lock. The editor's edits arrive as batched change sets through
+//! [`Session::commit`]: one commit per submitted calc or per idle pause in prose.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +16,46 @@ use cruncha_store::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::engine::{CellResult, Engine};
+
 pub type Result<T> = std::result::Result<T, String>;
+
+/// One change from the editor.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "short-lived values from one IPC call; boxing would only hurt ergonomics"
+)]
+pub enum ChangeView {
+    Upsert { cell: Cell },
+    Delete { id: String },
+}
+
+/// What a commit returns: the new document state and the results to show.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitView {
+    pub info: DocInfo,
+    pub results: HashMap<String, CellResult>,
+}
+
+/// Which state of the document: the latest, a version, or a named version.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct At {
+    pub version: Option<u64>,
+    #[serde(rename = "ref")]
+    pub ref_name: Option<String>,
+}
+
+/// The actor recorded on this user's commits.
+fn local_actor() -> String {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "local".into());
+    format!("user:{user}")
+}
 
 fn err(e: Error) -> String {
     e.to_string()
@@ -27,7 +68,13 @@ pub struct Prefs {
     /// Retention for documents that don't set their own (ADR-0011). Default: keep everything.
     #[serde(default)]
     pub default_retention: Retention,
+    /// Recently opened documents, most recent first.
+    #[serde(default)]
+    pub recent: Vec<String>,
 }
+
+/// How many recent documents to remember.
+const MAX_RECENT: usize = 8;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,6 +176,8 @@ impl From<PruneReport> for PruneView {
 
 struct OpenDoc {
     store: Store,
+    /// Evaluation state of the latest version (memoized results, current values).
+    engine: Engine,
     /// This session committed edits, so the document is due a prune when it closes.
     edited: bool,
     /// Pruned already this session (at most once per session, ADR-0011).
@@ -174,25 +223,47 @@ impl Session {
     pub async fn open(&mut self, path: &Path) -> Result<DocInfo> {
         self.close().await;
         let store = Store::open(path).await.map_err(err)?;
+        self.opened(store, false).await
+    }
+
+    /// Hold `store` as the open document and remember it in the recent list.
+    async fn opened(&mut self, store: Store, edited: bool) -> Result<DocInfo> {
+        let path = store.root().display().to_string();
         self.doc = Some(OpenDoc {
             store,
-            edited: false,
+            engine: Engine::new(),
+            edited,
             pruned: false,
         });
+        let mut prefs = self.prefs.clone();
+        prefs.recent.retain(|p| p != &path);
+        prefs.recent.insert(0, path);
+        prefs.recent.truncate(MAX_RECENT);
+        if let Err(e) = self.set_prefs(prefs) {
+            eprintln!("cruncha: could not save the recent-documents list: {e}");
+        }
         self.info().await
     }
 
-    /// Create a small example worksheet with some history, so there's something to look at
-    /// before the editor exists.
+    /// Forget a recent document (it was moved or deleted).
+    pub fn forget_recent(&mut self, path: &str) -> Result<()> {
+        let mut prefs = self.prefs.clone();
+        prefs.recent.retain(|p| p != path);
+        self.set_prefs(prefs)
+    }
+
+    /// Create a new, empty document at `path` and open it.
+    pub async fn create(&mut self, path: &Path) -> Result<DocInfo> {
+        self.close().await;
+        let store = Store::create(path, &local_actor()).await.map_err(err)?;
+        self.opened(store, false).await
+    }
+
+    /// Create a small example worksheet with some history.
     pub async fn create_sample(&mut self, path: &Path) -> Result<DocInfo> {
         self.close().await;
         let store = sample_document(path).await.map_err(err)?;
-        self.doc = Some(OpenDoc {
-            store,
-            edited: true,
-            pruned: false,
-        });
-        self.info().await
+        self.opened(store, true).await
     }
 
     /// Close the open document. If this session edited it, apply its retention policy first;
@@ -265,6 +336,64 @@ impl Session {
         self.doc()?.store.cells_at_ref(name).await.map_err(err)
     }
 
+    async fn cells_at(&self, at: &At) -> Result<Vec<Cell>> {
+        match &at.ref_name {
+            Some(name) => self.cells_at_ref(name).await,
+            None => self.cells(at.version).await,
+        }
+    }
+
+    /// Commit the editor's changes as one new version. Returns the new state and its results.
+    /// A calc cell's `defines` and `reads` are recomputed from its source, so the stored names
+    /// are always the evaluator's.
+    pub async fn commit(&mut self, changes: Vec<ChangeView>, message: &str) -> Result<CommitView> {
+        let doc = self.doc_mut()?;
+        let changes: Vec<Change> = changes
+            .into_iter()
+            .map(|c| match c {
+                ChangeView::Upsert { mut cell } => {
+                    if cell.kind == CellKind::Calc {
+                        (cell.defines, cell.reads) = doc.engine.names(&cell.source);
+                    }
+                    Change::Upsert(cell)
+                }
+                ChangeView::Delete { id } => Change::Delete(id),
+            })
+            .collect();
+        if !changes.is_empty() {
+            let message = if message.trim().is_empty() { "edit" } else { message };
+            doc.store
+                .commit(&changes, &local_actor(), message)
+                .await
+                .map_err(err)?;
+            doc.edited = true;
+        }
+        let results = self.results(&At::default()).await?;
+        Ok(CommitView {
+            info: self.info().await?,
+            results,
+        })
+    }
+
+    /// Results for every calc cell at `at`. The latest version uses the document's engine
+    /// (memoized); history is evaluated afresh.
+    pub async fn results(&mut self, at: &At) -> Result<HashMap<String, CellResult>> {
+        let cells = self.cells_at(at).await?;
+        let current = self.doc()?.store.version();
+        let latest = at.ref_name.is_none() && at.version.is_none_or(|v| v == current);
+        if latest {
+            Ok(self.doc_mut()?.engine.run(&cells))
+        } else {
+            Ok(Engine::new().run(&cells))
+        }
+    }
+
+    /// Evaluate a calc source while it is being typed, against the latest values (nothing is
+    /// committed).
+    pub fn preview_calc(&mut self, source: &str) -> Result<CellResult> {
+        Ok(self.doc_mut()?.engine.preview(source))
+    }
+
     pub async fn history(&self) -> Result<Vec<VersionView>> {
         let h = self.doc()?.store.history().await.map_err(err)?;
         Ok(h.into_iter().map(Into::into).collect())
@@ -324,6 +453,15 @@ fn prose(order: &str, text: &str) -> Cell {
     Cell::new(CellKind::Prose, order, doc.to_string())
 }
 
+fn heading(order: &str, level: u8, text: &str) -> Cell {
+    let doc = serde_json::json!({
+        "type": "heading",
+        "attrs": { "level": level },
+        "content": [{ "type": "text", "text": text }],
+    });
+    Cell::new(CellKind::Prose, order, doc.to_string())
+}
+
 fn calc(id: &str, order: &str, src: &str, defines: &[&str], reads: &[&str]) -> Cell {
     let mut c = Cell::new(CellKind::Calc, order, src);
     c.id = id.into();
@@ -348,9 +486,15 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
     );
     s.commit(
         &[
-            Change::Upsert(prose("a0", "Simply supported beam: maximum bending moment.")),
+            Change::Upsert(heading("a0", 1, "Beam check")),
+            Change::Upsert(prose(
+                "a1",
+                "Simply supported beam under a uniform load: maximum bending moment.",
+            )),
+            Change::Upsert(heading("a2", 2, "Loads and span")),
             Change::Upsert(w("1.2")),
             Change::Upsert(l("24")),
+            Change::Upsert(heading("b25", 2, "Bending moment")),
             Change::Upsert(m),
         ],
         me,
@@ -379,13 +523,23 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
     s.commit(&[Change::Upsert(l("26"))], me, "span revised to 26 ft")
         .await?;
     s.commit(
-        &[Change::Upsert(calc(
-            "CHK",
-            "d0",
-            "@test M < M_allow",
-            &[],
-            &["M", "M_allow"],
-        ))],
+        &[
+            Change::Upsert(heading("c5", 2, "Check")),
+            Change::Upsert(calc(
+                "MA",
+                "c7",
+                "M_allow = 150 kip·ft",
+                &["M_allow"],
+                &[],
+            )),
+            Change::Upsert(calc(
+                "CHK",
+                "d0",
+                "@test M < M_allow",
+                &[],
+                &["M", "M_allow"],
+            )),
+        ],
         me,
         "add allowable-moment check",
     )
@@ -410,7 +564,13 @@ mod tests {
         assert!(info.effective_retention.is_keep_everything());
 
         let latest = session.cells(None).await.unwrap();
-        assert_eq!(latest.len(), 7);
+        assert_eq!(latest.len(), 12);
+        // The sample evaluates: M = 1.5 kip/ft × (26 ft)² / 8, and its check passes.
+        let r = session.results(&At::default()).await.unwrap();
+        assert!(r["M"].text.ends_with("126.75 kip·ft"), "{:?}", r["M"]);
+        assert_eq!(r["CHK"].error, None, "{:?}", r["CHK"]);
+        let at_v1 = At { version: Some(1), ref_name: None };
+        assert!(session.results(&at_v1).await.unwrap()["M"].text.ends_with("86.4 kip·ft"));
         let rev_a = session.cells_at_ref("Rev A").await.unwrap();
         assert!(rev_a.iter().any(|c| c.source == "L = 24 ft"));
         let v1 = session.cells(Some(1)).await.unwrap();
@@ -426,6 +586,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn editor_changes_commit_as_one_version_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.cruncha");
+        let mut session = Session::new(None);
+        let info = session.create(&path).await.unwrap();
+        assert_eq!(info.version, 0);
+        assert!(session.cells(None).await.unwrap().is_empty());
+
+        let mut c = calc("C1", "a1", "x = 2 m", &[], &[]);
+        let p = prose("a0", "Intro");
+        let out = session
+            .commit(
+                vec![
+                    ChangeView::Upsert { cell: p.clone() },
+                    ChangeView::Upsert { cell: c.clone() },
+                ],
+                "add intro and x",
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.info.version, 1);
+        assert_eq!(out.results["C1"].error, None);
+        assert!(out.results["C1"].text.contains("2"), "{:?}", out.results);
+        // The stored names come from the evaluator, not from the editor.
+        let stored = session.cells(None).await.unwrap();
+        let c1 = stored.iter().find(|c| c.id == "C1").unwrap();
+        assert_eq!(c1.defines, ["x"]);
+
+        c.source = "x = 3 m".into();
+        let out = session
+            .commit(vec![ChangeView::Upsert { cell: c }], "")
+            .await
+            .unwrap();
+        assert_eq!(out.info.version, 2);
+        assert!(out.results["C1"].text.contains("3"), "{:?}", out.results);
+        let h = session.history().await.unwrap();
+        assert_eq!(h[0].message, "edit");
+        assert!(h[0].actor.starts_with("user:"));
+
+        let out = session
+            .commit(vec![ChangeView::Delete { id: p.id }], "delete intro")
+            .await
+            .unwrap();
+        assert_eq!(out.info.version, 3);
+        assert_eq!(session.cells(None).await.unwrap().len(), 1);
+        // An empty change set commits nothing.
+        assert_eq!(session.commit(vec![], "noop").await.unwrap().info.version, 3);
+        // Results of an earlier version.
+        let at = At { version: Some(1), ref_name: None };
+        assert_eq!(session.results(&at).await.unwrap()["C1"].error, None);
+
+        // The edited session prunes on close only if a policy says so: keep everything here.
+        assert!(session.close().await.is_none());
+    }
+
+    #[test]
+    fn change_json_from_the_front_end_parses() {
+        let json = serde_json::json!([
+            { "op": "delete", "id": "A" },
+            { "op": "upsert", "cell": {
+                "id": "B", "kind": "calc", "order_key": "a0", "parent_id": null,
+                "source": "x = 1", "attrs": {}, "defines": [], "reads": [],
+                "provenance": { "state": "human" }, "modified_by": "", "modified_at_us": 0
+            }}
+        ]);
+        let v: Vec<ChangeView> = serde_json::from_value(json).unwrap();
+        assert!(matches!(&v[0], ChangeView::Delete { id } if id == "A"));
+        assert!(matches!(&v[1], ChangeView::Upsert { cell } if cell.kind == CellKind::Calc));
+    }
+
+    #[tokio::test]
+    async fn opened_documents_are_remembered_most_recent_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Some(dir.path().join("prefs.json")));
+        let a = dir.path().join("a.cruncha");
+        let b = dir.path().join("b.cruncha");
+        session.create(&a).await.unwrap();
+        session.create(&b).await.unwrap();
+        session.open(&a).await.unwrap();
+        let recent = &session.prefs().recent;
+        assert_eq!(recent.len(), 2);
+        assert!(recent[0].ends_with("a.cruncha") && recent[1].ends_with("b.cruncha"));
+        let b_path = recent[1].clone();
+        session.forget_recent(&b_path).unwrap();
+        let session = Session::new(Some(dir.path().join("prefs.json")));
+        assert_eq!(session.prefs().recent.len(), 1);
+    }
+
+    #[tokio::test]
     async fn prefs_persist_and_apply_as_the_default() {
         let dir = tempfile::tempdir().unwrap();
         let prefs_path = dir.path().join("config/preferences.json");
@@ -438,6 +687,7 @@ mod tests {
         session
             .set_prefs(Prefs {
                 default_retention: policy.clone(),
+                ..Prefs::default()
             })
             .unwrap();
         let session = Session::new(Some(prefs_path));

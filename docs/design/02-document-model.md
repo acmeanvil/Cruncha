@@ -279,7 +279,7 @@ tests/conformance/   ported Hurmet golden tests + our own
 | ID | Spike | Answers |
 | --- | --- | --- |
 | S1 | Port Hurmet's lexer and parser to Rust against its 217 calc golden tests | Can we match its syntax? How big is the parser really? **Done 2026-11-19** ([write-up](../spikes/S1-calc-parser.md)): 282/283 golden cases match; about 4,500 lines of Rust in `crates/cruncha-lang`. |
-| S2 | `cruncha-graph`: a dependency graph over mixed calc and Python cells, with rename invalidation and cancellation | Is the execution model sound? |
+| S2 | `cruncha-graph`: a dependency graph over mixed calc and Python cells, with rename invalidation and cancellation | Is the execution model sound? **Core done 2026-11-19** (`crates/cruncha-graph`): order, rules 1, 3, 4 and 5, and memoized evaluation of calc cells in the app (`engine.rs`, rule 6). Cancellation and async scheduling (rule 7) wait for the Python worker (S4). |
 | S3 | **Delta store benchmark:** 2,000 small MERGE commits on local disk; time-travel latency; OPTIMIZE and checkpoint behavior; a Polars round trip of `data/*`; crash halfway through a commit | Does always-committed Delta hold up? This is the riskiest assumption. |
 | S4 | Python worker: an Arrow IPC round trip of a 1M-row Polars frame with units in metadata; AST dependency scan | Data-passing cost, and how reliable dependency detection is |
 | S5 | A Rust cell compiled to WASM with the prelude, measuring compile time and call overhead | Is the Rust-block UX acceptable? |

@@ -13,8 +13,13 @@
   --danger: #b42318;
   --danger-bg: #fdecea;
   --code: #1e293b;
+  --echo: #1d4ed8;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Document text: a serif that sits well next to STIX/Cambria math. */
+  --doc: "Iowan Old Style", Charter, "Bitstream Charter", "Palatino Linotype", Palatino, Georgia, serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -32,6 +37,9 @@
     --danger: #f97066;
     --danger-bg: #3d1a17;
     --code: #e2e8f0;
+    --echo: #8ab4ff;
+    --warn: #fbbf24;
+    --warn-bg: #3b2f12;
     color-scheme: dark;
   }
 }

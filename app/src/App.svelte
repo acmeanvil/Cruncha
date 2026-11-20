@@ -1,29 +1,44 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import {
     api,
     KEEP_EVERYTHING,
     type Cell,
+    type CellResult,
+    type CommitView,
     type DocInfo,
     type Prefs,
     type Selection,
     type VersionView,
   } from "./lib/api";
-  import CellList from "./lib/CellList.svelte";
   import DocumentSettings from "./lib/DocumentSettings.svelte";
-  import HistoryPanel from "./lib/HistoryPanel.svelte";
+  import Editor from "./lib/Editor.svelte";
+  import Sidebar from "./lib/Sidebar.svelte";
   import Preferences from "./lib/Preferences.svelte";
   import { date, describeRetention } from "./lib/format";
+  import type { SaveState } from "./lib/editor/sync";
+  import type { OutlineItem } from "./lib/editor/outline";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
   let doc = $state<DocInfo | null>(null);
   let history = $state<VersionView[]>([]);
   let selected = $state<Selection>({ kind: "latest" });
-  let cells = $state<Cell[]>([]);
+  let cells = $state.raw<Cell[]>([]);
+  let results = $state.raw<Record<string, CellResult>>({});
+  let loads = $state(0);
+  let save = $state<SaveState>({ status: "saved", error: null });
   let modal = $state<"prefs" | "doc" | null>(null);
   let error = $state<string | null>(null);
+  let editor = $state<ReturnType<typeof Editor> | undefined>();
+  let outline = $state.raw<OutlineItem[]>([]);
+  let sidebar = $state(true);
+  let fileMenu = $state(false);
+
+  const loadKey = $derived(`${doc?.id ?? ""}:${loads}`);
+  const editable = $derived(selected.kind === "latest");
 
   async function attempt(f: () => Promise<void>) {
     error = null;
@@ -34,13 +49,23 @@
     }
   }
 
+  /** Save pending edits before the editor shows something else. */
+  async function flush() {
+    await editor?.flush();
+  }
+
   async function show(s: Selection) {
     await attempt(async () => {
-      cells =
-        s.kind === "ref"
-          ? await api.cellsAtRef(s.name)
-          : await api.cells(s.kind === "version" ? s.version : null);
+      await flush();
+      const at = s.kind === "ref" ? { ref: s.name } : { version: s.kind === "version" ? s.version : null };
+      const [c, r] = await Promise.all([
+        s.kind === "ref" ? api.cellsAtRef(s.name) : api.cells(s.kind === "version" ? s.version : null),
+        api.results(at),
+      ]);
+      cells = c;
+      results = r;
       selected = s;
+      loads += 1;
     });
   }
 
@@ -48,29 +73,61 @@
     doc = info;
     history = info ? await api.history() : [];
     if (info) await show({ kind: "latest" });
+    prefs = await api.getPrefs(); // the recent list changed
   }
 
-  onMount(() =>
+  const openRecent = (path: string) =>
+    attempt(async () => {
+      await flush();
+      try {
+        await load(await api.openDocument(path));
+      } catch (e) {
+        await api.forgetRecent(path);
+        prefs = await api.getPrefs();
+        throw `Couldn't open ${path}: ${e}`;
+      }
+    });
+
+  const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  const folderOf = (p: string) => p.slice(0, Math.max(0, p.length - fileName(p).length - 1));
+
+  onMount(() => {
     void attempt(async () => {
       prefs = await api.getPrefs();
       await load(await api.documentInfo());
-    }),
-  );
+    });
+    // Save pending edits before the window closes (the backend then releases the document).
+    const unlisten = getCurrentWindow().onCloseRequested(async () => {
+      await flush();
+    });
+    return () => void unlisten.then((f) => f());
+  });
 
   const openDocument = () =>
     attempt(async () => {
+      await flush();
       const path = await openDialog({ directory: true, title: "Open a Cruncha document (.cruncha)" });
       if (typeof path === "string") await load(await api.openDocument(path));
     });
 
+  const newDocument = () =>
+    attempt(async () => {
+      await flush();
+      const path = await saveDialog({ title: "New Cruncha document", defaultPath: "Untitled.cruncha" });
+      if (path) await load(await api.createDocument(path));
+    });
+
   const createSample = () =>
     attempt(async () => {
-      const path = await saveDialog({
-        title: "Create a sample document",
-        defaultPath: "beam-check.cruncha",
-      });
+      await flush();
+      const path = await saveDialog({ title: "Create a sample document", defaultPath: "beam-check.cruncha" });
       if (path) await load(await api.createSampleDocument(path));
     });
+
+  async function committed(v: CommitView) {
+    doc = v.info;
+    history = await api.history();
+  }
 
   // The open document may follow the default, so its effective policy can change.
   const prefsSaved = (p: Prefs) =>
@@ -81,7 +138,7 @@
 
   const heading = $derived.by(() => {
     if (!doc) return "";
-    if (selected.kind === "latest") return `Latest · version ${doc.version}`;
+    if (selected.kind === "latest") return `Version ${doc.version}`;
     if (selected.kind === "ref") {
       const name = selected.name;
       const r = doc.refs.find((x) => x.name === name);
@@ -91,17 +148,51 @@
     const info = history.find((h) => h.version === v);
     return `Version ${v}${info ? ` · ${date(info.timestampMs)}` : ""}`;
   });
+
+  const saveLabel = $derived(
+    { saved: "Saved", pending: "Editing…", saving: "Saving…", error: "Not saved" }[save.status],
+  );
 </script>
+
+<svelte:window onkeydown={(e) => e.key === "Escape" && (fileMenu = false)} />
 
 <div class="app">
   <header class="bar">
+    {#if doc}
+      <button class="icon" title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed={sidebar} onclick={() => (sidebar = !sidebar)}>
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" /><line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" /></svg>
+      </button>
+    {/if}
     <strong class="brand">Cruncha</strong>
-    {#if doc}<span class="doc" title={doc.path}>{doc.name}</span>{/if}
+    {#if doc}
+      <span class="doc" title={doc.path}>{doc.name.replace(/\.cruncha$/, "")}</span>
+      {#if selected.kind === "latest"}
+        <span class="status {save.status}" title={save.error ?? ""}>{saveLabel}</span>
+      {/if}
+    {/if}
     <span class="spacer"></span>
-    <button onclick={openDocument}>Open…</button>
-    <button onclick={createSample}>New sample…</button>
+    <div class="file">
+      <button aria-haspopup="menu" aria-expanded={fileMenu} onclick={() => (fileMenu = !fileMenu)}>File ▾</button>
+      {#if fileMenu}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="menu" role="menu" tabindex="-1" onclick={() => (fileMenu = false)}>
+          <button role="menuitem" onclick={newDocument}>New document…</button>
+          <button role="menuitem" onclick={openDocument}>Open…</button>
+          <button role="menuitem" onclick={createSample}>New sample document…</button>
+          {#if prefs.recent?.length}
+            <hr />
+            <span class="label small muted">Recent</span>
+            {#each prefs.recent.slice(0, 6) as p (p)}
+              <button role="menuitem" title={p} onclick={() => openRecent(p)}>{fileName(p).replace(/\.cruncha$/, "")}</button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
     {#if doc}<button onclick={() => (modal = "doc")}>Document settings</button>{/if}
-    <button onclick={() => (modal = "prefs")}>Preferences</button>
+    <button class="icon" title="Preferences" aria-label="Preferences" onclick={() => (modal = "prefs")}>
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-linecap="round" /></svg>
+    </button>
   </header>
 
   {#if error}
@@ -111,15 +202,19 @@
   {/if}
 
   {#if doc}
-    <div class="main">
-      <HistoryPanel
-        {history}
-        refs={doc.refs}
-        latest={doc.version}
-        earliest={doc.earliestVersion}
-        {selected}
-        onselect={show}
-      />
+    <div class="main" class:nosidebar={!sidebar}>
+      {#if sidebar}
+        <Sidebar
+          {outline}
+          {history}
+          refs={doc.refs}
+          latest={doc.version}
+          earliest={doc.earliestVersion}
+          {selected}
+          onselect={show}
+          onjump={(pos) => editor?.jumpTo(pos)}
+        />
+      {/if}
       <main>
         <div class="viewing">
           <span>{heading}</span>
@@ -128,25 +223,51 @@
             <button class="link" onclick={() => show({ kind: "latest" })}>Back to latest</button>
           {:else}
             <span class="muted small">
-              read-only for now · history: {describeRetention(doc.effectiveRetention)}{doc.retention ==
-              null
-                ? " (app default)"
-                : ""}
+              Latest · every change is saved · history: {describeRetention(doc.effectiveRetention).toLowerCase()}{doc.retention == null ? " (app default)" : ""}
             </span>
           {/if}
         </div>
-        <div class="page"><CellList {cells} /></div>
+        {#if save.error}
+          <div class="error" role="alert">
+            Saving failed: {save.error}
+            <button class="link" onclick={() => void flush()}>Retry</button>
+          </div>
+        {/if}
+        <div class="page">
+          <Editor
+            bind:this={editor}
+            {cells}
+            {results}
+            {editable}
+            {loadKey}
+            oncommitted={committed}
+            onsavestate={(s) => (save = s)}
+            onoutline={(o) => (outline = o)}
+          />
+        </div>
       </main>
     </div>
   {:else}
     <div class="welcome">
       <h1>Cruncha</h1>
-      <p class="muted">Live, unit-aware engineering calculations with full version history.</p>
-      <p>
-        <button class="primary" onclick={openDocument}>Open a document…</button>
-        <button onclick={createSample}>Create a sample document…</button>
+      <p class="muted lede">Live, unit-aware engineering calculations with full version history.</p>
+      <p class="actions">
+        <button class="primary" onclick={newDocument}>New document…</button>
+        <button onclick={openDocument}>Open…</button>
+        <button onclick={createSample}>Try a sample…</button>
       </p>
-      <p class="small muted">This early build shows documents read-only: cells at any version, history and named versions.</p>
+      {#if prefs.recent?.length}
+        <section class="recent">
+          <h2>Recent</h2>
+          {#each prefs.recent as p (p)}
+            <button class="recent-row" title={p} onclick={() => openRecent(p)}>
+              <span class="name">{fileName(p).replace(/\.cruncha$/, "")}</span>
+              <span class="small muted path">{folderOf(p)}</span>
+            </button>
+          {/each}
+        </section>
+      {/if}
+      <p class="small muted">Every change is saved as a new version as you work; there is no Save button.</p>
     </div>
   {/if}
 </div>
@@ -154,36 +275,66 @@
 {#if modal === "prefs"}
   <Preferences {prefs} {doc} onclose={() => (modal = null)} onsaved={prefsSaved} />
 {:else if modal === "doc" && doc}
-  <DocumentSettings
-    {doc}
-    {prefs}
-    onclose={() => (modal = null)}
-    onchanged={(d) => void load(d)}
-  />
+  <DocumentSettings {doc} {prefs} onclose={() => (modal = null)} onchanged={(d) => void load(d)} />
 {/if}
 
 <style>
   .app { display: grid; grid-template-rows: auto auto 1fr; height: 100%; }
   .bar {
-    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
     background: var(--panel); border-bottom: 1px solid var(--border);
   }
-  .brand { color: var(--accent); }
+  .brand { color: var(--accent); letter-spacing: 0.01em; }
   .doc { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc::before { content: "/"; color: var(--border); margin-right: 8px; }
   .spacer { flex: 1; }
+  .icon { padding: 4px 6px; line-height: 0; color: var(--muted); }
+  .icon:hover { color: var(--text); }
+  .status { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--sunken); color: var(--muted); }
+  .status.saved::before { content: "✓ "; }
+  .status.error { color: var(--danger); background: var(--danger-bg); }
+  .file { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px;
+    display: grid; padding: 4px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+  }
+  .menu button {
+    border: none; background: none; text-align: left; padding: 6px 10px; border-radius: 5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .menu button:hover { background: var(--sunken); }
+  .menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+  .menu .label { padding: 2px 10px; }
   .error { background: var(--danger-bg); color: var(--danger); padding: 6px 12px; }
-  .main { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
-  main { overflow: auto; min-width: 0; }
+  .main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+  .main.nosidebar { grid-template-columns: 1fr; }
+  main { overflow: auto; min-width: 0; background: var(--bg); }
   .viewing {
-    position: sticky; top: 0; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
-    padding: 10px 24px; background: var(--bg); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 2; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    padding: 8px 24px; background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
   }
   .page {
-    max-width: 860px; margin: 16px auto; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 8px; padding: 16px 12px;
+    max-width: 880px; margin: 20px auto 48px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 28px 64px 24px 104px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
   }
-  .welcome { max-width: 520px; margin: 12vh auto; text-align: center; padding: 0 16px; }
-  .welcome h1 { color: var(--accent); margin-bottom: 4px; }
+  .welcome { max-width: 560px; margin: 10vh auto; padding: 0 16px; text-align: center; }
+  .welcome h1 { color: var(--accent); margin-bottom: 4px; font-size: 2.2em; letter-spacing: -0.01em; }
+  .lede { font-size: 15px; }
+  .actions { display: flex; gap: 8px; justify-content: center; margin: 20px 0 28px; }
+  .recent { text-align: left; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 6px; margin-bottom: 20px; }
+  .recent h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 6px 8px; }
+  .recent-row {
+    display: grid; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px;
+    border-radius: 5px;
+  }
+  .recent-row:hover { background: var(--sunken); }
+  .recent-row .name { font-weight: 500; }
+  .recent-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 900px) {
+    .page { padding: 20px 24px 20px 96px; margin: 0; border-radius: 0; border-left: none; border-right: none; }
+  }
   @media (max-width: 760px) {
     .main { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; }
   }

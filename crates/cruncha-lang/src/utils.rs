@@ -5,7 +5,7 @@
 //! semantics (UTF-16 lengths, `\s`, `trim`) where Hurmet's output depends on them.
 
 /// JavaScript's `\s` (WhiteSpace plus LineTerminator).
-pub(crate) fn is_js_space(c: char) -> bool {
+pub fn is_js_space(c: char) -> bool {
     matches!(
         c,
         '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
@@ -20,7 +20,7 @@ pub(crate) fn is_js_space(c: char) -> bool {
 }
 
 /// JavaScript `String.prototype.trim`.
-pub(crate) fn js_trim(s: &str) -> &str {
+pub fn js_trim(s: &str) -> &str {
     s.trim_matches(is_js_space)
 }
 
@@ -44,7 +44,7 @@ pub(crate) fn trim_leading_space(s: &str) -> &str {
 }
 
 /// Length in UTF-16 code units, as JavaScript's `String.length`.
-pub(crate) fn utf16_len(s: &str) -> usize {
+pub fn utf16_len(s: &str) -> usize {
     s.chars().map(char::len_utf16).sum()
 }
 
@@ -83,7 +83,7 @@ pub(crate) fn next_char_boundary(s: &str, pos: usize) -> usize {
 }
 
 /// Convert a numeral superscript (⁰¹²³…⁻) to its ASCII numeral.
-pub(crate) fn numeral_from_superscript(ch: char) -> char {
+pub fn numeral_from_superscript(ch: char) -> char {
     match ch {
         '²' => '2',
         '³' => '3',
@@ -95,12 +95,12 @@ pub(crate) fn numeral_from_superscript(ch: char) -> char {
 }
 
 /// Trim spaces, CR, LF and FF but not tabs (for TSV).
-pub(crate) fn tabless_trim(s: &str) -> &str {
+pub fn tabless_trim(s: &str) -> &str {
     s.trim_matches(|c| matches!(c, ' ' | '\r' | '\n' | '\u{0C}'))
 }
 
 /// If a name has a numeric subscript, e.g. `x_2`, convert it to Unicode subscript, `x₂`.
-pub(crate) fn check_for_numeric_subscript(var_name: &str) -> String {
+pub fn check_for_numeric_subscript(var_name: &str) -> String {
     // /_([0-9]+)(?=(′|$))/
     for (i, _) in var_name.match_indices('_') {
         let rest = &var_name[i + 1..];
@@ -168,7 +168,7 @@ fn text_accent(c: char) -> Option<&'static str> {
 }
 
 /// Insert TeX escapes for `# $ & % _ ~ ^` and convert combining accents to text accents.
-pub(crate) fn add_text_escapes(input: &str) -> String {
+pub fn add_text_escapes(input: &str) -> String {
     let mut s = input.to_string();
     if utf16_len(&s) <= 1 {
         return s;
@@ -208,7 +208,7 @@ fn is_exponent_char(c: char) -> bool {
 }
 
 /// TeX for a unit name, wrapped in an extra pair of braces.
-pub(crate) fn unit_tex_from_string(s: &str) -> String {
+pub fn unit_tex_from_string(s: &str) -> String {
     let mut unit = String::from(" {\\text{");
     let mut in_exponent = false;
     for (i, c) in s.char_indices() {

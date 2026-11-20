@@ -7,10 +7,10 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0001](0001-license-gpl-3.md) | License: GPL-3.0-or-later | Accepted |
 | [0002](0002-hurmet-document-model.md) | Hurmet as the basis of the document and calc model (rewritten in Rust) | Accepted |
 | [0003](0003-hybrid-delta-lake-storage.md) | Hybrid Delta Lake container as the storage format | Accepted |
-| [0004](0004-reactive-graph-unique-names.md) | Reactive dependency graph with one definition per name | Proposed |
+| [0004](0004-reactive-graph-unique-names.md) | Reactive dependency graph with one definition per name | Accepted |
 | [0005](0005-python-out-of-process-worker.md) | Python cells run in an out-of-process worker | Proposed |
 | [0006](0006-rust-cells-wasm.md) | Rust cells compile to WASM and run in wasmtime | Proposed |
-| [0007](0007-always-unit-aware.md) | Calculations are always unit-aware | Proposed |
+| [0007](0007-always-unit-aware.md) | Calculations are always unit-aware | Accepted |
 | [0008](0008-app-shell-tauri-web.md) | App shell: Tauri with a web UI (not GPUI) | Accepted |
 | [0009](0009-agent-interface-acp-mcp.md) | Agent interface: ACP client, Cruncha MCP server, built-in agent from looking_glass | Proposed |
 | [0010](0010-doc-table-append-only-log.md) | The `doc` table is an append-only revision log with periodic squash (refines 0003) | Accepted |

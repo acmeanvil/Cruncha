@@ -130,8 +130,8 @@ fn is_unary(prev: &Token) -> bool {
 }
 
 // utils.js isValidIdentifier, without the leading ^ and the trailing ′*$.
-const IDENTIFIER_START: &str = r"(?:[A-Za-zıȷ\x{0391}-\x{03C9}\x{03D5}\x{210B}\x{210F}\x{2110}\x{2112}\x{2113}\x{211B}\x{212C}\x{2130}\x{2131}\x{2133}]|[\x{1D400}-\x{1D433}\x{1D49C}-\x{1D4B5}])";
-const IDENTIFIER_BODY: &str = r"(?:[A-Za-z0-9\x{0391}-\x{03C9}\x{03D5}]+|[\x{0300}-\x{0308}\x{030A}\x{030C}\x{0332}\x{20d0}\x{20d1}\x{20d6}\x{20d7}\x{20e1}])?(?:(?:_(?:[A-Za-z0-9\x{0391}-\x{03C9}\x{03D5}]+|\([A-Za-z0-9\x{0391}-\x{03C9}\x{03D5},]+\))){1,2}|[₀-₉]+)?";
+pub const IDENTIFIER_START: &str = r"(?:[A-Za-zıȷ\x{0391}-\x{03C9}\x{03D5}\x{210B}\x{210F}\x{2110}\x{2112}\x{2113}\x{211B}\x{212C}\x{2130}\x{2131}\x{2133}]|[\x{1D400}-\x{1D433}\x{1D49C}-\x{1D4B5}])";
+pub const IDENTIFIER_BODY: &str = r"(?:[A-Za-z0-9\x{0391}-\x{03C9}\x{03D5}]+|[\x{0300}-\x{0308}\x{030A}\x{030C}\x{0332}\x{20d0}\x{20d1}\x{20d6}\x{20d7}\x{20e1}])?(?:(?:_(?:[A-Za-z0-9\x{0391}-\x{03C9}\x{03D5}]+|\([A-Za-z0-9\x{0391}-\x{03C9}\x{03D5},]+\))){1,2}|[₀-₉]+)?";
 
 static WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(

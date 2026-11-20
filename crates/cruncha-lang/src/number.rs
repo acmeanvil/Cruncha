@@ -58,7 +58,7 @@ pub(crate) fn tex_from_num_parts(parts: &Captures, decimal_format: &str) -> Stri
     num
 }
 
-fn formatted_integer(int_str: &str, decimal_format: &str) -> String {
+pub fn formatted_integer(int_str: &str, decimal_format: &str) -> String {
     let sep = decimal_format.chars().nth(1).unwrap_or(',');
     if sep == '0' {
         return int_str.to_string();
@@ -91,7 +91,8 @@ fn formatted_integer(int_str: &str, decimal_format: &str) -> String {
         (3, s.to_string())
     };
     for (i, d) in digits.iter().enumerate() {
-        if i > 0 && (n - i).is_multiple_of(group) {
+        // `\B`: only between two digits (a leading minus sign gets no separator).
+        if i > 0 && digits[i - 1].is_ascii_digit() && (n - i).is_multiple_of(group) {
             out.push_str(&sep_str);
         }
         out.push(*d);
@@ -100,7 +101,7 @@ fn formatted_integer(int_str: &str, decimal_format: &str) -> String {
 }
 
 /// format.js `formattedDecimal` without trailing-zero truncation.
-pub(crate) fn formatted_decimal(num_str: &str, decimal_format: &str) -> String {
+pub fn formatted_decimal(num_str: &str, decimal_format: &str) -> String {
     match num_str.find('.') {
         None => formatted_integer(num_str, decimal_format),
         Some(pos) => {
