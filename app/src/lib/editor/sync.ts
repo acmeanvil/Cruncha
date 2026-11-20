@@ -71,6 +71,11 @@ export class DocSync {
     private onState: (s: SaveState) => void,
   ) {}
 
+  /** The committed source of each cell (results are for these). */
+  sources(): Map<string, string> {
+    return new Map([...this.committed.values()].map((c) => [c.id, c.source]));
+  }
+
   /** Start from these committed cells (the editor shows exactly these). */
   load(cells: Cell[]) {
     clearTimeout(this.timer);

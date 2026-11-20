@@ -17,8 +17,12 @@ export interface Variable {
   description: string;
   /** The value as TeX, if it was evaluated. */
   tex: string | null;
+  /** Python values: what the object is (shown when calcs can't use it). */
+  summary: string | null;
   /** "number", "matrix", … */
   valueKind: string | null;
+  /** Vectors, matrices, frames: their size ("3 × 4 matrix"). */
+  shape: string | null;
   /** The defining cell's plain-text result line. */
   text: string;
   error: string | null;
@@ -51,7 +55,9 @@ export function variablesOf(doc: Node, resultOf: (id: string) => CellResult | un
       out.push({
         name, id, pos, kind, description, section,
         tex: v?.tex || null,
+        summary: v?.summary ?? null,
         valueKind: v?.kind ?? null,
+        shape: v?.shape ?? null,
         text: r.text ?? "",
         error: r.error,
         warnings: r.warnings ?? [],
@@ -65,6 +71,12 @@ export function variablesOf(doc: Node, resultOf: (id: string) => CellResult | un
     v.usedBy = [...users];
   }
   return out;
+}
+
+/** Is the value too tall for one line (a vector, matrix, frame, or multi-row TeX)? The
+ *  browser shows these collapsed to their size, with a toggle. */
+export function isTall(v: Variable): boolean {
+  return v.shape != null || /\\begin\{|\\\\/.test(v.tex ?? "");
 }
 
 /** Does `v` match the search text (name or description, case-insensitive)? */

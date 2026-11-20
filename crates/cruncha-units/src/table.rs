@@ -5,6 +5,9 @@
 //! Hurmet's unit table: name, factor numerator, factor denominator, gauge, misc, exponents.
 //! `misc` is `siSymbol`/`siWord` (SI prefixes allowed), a 3-letter currency code, or `0`.
 //! Exponents: length, mass, time, current, temperature, amount, luminous intensity, money.
+//!
+//! Corrections to Hurmet's data (see `CORRECTIONS` in tools/gen_table.py):
+//! the Fahrenheit gauge is 459.67, not 459 (0 °F = 459.67 °R exactly).
 
 pub(crate) type Row = (
     &'static str,
@@ -54,7 +57,7 @@ pub(crate) static UNIT_TABLE: &[Row] = &[
     ("EiB", "9223372036854770000", "1", "0", "0", [0, 0, 0, 0, 0, 1, 0, 0]),
     ("Euro", "1", "1", "0", "EUR", [0, 0, 0, 0, 0, 0, 0, 1]),
     ("F", "1", "1", "0", "siSymbol", [-2, -1, 4, 2, 0, 0, 0, 0]),
-    ("Fahrenheit", "5", "9", "459", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    ("Fahrenheit", "5", "9", "459.67", "0", [0, 0, 0, 0, 1, 0, 0, 0]),  // corrected: Hurmet has 459
     ("Fr", "0.9284", "1", "0", "CHF", [0, 0, 0, 0, 0, 0, 0, 1]),
     ("G", "0.0001", "1", "0", "siSymbol", [-2, -2, -2, -1, 0, 0, 0, 0]),
     ("GB", "8589934592", "1", "0", "0", [0, 0, 0, 0, 0, 1, 0, 0]),
@@ -541,7 +544,7 @@ pub(crate) static UNIT_TABLE: &[Row] = &[
     ("¥", "1", "1", "0", "JPY", [0, 0, 0, 0, 0, 0, 0, 1]),
     ("°", "3.14159265358979", "180", "0", "0", [0, 0, 0, 0, 0, 0, 0, 0]),
     ("°C", "1", "1", "273.15", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
-    ("°F", "5", "9", "459", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    ("°F", "5", "9", "459.67", "0", [0, 0, 0, 0, 1, 0, 0, 0]),  // corrected: Hurmet has 459
     ("°K", "1", "1", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
     ("°R", "5", "9", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
     ("°R", "5", "9", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),  // duplicate key in Hurmet's JSON: the last one wins
@@ -554,7 +557,7 @@ pub(crate) static UNIT_TABLE: &[Row] = &[
     ("₪", "1", "1", "0", "ILS", [0, 0, 0, 0, 0, 0, 0, 1]),
     ("€", "1", "1", "0", "EUR", [0, 0, 0, 0, 0, 0, 0, 1]),
     ("℃", "1", "1", "273.15", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
-    ("℉", "5", "9", "459", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    ("℉", "5", "9", "459.67", "0", [0, 0, 0, 0, 1, 0, 0, 0]),  // corrected: Hurmet has 459
     ("Ω", "1", "1", "0", "siSymbol", [2, 1, -3, -2, 0, 0, 0, 0]),
     ("K", "1", "1", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
     ("Å", "0.0000000001", "1", "0", "0", [1, 0, 0, 0, 0, 0, 0, 0]),  // Hurmet has a ninth exponent here (bug); dropped

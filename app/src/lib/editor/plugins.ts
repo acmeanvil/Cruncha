@@ -123,16 +123,24 @@ const codeTab: Command = (state, dispatch) => {
   return true;
 };
 
-export function editorPlugins(onSubmit: () => void) {
+export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => void) {
   const submit: Command = () => {
     onSubmit();
+    return true;
+  };
+  /** Shift+Enter in a Python cell: save it and run it. */
+  const runCode: Command = (state) => {
+    const parent = state.selection.$from.parent;
+    if (parent.type !== schema.nodes.code_block || parent.attrs.lang !== "python" || !onRunCode) return false;
+    const id = parent.attrs.id as string | null;
+    if (id) onRunCode(id);
     return true;
   };
   return [
     cellIdentity,
     inputRules({
       rules: [
-        textblockTypeInputRule(/^(#{1,3})\s$/, schema.nodes.heading, (m) => ({ level: m[1].length })),
+        textblockTypeInputRule(/^(#{1,6})\s$/, schema.nodes.heading, (m) => ({ level: m[1].length })),
         textblockTypeInputRule(/^```(python|rust|tex)?\s$/, schema.nodes.code_block, (m) => ({ lang: m[1] ?? "python" })),
         // "= " at the start of an empty paragraph starts a calc.
         new InputRule(/^=\s$/, (state, _m, start, end) => {
@@ -158,6 +166,9 @@ export function editorPlugins(onSubmit: () => void) {
       "Mod-Alt-1": setBlockType(schema.nodes.heading, { level: 1 }),
       "Mod-Alt-2": setBlockType(schema.nodes.heading, { level: 2 }),
       "Mod-Alt-3": setBlockType(schema.nodes.heading, { level: 3 }),
+      "Mod-Alt-4": setBlockType(schema.nodes.heading, { level: 4 }),
+      "Mod-Alt-5": setBlockType(schema.nodes.heading, { level: 5 }),
+      "Mod-Alt-6": setBlockType(schema.nodes.heading, { level: 6 }),
       "Alt-ArrowUp": moveBlock(-1),
       "Alt-ArrowDown": moveBlock(1),
       "Mod-s": submit,
@@ -167,6 +178,7 @@ export function editorPlugins(onSubmit: () => void) {
         onSubmit();
         return true;
       },
+      "Shift-Enter": runCode,
       Tab: codeTab,
     }),
     keymap(baseKeymap),

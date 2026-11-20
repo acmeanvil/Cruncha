@@ -51,6 +51,14 @@
 //! A literal assignment (`L = 3 ft`) and a function definition are complete after `prepare`;
 //! `evaluate` returns their value without computing anything.
 //!
+//! ## Exchanging values (the Python worker)
+//!
+//! [`Value::to_plain`] gives a serde-serializable [`Plain`] (number with an exact rational and
+//! a [`UnitView`], array, data frame, text, …), and [`Value::from_plain`] builds a value from
+//! one that later statements read like an assigned value, echo included. A unit name that
+//! does not parse (or has other dimensions) falls back to SI. See the `exchange` module source
+//! for the full mapping and what is lossy.
+//!
 //! ## Errors
 //!
 //! `prepare` fails only when the expression is malformed ([`Error::Parse`]). Everything else is
@@ -78,6 +86,7 @@ mod dataframe;
 mod echo;
 mod error;
 mod eval;
+mod exchange;
 mod format;
 mod functions;
 mod literal;
@@ -97,6 +106,7 @@ use value::{OUnit, UnitObj, V, dt, is_matrix};
 
 pub use cruncha_lang::Formats;
 pub use cruncha_units::{Currencies, Rational};
+pub use exchange::{ColumnData, Num, Plain, PlainColumn, UnitView};
 pub use value::{Kind, Value};
 
 /// Whether calculations convert to SI base units and check dimensions.
@@ -255,8 +265,14 @@ impl Vars {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn insert(&mut self, name: impl Into<String>, value: Value) -> Option<Value> {
-        self.map.insert(name.into(), value)
+    /// Insert a value. A value without a name (for example one from [`Value::from_plain`])
+    /// takes `name`, which Hurmet's error messages and data frame headings use.
+    pub fn insert(&mut self, name: impl Into<String>, mut value: Value) -> Option<Value> {
+        let name = name.into();
+        if value.name.is_none() {
+            value.name = Some(name.clone());
+        }
+        self.map.insert(name, value)
     }
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.map.get(name)
@@ -303,7 +319,7 @@ pub struct Outcome {
     pub error: Option<String>,
 }
 
-fn ctx_for<'a>(opts: &'a Options, format_spec: &str) -> Ctx<'a> {
+pub(crate) fn ctx_for<'a>(opts: &'a Options, format_spec: &str) -> Ctx<'a> {
     Ctx {
         decimal_format: &opts.formats.decimal_format,
         date_format: opts.formats.date_format.as_deref(),
@@ -340,7 +356,7 @@ const BASE_UNITS: [&str; 8] = ["m", "kg", "s", "A", "K", "unit", "cd", "EUR"];
 
 /// The SI base unit for a dimension vector, e.g. `kg·m²·s⁻²` (ADR-0007's display for a
 /// result without a display unit). `None` for fractional exponents.
-fn si_unit_name(d: &Dims) -> Option<String> {
+pub(crate) fn si_unit_name(d: &Dims) -> Option<String> {
     let order = [1usize, 0, 2, 3, 4, 5, 6, 7];
     let mut parts = Vec::new();
     for &k in &order {

@@ -8,8 +8,11 @@
   import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
   import type { Cell, CellResult, CommitView } from "./api";
   import { CalcView } from "./editor/calcView";
+  import { CodeView } from "./editor/codeView";
+  import { api } from "./api";
   import { docFromCells, withDescription } from "./editor/cells";
   import {
+    currentBlock,
     editorPlugins,
     insertBlock,
     moveBlock,
@@ -33,6 +36,7 @@
     onsavestate,
     onoutline,
     onvariables,
+    onerror,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -43,6 +47,7 @@
     onsavestate: (s: SaveState) => void;
     onoutline?: (items: OutlineItem[]) => void;
     onvariables?: (vars: Variable[]) => void;
+    onerror?: (message: string) => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -62,6 +67,27 @@
   export function flush(): Promise<void> {
     return sync.flush();
   }
+
+  /** Results computed in the background (Python cells finished), for the latest version. */
+  export function applyResults(r: Record<string, CellResult>) {
+    store.set(r, sync.sources());
+    refreshOutline();
+  }
+
+  /** Save, then run Python cells (`ids`, or all). */
+  export async function runPython(ids?: string[]) {
+    await sync.flush();
+    try {
+      applyResults(await api.runPython(ids));
+    } catch (e) {
+      onerror?.(String(e));
+    }
+  }
+
+  const codeActions = {
+    run: (id: string) => void runPython([id]),
+    stop: () => void api.stopPython().catch((e) => onerror?.(String(e))),
+  };
 
   /** Put the cursor at the block at `pos` and scroll it into view. */
   export function jumpTo(pos: number) {
@@ -137,7 +163,7 @@
   function load() {
     const state = EditorState.create({
       doc: docFromCells(cells),
-      plugins: [...editorPlugins(() => void sync.flush()), placeholder],
+      plugins: [...editorPlugins(() => void sync.flush(), (id) => void runPython([id])), placeholder],
     });
     sync.load(cells);
     store.set(results, sourcesOf(cells));
@@ -147,6 +173,7 @@
         editable: () => editable,
         nodeViews: {
           calc: (node, v, getPos) => new CalcView(node, v, getPos, store, () => void sync.flush()),
+          code_block: (node, v) => new CodeView(node, v, store, codeActions),
         },
         dispatchTransaction(tr) {
           const v = view!;
@@ -189,20 +216,80 @@
     }
   }
 
-  function hover(e: MouseEvent) {
-    if (!view || menu) return;
-    let el = e.target as HTMLElement | null;
-    while (el && el.parentElement !== view.dom) el = el.parentElement;
-    if (!el) return;
-    let found: { pos: number; node: PMNode } | null = null;
+  /** The top-level block at height `y` (viewport px), including the margins around it. */
+  function blockAtY(y: number): { pos: number; node: PMNode; el: HTMLElement } | null {
+    if (!view) return null;
+    let found: { pos: number; node: PMNode; el: HTMLElement } | null = null;
+    let nearest = Infinity;
     view.state.doc.forEach((node, pos) => {
-      if (!found && view!.nodeDOM(pos) === el) found = { pos, node };
+      const el = view!.nodeDOM(pos) as HTMLElement | null;
+      if (!el?.getBoundingClientRect) return;
+      const r = el.getBoundingClientRect();
+      // Distance from the block (0 inside it): the margin between two blocks goes to the nearer.
+      const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+      if (d < nearest) {
+        nearest = d;
+        found = { pos, node, el };
+      }
     });
-    if (!found) return;
-    const f = found as { pos: number; node: PMNode };
-    const top = el.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
-    if (hovered?.pos !== f.pos || hovered.top !== top) hovered = { pos: f.pos, top, label: labelOf(f.node) };
+    return nearest <= 16 ? found : null;
   }
+
+  // The handle is chosen by the pointer's height anywhere over the page, including the left
+  // margin where it sits, so moving to it never loses it; leaving hides it after a pause.
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  let frame = 0;
+  function hover(e: MouseEvent) {
+    clearTimeout(hideTimer);
+    if (!view || menu || (e.target as HTMLElement).closest?.(".handle")) return;
+    const y = e.clientY;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const f = blockAtY(y);
+      if (!f) return;
+      const top = f.el.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+      if (hovered?.pos !== f.pos || hovered.top !== top) hovered = { pos: f.pos, top, label: labelOf(f.node) };
+    });
+  }
+
+  function unhover() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!menu) hovered = null;
+    }, 400);
+  }
+
+  /** Before inserting from the toolbar: if the cursor's block is scrolled out of sight, move
+   *  the cursor to the last block in view, so new blocks appear where the user is looking. */
+  function cursorIntoView() {
+    if (!view) return;
+    const scroller = host.closest("main") ?? document.documentElement;
+    const box = scroller.getBoundingClientRect();
+    const bar = parseFloat(getComputedStyle(scroller).getPropertyValue("--bar-h")) || 0;
+    const tools = toolsEl?.getBoundingClientRect().height ?? 0;
+    const top = box.top + bar + tools;
+    const curEl = view.nodeDOM(currentBlock(view.state).pos) as HTMLElement | null;
+    const r = curEl?.getBoundingClientRect?.();
+    if (r && r.bottom > top && r.top < box.bottom) return; // visible
+    let last: { pos: number; node: PMNode } | null = null;
+    view.state.doc.forEach((node, pos) => {
+      const er = (view!.nodeDOM(pos) as HTMLElement | null)?.getBoundingClientRect?.();
+      if (er && er.top >= top && er.bottom <= box.bottom) last = { pos, node };
+    });
+    if (!last) return;
+    const l = last as { pos: number; node: PMNode };
+    const s = l.node.isTextblock
+      ? TextSelection.create(view.state.doc, l.pos + l.node.nodeSize - 1)
+      : NodeSelection.create(view.state.doc, l.pos);
+    view.dispatch(view.state.tr.setSelection(s));
+  }
+
+  function insert(node: PMNode) {
+    cursorIntoView();
+    run(insertBlock(node));
+  }
+
+  let toolsEl: HTMLDivElement | undefined = $state();
 
   function act(kind: "text" | "calc" | "python" | "up" | "down" | "delete") {
     const h = hovered;
@@ -252,19 +339,19 @@
 </script>
 
 {#if editable}
-  <div class="tools" role="toolbar" aria-label="Insert">
+  <div class="tools" role="toolbar" aria-label="Insert" bind:this={toolsEl}>
     <span class="small muted">Insert</span>
-    <button onclick={() => run(insertBlock(newParagraph()))} title="Text paragraph">Text</button>
-    <button onclick={() => run(insertBlock(newHeading(2)))} title="Heading (type ## then space)">Heading</button>
-    <button onclick={() => run(insertBlock(newCalc()))} title="Calculation (⌘E, or type = then space)">Calc</button>
-    <button onclick={() => run(insertBlock(newCode("python")))} title="Python cell (⌘⌥P); not run yet">Python</button>
+    <button onclick={() => insert(newParagraph())} title="Text paragraph">Text</button>
+    <button onclick={() => insert(newHeading(2))} title="Heading (type ## then space)">Heading</button>
+    <button onclick={() => insert(newCalc())} title="Calculation (⌘E, or type = then space)">Calc</button>
+    <button onclick={() => insert(newCode("python"))} title="Python cell (⌘⌥P); not run yet">Python</button>
     <span class="sep"></span>
     <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
     <button onclick={() => run(moveBlock(1))} title="Move block down (⌥↓)" aria-label="Move block down">↓</button>
   </div>
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="wrap" bind:this={wrap} onmousemove={hover} onmouseleave={() => !menu && (hovered = null)}>
+<div class="wrap" bind:this={wrap} onmousemove={hover} onmouseleave={unhover}>
   {#if editable && hovered}
     <div class="handle" style="top: {hovered.top}px">
       <button class="grip" title="Block actions" aria-haspopup="menu" aria-expanded={menu} onclick={() => (menu = !menu)}>
@@ -287,18 +374,30 @@
   <div class="editor" class:readonly={!editable} bind:this={host}></div>
 </div>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && (menu = false)} />
+<svelte:window
+  onkeydown={(e) => e.key === "Escape" && (menu = false)}
+  onmousedown={(e) => {
+    // A click anywhere outside the block handle closes its menu.
+    if (menu && !(e.target as HTMLElement).closest?.(".handle")) {
+      menu = false;
+      hovered = null;
+    }
+  }}
+/>
 
 <style>
-  .wrap { position: relative; }
-  .handle { position: absolute; left: -92px; width: 84px; display: flex; justify-content: flex-end; z-index: 3; }
+  /* The wrap reaches into the page's left margin, where the handle sits, so the hover area
+     is continuous from the text to the handle. */
+  .wrap { position: relative; margin-left: calc(-1 * var(--gutter, 100px)); padding-left: var(--gutter, 100px); }
+  .handle { position: absolute; left: calc(var(--gutter, 100px) - 92px); width: 84px; display: flex; justify-content: flex-end; z-index: 5; }
   .grip {
     font-size: 11px; padding: 1px 6px; color: var(--muted); background: none; border: 1px solid transparent;
     margin-top: 4px; white-space: nowrap; max-width: 84px; overflow: hidden; text-overflow: ellipsis;
   }
   .grip:hover, .grip[aria-expanded="true"] { border-color: var(--border); background: var(--panel); color: var(--text); }
   .menu {
-    position: absolute; top: 26px; right: 0; min-width: 190px; display: grid; padding: 4px;
+    /* Opens rightward, over the page: leftward it would be clipped by the scrolling main area. */
+    position: absolute; top: 26px; left: 0; min-width: 190px; display: grid; padding: 4px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
   }
@@ -310,28 +409,38 @@
   .menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .menu kbd { font: 11px var(--mono); color: var(--muted); }
   .danger-text { color: var(--danger); }
+  /* Sticky under the version bar (its height is --bar-h, set by App), spanning the page's
+     padding so text never shows beside it. */
   .tools {
-    display: flex; gap: 6px; align-items: center; padding: 0 0 12px; margin-bottom: 8px; flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    position: sticky; top: var(--bar-h, 0px); z-index: 8;
+    margin: calc(-1 * var(--pad-t, 28px)) calc(-1 * var(--pad-r, 64px)) 8px calc(-1 * var(--pad-l, 104px));
+    padding: 10px var(--pad-r, 64px) 10px var(--pad-l, 104px);
+    background: var(--panel); border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0;
   }
   .tools button { padding: 3px 10px; font-size: 13px; }
   .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
   .editor :global(.ProseMirror) {
-    outline: none; min-height: 50vh; font: 16.5px/1.6 var(--doc); padding: 4px 0 40vh;
+    outline: none; min-height: 50vh; font: var(--text-size, 15px)/1.6 var(--doc); padding: 4px 0 40vh;
     white-space: pre-wrap; word-wrap: break-word; color: var(--text);
   }
-  .editor :global(:is(h1, h2, h3)) { font-family: var(--sans); font-weight: 650; letter-spacing: -0.01em; line-height: 1.25; }
+  .editor :global(:is(h1, h2, h3, h4, h5, h6)) { font-family: var(--sans); font-weight: 650; letter-spacing: -0.01em; line-height: 1.25; }
   .editor :global(math) { font-size: 1.08em; }
   .editor :global(.ProseMirror > *) { position: relative; }
   .editor :global(p) { margin: 0.35em 0; }
-  .editor :global(h1) { font-size: 1.75em; margin: 0.6em 0 0.35em; }
-  .editor :global(h2) { font-size: 1.3em; margin: 1.1em 0 0.3em; }
-  .editor :global(h3) { font-size: 1.08em; margin: 0.9em 0 0.25em; }
+  /* The standard HTML heading scale, relative to the text size. */
+  .editor :global(h1) { font-size: 2em; margin: 0.5em 0 0.3em; }
+  .editor :global(h2) { font-size: 1.5em; margin: 0.8em 0 0.3em; }
+  .editor :global(h3) { font-size: 1.17em; margin: 0.9em 0 0.25em; }
+  .editor :global(h4) { font-size: 1em; margin: 0.9em 0 0.2em; }
+  .editor :global(h5) { font-size: 0.83em; margin: 0.9em 0 0.2em; }
+  .editor :global(h6) { font-size: 0.67em; margin: 0.9em 0 0.2em; text-transform: uppercase; letter-spacing: 0.04em; }
   .editor :global(.placeholder::before) {
     content: attr(data-placeholder); color: var(--muted); position: absolute; pointer-events: none;
   }
   .editor :global(.calc-cell) {
     margin: 0.25em -9px; padding: 2px 8px; border-radius: 6px; border: 1px solid transparent;
+    font-size: var(--calc-size, 15px);
   }
   .editor :global(.calc-cell:hover) { background: var(--sunken); }
   .editor :global(.calc-cell.selected) { border-color: var(--select-border); background: var(--select); }
@@ -346,35 +455,69 @@
   .editor.readonly :global(.calc-display) { cursor: default; }
   .editor :global(.calc-display math) { margin: 0.2em 0; text-align: left; display: block; }
   .editor :global(.calc-input) {
-    width: 100%; resize: none; font: 14px/1.5 var(--mono); color: var(--text);
+    width: 100%; resize: none; font: 0.93em/1.5 var(--mono); color: var(--text);
     background: var(--sunken); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
   }
   .editor :global(.calc-preview) { min-height: 1.6em; padding: 2px 0; }
   .editor :global(.calc-hint) { font-size: 11px; color: var(--muted); }
   .editor :global(.calc-desc) {
     margin-left: auto; padding-left: 16px; flex: 0 1 auto; max-width: 45%; text-align: right;
-    font: italic 14px/1.35 var(--doc); color: var(--muted);
+    font: italic 0.93em/1.35 var(--doc); color: var(--muted);
   }
   .editor :global(.calc-desc-input) {
-    width: 100%; margin: 2px 0 4px; font: italic 14px var(--doc); color: var(--text);
+    width: 100%; margin: 2px 0 4px; font: italic 0.93em var(--doc); color: var(--text);
     background: var(--sunken); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
   }
-  .editor :global(.calc-source) { font: 14px var(--mono); color: var(--code); }
+  .editor :global(.calc-source) { font: 0.93em var(--mono); color: var(--code); }
   .editor :global(.calc-source.pending) { color: var(--muted); }
-  .editor :global(.calc-error) { color: var(--danger); font: 12.5px var(--sans); }
+  .editor :global(.calc-error) { color: var(--danger); font: 0.83em var(--sans); }
+  .editor :global(.code-wrap) {
+    margin: 0.5em 0; border: 1px solid var(--border); border-radius: 6px; background: var(--sunken);
+    font-size: var(--code-size, 13px);
+  }
+  .editor :global(.code-wrap[data-state="running"]) { border-color: var(--accent); }
+  .editor :global(.code-wrap[data-state="error"]) { border-color: var(--danger); }
+  .editor :global(.code-head) {
+    display: flex; align-items: center; gap: 8px; padding: 3px 6px 0 12px; font: 11.5px var(--sans);
+    color: var(--muted); user-select: none;
+  }
+  .editor :global(.code-state.running), .editor :global(.code-state.queued) { color: var(--accent); }
+  .editor :global(.code-state.error) { color: var(--danger); }
+  .editor :global(.code-state.edited), .editor :global(.code-state.untrusted), .editor :global(.code-state.no_python) { color: var(--warn); }
+  .editor :global(.code-run) {
+    margin-left: auto; font-size: 11.5px; padding: 1px 8px; border-radius: 4px; background: var(--panel);
+  }
   .editor :global(pre.code-cell) {
-    font: 13px/1.5 var(--mono); background: var(--sunken); border-radius: 6px;
-    padding: 22px 12px 10px; margin: 0.4em 0; white-space: pre-wrap; position: relative;
+    font: 1em/1.5 var(--mono); margin: 0; padding: 4px 12px 10px; white-space: pre-wrap; background: none;
   }
-  .editor :global(pre.code-cell::before) {
-    content: attr(data-lang); position: absolute; top: 4px; left: 12px; font: 11px var(--sans);
-    color: var(--muted); text-transform: capitalize;
+  .editor :global(.code-out) {
+    display: none; padding: 8px 12px 10px; border-top: 1px solid var(--border); background: var(--panel);
+    border-radius: 0 0 6px 6px; font: 1em var(--sans); overflow-x: auto;
   }
+  .editor :global(.code-wrap.has-output .code-out) { display: grid; gap: 8px; }
+  .editor :global(.code-wrap.stale .code-out) { opacity: 0.55; }
+  .editor :global(.code-figure) { display: block; background: white; border-radius: 4px; }
+  .editor :global(.code-out pre) { margin: 0; font: 0.96em/1.45 var(--mono); white-space: pre-wrap; }
+  .editor :global(.code-stderr) { color: var(--warn); }
+  .editor :global(.code-error) { color: var(--danger); }
+  .editor :global(.code-tb) { color: var(--danger); opacity: 0.85; margin-top: 4px !important; }
+  .editor :global(.code-note) { color: var(--muted); font-style: italic; }
+  .editor :global(.code-defs) { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font: 0.92em var(--mono); }
+  .editor :global(.code-def b) { color: var(--text); font-weight: 600; }
+  .editor :global(.code-table) { overflow-x: auto; }
+  .editor :global(.code-table table) { border-collapse: collapse; font: 0.96em var(--mono); }
+  .editor :global(.code-table th), .editor :global(.code-table td) {
+    border-bottom: 1px solid var(--border); padding: 2px 10px; text-align: right; white-space: nowrap;
+  }
+  .editor :global(.code-table th) { color: var(--muted); font-weight: 600; }
+  .editor :global(.code-table td.null) { color: var(--muted); }
+  .editor :global(.code-more) { color: var(--muted); font-size: 0.92em; margin-top: 4px; }
+  .editor :global(.calc-waiting) { color: var(--muted); font: italic 0.83em var(--sans); }
   .editor :global(.raw-cell) {
     background: var(--sunken); border-radius: 6px; padding: 6px 12px; margin: 0.4em 0;
   }
   .editor :global(.raw-cell .kind) { font-size: 11px; color: var(--muted); }
-  .editor :global(.raw-cell pre) { margin: 0; font: 13px var(--mono); white-space: pre-wrap; }
+  .editor :global(.raw-cell pre) { margin: 0; font: var(--code-size, 13px) var(--mono); white-space: pre-wrap; }
   .editor :global(.ProseMirror-selectednode) { outline: 2px solid var(--select-border); }
   .editor :global(.ProseMirror-gapcursor) { display: none; position: absolute; }
   .editor :global(.ProseMirror-focused .ProseMirror-gapcursor) { display: block; }

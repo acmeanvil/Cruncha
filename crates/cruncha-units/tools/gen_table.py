@@ -16,13 +16,26 @@ out.append("")
 out.append("//! Hurmet's unit table: name, factor numerator, factor denominator, gauge, misc, exponents.")
 out.append("//! `misc` is `siSymbol`/`siWord` (SI prefixes allowed), a 3-letter currency code, or `0`.")
 out.append("//! Exponents: length, mass, time, current, temperature, amount, luminous intensity, money.")
+out.append("//!")
+out.append("//! Corrections to Hurmet's data (see `CORRECTIONS` in tools/gen_table.py):")
+out.append("//! the Fahrenheit gauge is 459.67, not 459 (0 °F = 459.67 °R exactly).")
 out.append("")
 out.append("pub(crate) type Row = (&'static str, &'static str, &'static str, &'static str, &'static str, [i8; 8]);")
 out.append("")
 out.append("#[rustfmt::skip]")
 out.append("pub(crate) static UNIT_TABLE: &[Row] = &[")
+# Cruncha's deliberate departures from Hurmet's data: name -> (index, value).
+CORRECTIONS = {
+    "Fahrenheit": (2, "459.67"),
+    "°F": (2, "459.67"),
+    "℉": (2, "459.67"),
+}
 seen = {}
 for k, v in pairs:
+    if k in CORRECTIONS:
+        i, val = CORRECTIONS[k]
+        v = list(v)
+        v[i] = val
     ex = v[4]
     note = ""
     if len(ex) != 8:
@@ -30,6 +43,8 @@ for k, v in pairs:
         ex = ex[:8]
     if k in seen:
         note += "  // duplicate key in Hurmet's JSON: the last one wins"
+    if k in CORRECTIONS:
+        note += "  // corrected: Hurmet has 459"
     seen[k] = True
     out.append("    (%s, %s, %s, %s, %s, [%s]),%s" % (
         json.dumps(k, ensure_ascii=False), json.dumps(v[0]), json.dumps(v[1]),

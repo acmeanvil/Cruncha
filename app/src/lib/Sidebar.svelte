@@ -102,6 +102,7 @@
   .item.l1 { font-weight: 600; }
   .item.l2 { padding-left: 20px; }
   .item.l3 { padding-left: 32px; font-size: 13px; }
+  .item:is(.l4, .l5, .l6) { padding-left: 44px; font-size: 13px; color: var(--muted); }
   .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .defs {
     font: 11.5px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis;

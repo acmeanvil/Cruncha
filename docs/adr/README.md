@@ -8,7 +8,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0002](0002-hurmet-document-model.md) | Hurmet as the basis of the document and calc model (rewritten in Rust) | Accepted |
 | [0003](0003-hybrid-delta-lake-storage.md) | Hybrid Delta Lake container as the storage format | Accepted |
 | [0004](0004-reactive-graph-unique-names.md) | Reactive dependency graph with one definition per name | Accepted |
-| [0005](0005-python-out-of-process-worker.md) | Python cells run in an out-of-process worker | Proposed |
+| [0005](0005-python-out-of-process-worker.md) | Python cells run in an out-of-process worker | Accepted |
 | [0006](0006-rust-cells-wasm.md) | Rust cells compile to WASM and run in wasmtime | Proposed |
 | [0007](0007-always-unit-aware.md) | Calculations are always unit-aware | Accepted |
 | [0008](0008-app-shell-tauri-web.md) | App shell: Tauri with a web UI (not GPUI) | Accepted |

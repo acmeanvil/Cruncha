@@ -61,5 +61,14 @@ if $reset_prefs && [[ -f "$prefs_dir/preferences.json" ]]; then
   echo "==> Preferences reset (previous file: $prefs_dir/preferences.json.bak)"
 fi
 
+# Python cells (ADR-0005): the app sets up its environment on request; say whether it exists.
+py_base="$HOME/Library/Application Support/io.github.acmeanvil.cruncha/python"
+if compgen -G "$py_base/env-*/.cruncha-ready" >/dev/null; then
+  echo "==> Python environment: ready"
+else
+  echo "==> Python environment: not set up (the app offers \"Set up Python\" for documents with Python cells;"
+  echo "    or run: cargo run -p cruncha-kernel-py --example setup_env)"
+fi
+
 echo "==> Starting Cruncha (Vite on :$port + Rust backend). Close the window or press Ctrl-C to stop."
 exec npm run tauri dev

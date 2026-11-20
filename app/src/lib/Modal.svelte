@@ -26,7 +26,7 @@
 <style>
   .backdrop {
     position: fixed; inset: 0; background: rgb(0 0 0 / 0.35);
-    display: grid; place-items: center; z-index: 10; padding: 16px;
+    display: grid; place-items: center; z-index: 30; padding: 16px;
   }
   .modal {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;

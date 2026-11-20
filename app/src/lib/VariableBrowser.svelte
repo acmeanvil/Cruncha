@@ -3,7 +3,8 @@
      it. Click to jump to the definition; descriptions can be edited here too. -->
 <script lang="ts">
   import temml from "temml";
-  import { matches, type Variable } from "./editor/variables";
+  import { SvelteSet } from "svelte/reactivity";
+  import { isTall, matches, type Variable } from "./editor/variables";
 
   let {
     variables,
@@ -21,6 +22,20 @@
   let order = $state<"document" | "name">("document");
   let editing = $state<string | null>(null);
   let draft = $state("");
+  /** Expanded multi-line values, by name (collapsed by default). */
+  const expanded = new SvelteSet<string>();
+  const tall = $derived(variables.filter(isTall));
+  const allOpen = $derived(tall.length > 0 && tall.every((v) => expanded.has(v.name)));
+
+  function toggle(name: string) {
+    if (expanded.has(name)) expanded.delete(name);
+    else expanded.add(name);
+  }
+
+  function toggleAll() {
+    if (allOpen) expanded.clear();
+    else for (const v of tall) expanded.add(v.name);
+  }
 
   const shown = $derived.by(() => {
     const vs = variables.filter((v) => matches(v, query));
@@ -66,6 +81,9 @@
       <option value="name">A–Z</option>
     </select>
   </div>
+  {#if tall.length}
+    <p class="bulk small"><button class="link" onclick={toggleAll}>{allOpen ? "Collapse" : "Expand"} all arrays</button></p>
+  {/if}
   {#if variables.length === 0}
     <p class="empty small muted">Variables appear here as calcs define them, e.g. <code>L = 24ft</code>.</p>
   {:else if shown.length === 0}
@@ -76,14 +94,21 @@
         {#if order === "document" && !query && v.section && v.section !== shown[i - 1]?.section}
           <li class="section">{v.section}</li>
         {/if}
+        {@const multi = isTall(v)}
+        {@const open = multi && expanded.has(v.name)}
         <li class="var" class:error={v.error}>
+          <div class="row">
           <button class="main" title={v.text || v.error || ""} onclick={() => onjump(v.id)}>
             <span class="name">
               {#if nameParts(v.name)[1]}{nameParts(v.name)[0]}<sub>{nameParts(v.name)[1]}</sub>{:else}{v.name}{/if}
             </span>
             <span class="value">
-              {#if v.tex}
+              {#if multi && v.tex}
+                <span class="shape">{v.shape ?? "multi-line value"}</span>
+              {:else if v.tex}
                 {@html math(v.tex)}
+              {:else if v.summary}
+                <span class="summary" title="A Python object: Python cells can use it, calcs can't">{v.summary}</span>
               {:else if v.error}
                 <span class="err">{v.error}</span>
               {:else}
@@ -91,6 +116,18 @@
               {/if}
             </span>
           </button>
+          {#if multi && v.tex}
+            <button
+              class="toggle"
+              aria-expanded={open}
+              aria-label="{open ? 'Collapse' : 'Expand'} {v.name}"
+              title={open ? "Collapse" : "Show the whole value"}
+              onclick={() => toggle(v.name)}>{open ? "▾" : "▸"}</button>
+          {/if}
+          </div>
+          {#if open}
+            <div class="full">{@html math(v.tex ?? "")}</div>
+          {/if}
           {#if editing === v.id}
             <input
               class="desc-input"
@@ -138,6 +175,19 @@
   .var { display: grid; padding: 4px 6px; border-radius: 6px; margin: 1px 0; }
   .var:hover { background: var(--sunken); }
   .var.error { box-shadow: inset 2px 0 0 var(--danger); }
+  .row { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+  .toggle {
+    flex: none; border: none; background: none; padding: 0 4px; color: var(--muted); font-size: 12px; line-height: 1;
+    cursor: pointer; border-radius: 4px;
+  }
+  .toggle:hover { color: var(--text); background: var(--panel); }
+  .shape { font: 12px var(--sans); color: var(--muted); }
+  .full {
+    overflow: auto; max-height: 260px; margin: 4px 0 2px; padding: 4px 6px; font-size: 13.5px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+  }
+  .full :global(math) { display: block; text-align: left; }
+  .bulk { margin: 0 4px 4px; text-align: right; }
   .main {
     display: flex; align-items: baseline; gap: 8px; border: none; background: none; padding: 0;
     text-align: left; width: 100%; min-width: 0;
@@ -146,6 +196,7 @@
   .name sub { font-style: normal; font-weight: 500; }
   .value { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 13.5px; }
   .err { color: var(--danger); font-size: 12px; }
+  .summary { font: 12px var(--mono); color: var(--muted); }
   .desc {
     border: none; background: none; padding: 0; text-align: left; font: italic 13px/1.35 var(--doc);
     color: var(--muted); cursor: text;

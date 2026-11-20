@@ -2,16 +2,21 @@
 <script lang="ts">
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import {
     api,
+    DEFAULT_TEXT_SIZES,
     KEEP_EVERYTHING,
     type Cell,
     type CellResult,
     type CommitView,
     type DocInfo,
     type Prefs,
+    type PythonStatus,
+    type ResultsEvent,
     type Selection,
+    type SetupProgress,
     type VersionView,
   } from "./lib/api";
   import DocumentSettings from "./lib/DocumentSettings.svelte";
@@ -25,6 +30,7 @@
   import type { Variable } from "./lib/editor/variables";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
+  const sizes = $derived(prefs.textSizes ?? DEFAULT_TEXT_SIZES);
   let doc = $state<DocInfo | null>(null);
   let history = $state<VersionView[]>([]);
   let selected = $state<Selection>({ kind: "latest" });
@@ -39,6 +45,40 @@
   let variables = $state.raw<Variable[]>([]);
   let sidebar = $state(true);
   let fileMenu = $state(false);
+  let barH = $state(0);
+  let python = $state<PythonStatus | null>(null);
+  let setup = $state<string | null>(null);
+
+  const SETUP_LABEL: Record<SetupProgress["step"], string> = {
+    installingUv: "Installing uv…",
+    installingPython: "Installing Python 3.13…",
+    installingPackages: "Installing NumPy, SciPy, Polars, pint, SymPy, matplotlib…",
+    done: "Python is ready",
+  };
+
+  async function refreshPython() {
+    python = doc ? await api.pythonStatus().catch(() => null) : null;
+  }
+
+  const setUpPython = () =>
+    attempt(async () => {
+      setup = "Starting…";
+      try {
+        const r = await api.setupPython();
+        editor?.applyResults(r);
+      } finally {
+        setup = null;
+        await refreshPython();
+      }
+    });
+
+  const trustDocument = () =>
+    attempt(async () => {
+      editor?.applyResults(await api.trustDocument());
+      await refreshPython();
+    });
+
+  const restartPython = () => attempt(async () => editor?.applyResults(await api.restartPython()));
 
   const loadKey = $derived(`${doc?.id ?? ""}:${loads}`);
   const editable = $derived(selected.kind === "latest");
@@ -76,6 +116,7 @@
     doc = info;
     history = info ? await api.history() : [];
     if (info) await show({ kind: "latest" });
+    await refreshPython();
     prefs = await api.getPrefs(); // the recent list changed
   }
 
@@ -103,7 +144,18 @@
     const unlisten = getCurrentWindow().onCloseRequested(async () => {
       await flush();
     });
-    return () => void unlisten.then((f) => f());
+    // Results computed in the background (Python cells finished). Older versions' are ignored.
+    const unResults = listen<ResultsEvent>("results", (e) => {
+      const ev = e.payload;
+      if (!doc || ev.docId !== doc.id || selected.kind !== "latest" || ev.version < doc.version) return;
+      editor?.applyResults(ev.results);
+    });
+    const unSetup = listen<SetupProgress>("python-setup", (e) => (setup = SETUP_LABEL[e.payload.step]));
+    return () => {
+      void unlisten.then((f) => f());
+      void unResults.then((f) => f());
+      void unSetup.then((f) => f());
+    };
   });
 
   const openDocument = () =>
@@ -130,6 +182,7 @@
   async function committed(v: CommitView) {
     doc = v.info;
     history = await api.history();
+    if (!python?.hasPython) await refreshPython();
   }
 
   /** Snapshot the latest version (pending edits are saved first, so they're included). */
@@ -240,8 +293,8 @@
           onsnapshot={() => (modal = "snapshot")}
         />
       {/if}
-      <main>
-        <div class="viewing">
+      <main style="--bar-h: {barH}px; --text-size: {sizes.text}px; --calc-size: {sizes.calc}px; --code-size: {sizes.code}px">
+        <div class="viewing" bind:offsetHeight={barH}>
           <span>{heading}</span>
           {#if selected.kind !== "latest"}
             <span class="muted small">read-only view of history</span>
@@ -255,9 +308,28 @@
               Latest · every change is saved · history: {describeRetention(doc.effectiveRetention).toLowerCase()}{doc.retention == null ? " (app default)" : ""}
             </span>
             <span class="spacer"></span>
+            {#if python?.hasPython && python.available && python.trusted}
+              <button onclick={() => void editor?.runPython()} title="Run every Python cell again">▶ Run Python</button>
+              <button onclick={() => void api.stopPython()} title="Stop the running cell">■ Stop</button>
+              <button onclick={restartPython} title="Restart the Python worker and recompute every Python value">↻ Restart</button>
+            {/if}
             <button class="snap" onclick={() => (modal = "snapshot")} title="Mark this version as a known-good point">Take snapshot…</button>
           {/if}
         </div>
+        {#if python?.hasPython && selected.kind === "latest" && (!python.available || !python.trusted || setup)}
+          <div class="python-bar" role="status">
+            {#if setup}
+              <span class="spinner" aria-hidden="true"></span> {setup}
+              <span class="muted small">This takes a minute or two the first time (about 500 MB).</span>
+            {:else if !python.available}
+              <span><strong>Python cells need a Python environment.</strong> Cruncha installs its own Python 3.13 with NumPy, SciPy, Polars, pint, SymPy and matplotlib (about 500 MB, once for all documents).</span>
+              <button class="primary" onclick={setUpPython}>Set up Python</button>
+            {:else}
+              <span><strong>This document has Python code that hasn't run on this computer.</strong> Python cells run with your permissions, like any program. Run them only if you trust where the document came from.</span>
+              <button class="primary" onclick={trustDocument}>Trust and run</button>
+            {/if}
+          </div>
+        {/if}
         {#if save.error}
           <div class="error" role="alert">
             Saving failed: {save.error}
@@ -275,6 +347,7 @@
             onsavestate={(s) => (save = s)}
             onoutline={(o) => (outline = o)}
             onvariables={(v) => (variables = v)}
+            onerror={(m) => (error = m)}
           />
         </div>
       </main>
@@ -343,17 +416,32 @@
   .error { background: var(--danger-bg); color: var(--danger); padding: 6px 12px; }
   .main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
   .main.nosidebar { grid-template-columns: 1fr; }
-  main { overflow: auto; min-width: 0; background: var(--bg); }
+  /* Layers: the document is its own stacking context, so its flyouts (block menu, z 5) stay
+     under the sticky version bar (z 10); app menus (z 20) and dialogs (Modal, z 30) are above it. */
+  main { overflow: auto; min-width: 0; background: var(--bg); isolation: isolate; }
   .viewing {
-    position: sticky; top: 0; z-index: 2; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 10; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
     padding: 8px 24px; background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
   }
   .viewing button { font-size: 12.5px; padding: 2px 10px; }
+  .python-bar {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 24px;
+    background: var(--warn-bg); color: var(--text); border-bottom: 1px solid var(--border); font-size: 13.5px;
+  }
+  .python-bar span { flex: 1 1 320px; }
+  .spinner {
+    flex: none !important; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border);
+    border-top-color: var(--accent); animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .viewing .snap { color: var(--accent); }
   .page {
     max-width: 880px; margin: 20px auto 48px; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 6px; padding: 28px 64px 24px 104px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
+    border-radius: 6px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
+    /* The editor's sticky toolbar and block-handle gutter read these. */
+    --pad-t: 28px; --pad-l: 104px; --pad-r: 64px; --gutter: 100px;
+    padding: var(--pad-t) var(--pad-r) 24px var(--pad-l);
   }
   .welcome { max-width: 560px; margin: 10vh auto; padding: 0 16px; text-align: center; }
   .welcome h1 { color: var(--accent); margin-bottom: 4px; font-size: 2.2em; letter-spacing: -0.01em; }
@@ -369,7 +457,7 @@
   .recent-row .name { font-weight: 500; }
   .recent-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 900px) {
-    .page { padding: 20px 24px 20px 96px; margin: 0; border-radius: 0; border-left: none; border-right: none; }
+    .page { --pad-t: 20px; --pad-l: 96px; --pad-r: 24px; --gutter: 94px; padding: var(--pad-t) var(--pad-r) 20px var(--pad-l); margin: 0; border-radius: 0; border-left: none; border-right: none; }
   }
   @media (max-width: 760px) {
     .main { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; }

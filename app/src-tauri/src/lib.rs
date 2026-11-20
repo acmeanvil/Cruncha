@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Cruncha's desktop shell (ADR-0008): a Tauri backend that holds the open document's
-//! `Store`, with a web UI in `app/src`. The skeleton views documents read-only (cells at any
-//! version, history, tags) and has the history-retention settings (ADR-0011).
+//! `Store`, with a web UI in `app/src`: editing (commit on submit or idle), evaluation (calcs
+//! here, Python cells in a worker, ADR-0005), history, snapshots and retention (ADR-0011).
+//!
+//! Events to the window: `results` (fresh results of the latest version, computed in the
+//! background, `session::ResultsEvent`) and `python-setup` (environment setup progress).
 
 mod engine;
+mod python;
 mod session;
 
 use std::path::PathBuf;
@@ -13,9 +17,10 @@ use std::collections::HashMap;
 
 use engine::CellResult;
 use session::{
-    At, ChangeView, CommitView, DocInfo, Prefs, PreviewView, PruneView, Session, VersionView,
+    At, ChangeView, CommitView, DocInfo, Prefs, PreviewView, PruneView, PythonStatus, Session,
+    VersionView,
 };
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::sync::Mutex;
 
 type Shared = Mutex<Session>;
@@ -107,8 +112,9 @@ async fn forget_recent(path: String, s: State<'_, Shared>) -> Result<()> {
 #[tauri::command]
 async fn set_prefs(mut prefs: Prefs, s: State<'_, Shared>) -> Result<()> {
     let mut s = s.lock().await;
-    // The recent list is the backend's; the front end's copy may be stale.
+    // The recent and trusted lists are the backend's; the front end's copy may be stale.
     prefs.recent = s.prefs().recent.clone();
+    prefs.trusted = s.prefs().trusted.clone();
     s.set_prefs(prefs)
 }
 
@@ -121,11 +127,71 @@ async fn set_document_retention(
 }
 
 #[tauri::command]
-async fn retention_preview(
-    policy: Option<Retention>,
-    s: State<'_, Shared>,
-) -> Result<PreviewView> {
+async fn retention_preview(policy: Option<Retention>, s: State<'_, Shared>) -> Result<PreviewView> {
     s.lock().await.retention_preview(policy).await
+}
+
+#[tauri::command]
+async fn python_status(s: State<'_, Shared>) -> Result<Option<PythonStatus>> {
+    let s = s.lock().await;
+    if !s.is_open() {
+        return Ok(None);
+    }
+    s.python_status_full().await.map(Some)
+}
+
+/// Set up the Python environment (minutes on first use; progress as `python-setup` events).
+/// The session isn't locked meanwhile, so editing goes on.
+#[tauri::command]
+async fn setup_python(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    let base = s.lock().await.python_base();
+    let progress = |p: cruncha_kernel_py::env::Progress| {
+        let _ = app.emit("python-setup", p);
+    };
+    cruncha_kernel_py::env::setup(&base, python::LOCK, progress).await?;
+    let mut s = s.lock().await;
+    if !s.is_open() {
+        return Ok(HashMap::new());
+    }
+    s.python_ready().await
+}
+
+#[tauri::command]
+async fn trust_document(s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.trust_document().await
+}
+
+#[tauri::command]
+async fn run_python(
+    ids: Option<Vec<String>>,
+    s: State<'_, Shared>,
+) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.run_python(ids).await
+}
+
+#[tauri::command]
+async fn stop_python(s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.stop_python()
+}
+
+#[tauri::command]
+async fn restart_python(s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.restart_python().await
+}
+
+/// The `cruncha_worker` package: `CRUNCHA_WORKER_DIR`, the app's bundled resources, or the
+/// repository's `python/` (development builds).
+fn worker_dir(app: &tauri::App) -> PathBuf {
+    if let Some(d) = std::env::var_os("CRUNCHA_WORKER_DIR") {
+        return d.into();
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        let d = res.join("python");
+        if d.join("cruncha_worker").is_dir() {
+            return d;
+        }
+    }
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python"))
 }
 
 #[tauri::command]
@@ -138,7 +204,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let prefs = app.path().app_config_dir()?.join("preferences.json");
-            app.manage::<Shared>(Mutex::new(Session::new(Some(prefs))));
+            let python = app.path().app_data_dir()?.join("python");
+            let mut session = Session::new(Some(prefs)).with_python(python, worker_dir(app));
+            let handle = app.handle().clone();
+            session.on_results(move |ev| {
+                let _ = handle.emit("results", ev);
+            });
+            app.manage::<Shared>(Mutex::new(session));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -161,6 +233,12 @@ pub fn run() {
             set_document_retention,
             retention_preview,
             prune_now,
+            python_status,
+            setup_python,
+            trust_document,
+            run_python,
+            stop_python,
+            restart_python,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Cruncha")

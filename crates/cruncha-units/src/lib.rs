@@ -27,6 +27,6 @@ mod units;
 
 pub use rational::{NUMBER_PATTERN, Rational};
 pub use units::{
-    ALL_ZEROS, Currencies, Dims, Unit, UnitError, is_known_unit, unit_from_name,
+    ALL_ZEROS, Currencies, DIM_NAMES, Dims, Unit, UnitError, is_known_unit, unit_from_name,
     units_are_compatible,
 };

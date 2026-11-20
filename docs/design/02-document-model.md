@@ -19,7 +19,7 @@ Hurmet is a ProseMirror rich-text editor with inline calculation cells.
 | **Statement form `name = expr = ?? unit`** | **Keep** | The result position and display unit are written in the statement. |
 | **Display selectors** `?` (full plus blue echo), `%` (no echo), `@` (result only), `!` (hidden) | **Keep** | The "blue echo" with substituted values is what makes a calc reviewable. |
 | **Dual-value quantities** (`{plain, inBaseUnits}`; a doubled selector means unit-aware) | **Change** | This means `2L = ?` and `2L = ??` give different numbers for the same variable, which is a trap. **Cruncha is always unit-aware**, and a selector controls display only. |
-| **8-dimension unit vector plus factor and gauge; about 541 units; currency as a dimension** | **Keep the design, port the data** | Fix the known defects found in Hurmet: the ℉ gauge is 459 instead of 459.67, and one `Å` entry has the wrong exponent array length. Merge the unit table with Numbat's and qalculate's. |
+| **8-dimension unit vector plus factor and gauge; about 541 units; currency as a dimension** | **Keep the design, port the data** | Fix the known defects found in Hurmet (both fixed in the port): the ℉ gauge is 459 instead of 459.67, and one `Å` entry has the wrong exponent array length. Merge the unit table with Numbat's and qalculate's. |
 | **Exact rationals** (BigInt) for `+ − × ÷` and integer powers | **Keep** | Transcendental functions fall back to f64, as in Hurmet. We also normalize after `×` and `÷`. |
 | **Data frames with a units row**, row keys, `df.col` and `df["row","col"]` access | **Keep the semantics, replace the storage** | We back them with Polars/Arrow, not raw string columns, and accept CSV, Parquet and Delta as well as TSV. |
 | **User functions** (`function … end`, hoisted, pure) | **Keep** | They are pure, so they are safe to call from anywhere. Python and Rust functions join the same namespace. |
@@ -115,7 +115,8 @@ A calc's **description** (`attrs.description`, one line of text) says what the q
 
   Frames and arrays travel as **Arrow IPC through shared memory**, so we don't copy large data.
 - **Outputs:** the assigned names, plus the value of the last expression. Rich output (matplotlib or plotly figures, Polars tables, `_repr_html_`) is captured as display artifacts.
-- **Reproducibility:** the document records its environment (a lockfile of package versions), which is stored in the doc.
+- **When cells run:** only in documents this computer trusts. A cell re-runs on its own when its inputs change; an edited cell waits for Run (Shift+Enter). Each cell runs in a fresh namespace holding only what it reads, and imports are local to the cell. Results are memoized by source and inputs; a slow cell can be stopped (SIGINT, then a kill).
+- **Reproducibility:** the document records its environment (a lockfile of package versions), which is stored in the doc. *Today:* one app-wide environment from `python/requirements.lock` (hashed, installed by uv); the per-document lockfile is still to do.
 
 ### 3.4 Rust cells
 
@@ -283,7 +284,7 @@ tests/conformance/   ported Hurmet golden tests + our own
 | S1 | Port Hurmet's lexer and parser to Rust against its 217 calc golden tests | Can we match its syntax? How big is the parser really? **Done 2026-11-19** ([write-up](../spikes/S1-calc-parser.md)): 282/283 golden cases match; about 4,500 lines of Rust in `crates/cruncha-lang`. |
 | S2 | `cruncha-graph`: a dependency graph over mixed calc and Python cells, with rename invalidation and cancellation | Is the execution model sound? **Core done 2026-11-19** (`crates/cruncha-graph`): order, rules 1, 3, 4 and 5, and memoized evaluation of calc cells in the app (`engine.rs`, rule 6). Cancellation and async scheduling (rule 7) wait for the Python worker (S4). |
 | S3 | **Delta store benchmark:** 2,000 small MERGE commits on local disk; time-travel latency; OPTIMIZE and checkpoint behavior; a Polars round trip of `data/*`; crash halfway through a commit | Does always-committed Delta hold up? This is the riskiest assumption. |
-| S4 | Python worker: an Arrow IPC round trip of a 1M-row Polars frame with units in metadata; AST dependency scan | Data-passing cost, and how reliable dependency detection is |
+| S4 | Python worker: an Arrow IPC round trip of a 1M-row Polars frame with units in metadata; AST dependency scan | Data-passing cost, and how reliable dependency detection is. **Done 2026-11-20** ([write-up](../spikes/S4-python-worker.md)): the frame round-trips in 0.13–0.22 s over pipes (shared memory deferred); the scan matches bytecode on 98.6 % of the stdlib. Python cells run in the app (`python.rs`, `crates/cruncha-kernel-py`). |
 | S5 | A Rust cell compiled to WASM with the prelude, measuring compile time and call overhead | Is the Rust-block UX acceptable? |
 | S6 | A Typst report from an evaluated doc with blue-echo rendering | Report quality |
 
@@ -292,5 +293,5 @@ tests/conformance/   ported Hurmet golden tests + our own
 | D1 | Name uniqueness vs. shadowing | Strict uniqueness now; section scopes later |
 | D2 | Inline calc syntax in the text mirror | Pick after S1. It must be ASCII-typeable and not clash with Markdown or Hurmet. |
 | D3 | AI proposals: pending rows vs. Delta branches | Pending rows |
-| D4 | Python: out-of-process vs. embedded PyO3 | Out of process (worker), revisit if S4 shows the overhead hurts |
+| D4 | Python: out-of-process vs. embedded PyO3 | Out of process (worker). S4: the overhead doesn't hurt (0.1–0.2 ms per cell, 0.2 s for a 1M-row frame) |
 | D5 | Always unit-aware (break from Hurmet's `?`/`??` duality) | Yes; `??` is accepted on import and treated as `?` |

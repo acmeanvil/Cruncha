@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 cruncha-store = { path = "../../crates/cruncha-store" }
 cruncha-eval = { path = "../../crates/cruncha-eval" }
 cruncha-graph = { path = "../../crates/cruncha-graph" }
+cruncha-kernel-py = { path = "../../crates/cruncha-kernel-py" }
+base64 = "0.22"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

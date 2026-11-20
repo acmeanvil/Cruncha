@@ -42,9 +42,15 @@ export function renderMath(el: HTMLElement, r: CellResult | undefined, source: s
   el.title = r?.text ?? "";
   if (!r || (!r.tex && !r.error)) {
     const code = document.createElement("code");
-    code.className = "calc-source" + (r ? "" : " pending");
+    code.className = "calc-source" + (r && !r.pending ? "" : " pending");
     code.textContent = source || "empty calculation";
     el.append(code);
+    if (r?.pending) {
+      const w = document.createElement("span");
+      w.className = "calc-waiting";
+      w.textContent = "waiting for Python…";
+      el.append(w);
+    }
     appendDescription(el, description);
     return;
   }

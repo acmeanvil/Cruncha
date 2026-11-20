@@ -25,7 +25,7 @@ const nodes: Record<string, NodeSpec> = {
     content: "inline*",
     defining: true,
     attrs: { ...cellAttrs, level: { default: 1 } },
-    parseDOM: [1, 2, 3].map((level) => ({ tag: `h${level}`, attrs: { level } })),
+    parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({ tag: `h${level}`, attrs: { level } })),
     toDOM: (n) => [`h${n.attrs.level}`, 0],
   },
 

@@ -1,0 +1,16 @@
+[package]
+name = "cruncha-kernel-py"
+description = "Cruncha's Python worker: process, protocol and environment (ADR-0005)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+tokio = { version = "1", features = ["process", "io-util", "time", "sync", "fs", "macros", "rt-multi-thread"] }
+libc = "0.2"
+sha2 = "0.10"
+
+[dev-dependencies]
+deltalake = { version = "1.1.2", default-features = false, features = ["datafusion", "native-tls"] }

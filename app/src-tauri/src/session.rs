@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use cruncha_store::{
     Cell, CellKind, Change, CommitKind, Error, PruneReport, Ref, Retention, RetentionPreview,
@@ -17,6 +18,7 @@ use cruncha_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{CellResult, Engine};
+use crate::python::{Notify, Python};
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -71,6 +73,56 @@ pub struct Prefs {
     /// Recently opened documents, most recent first.
     #[serde(default)]
     pub recent: Vec<String>,
+    /// Ids of documents trusted to run their Python cells (documents created here are).
+    #[serde(default)]
+    pub trusted: Vec<String>,
+    /// Type sizes in the editor, in CSS pixels.
+    #[serde(default)]
+    pub text_sizes: TextSizes,
+}
+
+/// Type sizes in the editor, in CSS pixels. Headings scale with `text` (H1 2×, H2 1.5×, …).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TextSizes {
+    /// Prose and headings.
+    pub text: f64,
+    /// Calc cells: the typeset math, its source and description.
+    pub calc: f64,
+    /// Python and other code cells, and their output.
+    pub code: f64,
+}
+
+impl Default for TextSizes {
+    fn default() -> Self {
+        TextSizes {
+            text: 15.0,
+            calc: 15.0,
+            code: 13.0,
+        }
+    }
+}
+
+/// Fresh results of the latest version, computed in the background (Python cells finished).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultsEvent {
+    pub doc_id: String,
+    pub version: u64,
+    pub results: HashMap<String, CellResult>,
+}
+
+/// Python, as the open document sees it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PythonStatus {
+    /// The environment is set up.
+    pub available: bool,
+    pub interpreter: Option<String>,
+    /// The open document may run code.
+    pub trusted: bool,
+    /// The open document has Python cells.
+    pub has_python: bool,
 }
 
 /// How many recent documents to remember.
@@ -176,8 +228,11 @@ impl From<PruneReport> for PruneView {
 
 struct OpenDoc {
     store: Store,
-    /// Evaluation state of the latest version (memoized results, current values).
-    engine: Engine,
+    /// Evaluation state of the latest version (memoized results, current values). Shared with
+    /// the Python run loop.
+    engine: Arc<Mutex<Engine>>,
+    /// The document's Python workers.
+    python: Arc<Python>,
     /// This session committed edits, so the document is due a prune when it closes.
     edited: bool,
     /// Pruned already this session (at most once per session, ADR-0011).
@@ -188,6 +243,11 @@ pub struct Session {
     doc: Option<OpenDoc>,
     prefs: Prefs,
     prefs_path: Option<PathBuf>,
+    /// Where Python environments live, and the worker package.
+    python_base: PathBuf,
+    worker_dir: PathBuf,
+    /// Receives results computed in the background.
+    on_results: Option<Arc<dyn Fn(ResultsEvent) + Send + Sync>>,
 }
 
 impl Session {
@@ -202,15 +262,38 @@ impl Session {
             doc: None,
             prefs,
             prefs_path,
+            python_base: std::env::temp_dir().join("cruncha-no-python"),
+            worker_dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python")),
+            on_results: None,
         }
     }
 
+    /// Use the Python environments under `base` and the worker package in `worker_dir`.
+    pub fn with_python(mut self, base: PathBuf, worker_dir: PathBuf) -> Session {
+        self.python_base = base;
+        self.worker_dir = worker_dir;
+        self
+    }
+
+    /// Receive results that are computed in the background (after Python cells run).
+    pub fn on_results(&mut self, f: impl Fn(ResultsEvent) + Send + Sync + 'static) {
+        self.on_results = Some(Arc::new(f));
+    }
+
+    pub fn python_base(&self) -> PathBuf {
+        self.python_base.clone()
+    }
+
     fn doc(&self) -> Result<&OpenDoc> {
-        self.doc.as_ref().ok_or_else(|| "no document is open".into())
+        self.doc
+            .as_ref()
+            .ok_or_else(|| "no document is open".into())
     }
 
     fn doc_mut(&mut self) -> Result<&mut OpenDoc> {
-        self.doc.as_mut().ok_or_else(|| "no document is open".into())
+        self.doc
+            .as_mut()
+            .ok_or_else(|| "no document is open".into())
     }
 
     fn effective_retention(&self, store: &Store) -> Retention {
@@ -223,15 +306,21 @@ impl Session {
     pub async fn open(&mut self, path: &Path) -> Result<DocInfo> {
         self.close().await;
         let store = Store::open(path).await.map_err(err)?;
-        self.opened(store, false).await
+        self.opened(store, false, false).await
     }
 
-    /// Hold `store` as the open document and remember it in the recent list.
-    async fn opened(&mut self, store: Store, edited: bool) -> Result<DocInfo> {
+    /// Hold `store` as the open document and remember it in the recent list. `created`: made
+    /// here (a new or sample document), so it is trusted to run its Python cells.
+    async fn opened(&mut self, store: Store, edited: bool, created: bool) -> Result<DocInfo> {
         let path = store.root().display().to_string();
+        let id = store.manifest().id.clone();
+        let python = Python::new(&self.python_base, &self.worker_dir);
+        let mut engine = Engine::new();
+        engine.python_available = python.interpreter().is_some();
         self.doc = Some(OpenDoc {
             store,
-            engine: Engine::new(),
+            engine: Arc::new(Mutex::new(engine)),
+            python,
             edited,
             pruned: false,
         });
@@ -239,10 +328,148 @@ impl Session {
         prefs.recent.retain(|p| p != &path);
         prefs.recent.insert(0, path);
         prefs.recent.truncate(MAX_RECENT);
+        if created && !prefs.trusted.contains(&id) {
+            prefs.trusted.push(id.clone());
+        }
         if let Err(e) = self.set_prefs(prefs) {
-            eprintln!("cruncha: could not save the recent-documents list: {e}");
+            eprintln!("cruncha: could not save preferences: {e}");
+        }
+        let trusted = self.prefs.trusted.contains(&id);
+        let cells = self.cells(None).await?;
+        self.scan_python(&cells).await?;
+        {
+            let mut e = self.doc()?.engine.lock().unwrap();
+            e.trusted = trusted;
+            // What the document holds when it's opened may run (if it's trusted).
+            e.approve(&cells);
         }
         self.info().await
+    }
+
+    /// Have the worker scan Python sources the engine hasn't seen.
+    async fn scan_python(&self, cells: &[Cell]) -> Result<()> {
+        let doc = self.doc()?;
+        let todo: Vec<String> = doc
+            .engine
+            .lock()
+            .unwrap()
+            .unscanned(cells)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let refs: Vec<&str> = todo.iter().map(String::as_str).collect();
+        let scanned = doc.python.scan(&refs).await;
+        let mut e = doc.engine.lock().unwrap();
+        for (source, names) in scanned {
+            e.set_py_names(&source, names);
+        }
+        Ok(())
+    }
+
+    /// Evaluate the latest version and start running the Python cells that are due.
+    async fn latest_results(&mut self) -> Result<HashMap<String, CellResult>> {
+        let cells = self.cells(None).await?;
+        self.scan_python(&cells).await?;
+        let doc = self.doc()?;
+        let run = doc.engine.lock().unwrap().evaluate(&cells);
+        if !run.jobs.is_empty() {
+            let doc_id = doc.store.manifest().id.clone();
+            let version = doc.store.version();
+            let sink = self.on_results.clone();
+            let notify: Notify = Arc::new(move |results| {
+                if let Some(f) = &sink {
+                    f(ResultsEvent {
+                        doc_id: doc_id.clone(),
+                        version,
+                        results,
+                    });
+                }
+            });
+            doc.python
+                .start(doc.engine.clone(), Arc::new(cells), notify);
+        }
+        Ok(run.results)
+    }
+
+    /// Python for the open document.
+    pub fn python_status(&self) -> Result<PythonStatus> {
+        let doc = self.doc()?;
+        let interpreter = doc.python.interpreter();
+        let trusted = doc.engine.lock().unwrap().trusted;
+        Ok(PythonStatus {
+            available: interpreter.is_some(),
+            interpreter: interpreter.map(|p| p.display().to_string()),
+            trusted,
+            has_python: false,
+        })
+    }
+
+    /// Python for the open document, including whether it has Python cells.
+    pub async fn python_status_full(&self) -> Result<PythonStatus> {
+        let mut st = self.python_status()?;
+        st.has_python = self
+            .cells(None)
+            .await?
+            .iter()
+            .any(|c| c.kind == CellKind::Python);
+        Ok(st)
+    }
+
+    /// The environment was just set up: Python cells can run now.
+    pub async fn python_ready(&mut self) -> Result<HashMap<String, CellResult>> {
+        let available = self.doc()?.python.interpreter().is_some();
+        self.doc()?.engine.lock().unwrap().python_available = available;
+        self.latest_results().await
+    }
+
+    /// Trust the open document to run its Python cells (remembered on this computer).
+    pub async fn trust_document(&mut self) -> Result<HashMap<String, CellResult>> {
+        let id = self.doc()?.store.manifest().id.clone();
+        let mut prefs = self.prefs.clone();
+        if !prefs.trusted.contains(&id) {
+            prefs.trusted.push(id);
+            self.set_prefs(prefs)?;
+        }
+        let cells = self.cells(None).await?;
+        {
+            let mut e = self.doc()?.engine.lock().unwrap();
+            e.trusted = true;
+            e.approve(&cells);
+        }
+        self.latest_results().await
+    }
+
+    /// Run Python cells: these ids, or all of them. They run even if nothing changed.
+    pub async fn run_python(
+        &mut self,
+        ids: Option<Vec<String>>,
+    ) -> Result<HashMap<String, CellResult>> {
+        let cells = self.cells(None).await?;
+        let chosen: Vec<&Cell> = cells
+            .iter()
+            .filter(|c| {
+                c.kind == CellKind::Python && ids.as_ref().is_none_or(|ids| ids.contains(&c.id))
+            })
+            .collect();
+        {
+            let mut e = self.doc()?.engine.lock().unwrap();
+            e.approve(chosen.iter().copied());
+            e.rerun(&chosen.iter().map(|c| c.id.clone()).collect::<Vec<_>>());
+        }
+        self.latest_results().await
+    }
+
+    /// Stop the running Python cell, and anything queued.
+    pub fn stop_python(&self) -> Result<()> {
+        self.doc()?.python.stop();
+        Ok(())
+    }
+
+    /// Restart the Python worker, then rerun what's approved.
+    pub async fn restart_python(&mut self) -> Result<HashMap<String, CellResult>> {
+        let doc = self.doc()?;
+        doc.python.restart(&doc.engine).await;
+        self.latest_results().await
     }
 
     /// Forget a recent document (it was moved or deleted).
@@ -256,20 +483,21 @@ impl Session {
     pub async fn create(&mut self, path: &Path) -> Result<DocInfo> {
         self.close().await;
         let store = Store::create(path, &local_actor()).await.map_err(err)?;
-        self.opened(store, false).await
+        self.opened(store, false, true).await
     }
 
     /// Create a small example worksheet with some history.
     pub async fn create_sample(&mut self, path: &Path) -> Result<DocInfo> {
         self.close().await;
         let store = sample_document(path).await.map_err(err)?;
-        self.opened(store, true).await
+        self.opened(store, true, true).await
     }
 
     /// Close the open document. If this session edited it, apply its retention policy first;
     /// `Store::prune` itself refuses when there were no edits since the last prune.
     pub async fn close(&mut self) -> Option<PruneView> {
         let mut doc = self.doc.take()?;
+        doc.python.shutdown().await;
         if !doc.edited || doc.pruned {
             return None;
         }
@@ -347,21 +575,46 @@ impl Session {
     /// A calc cell's `defines` and `reads` are recomputed from its source, so the stored names
     /// are always the evaluator's.
     pub async fn commit(&mut self, changes: Vec<ChangeView>, message: &str) -> Result<CommitView> {
-        let doc = self.doc_mut()?;
-        let changes: Vec<Change> = changes
-            .into_iter()
-            .map(|c| match c {
-                ChangeView::Upsert { mut cell } => {
-                    if cell.kind == CellKind::Calc {
-                        (cell.defines, cell.reads) = doc.engine.names(&cell.source);
-                    }
-                    Change::Upsert(cell)
-                }
-                ChangeView::Delete { id } => Change::Delete(id),
+        // Python sources are scanned by the worker first, so their stored names are its.
+        let python: Vec<Cell> = changes
+            .iter()
+            .filter_map(|c| match c {
+                ChangeView::Upsert { cell } if cell.kind == CellKind::Python => Some(cell.clone()),
+                _ => None,
             })
             .collect();
+        self.scan_python(&python).await?;
+        let doc = self.doc_mut()?;
+        let changes: Vec<Change> = {
+            let mut engine = doc.engine.lock().unwrap();
+            changes
+                .into_iter()
+                .map(|c| match c {
+                    ChangeView::Upsert { mut cell } => {
+                        match cell.kind {
+                            CellKind::Calc => {
+                                (cell.defines, cell.reads) = engine.names(&cell.source)
+                            }
+                            CellKind::Python => {
+                                if let Some(n) = engine.py_names(&cell.source) {
+                                    (cell.defines, cell.reads) =
+                                        (n.defines.clone(), n.reads.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                        Change::Upsert(cell)
+                    }
+                    ChangeView::Delete { id } => Change::Delete(id),
+                })
+                .collect()
+        };
         if !changes.is_empty() {
-            let message = if message.trim().is_empty() { "edit" } else { message };
+            let message = if message.trim().is_empty() {
+                "edit"
+            } else {
+                message
+            };
             doc.store
                 .commit(&changes, &local_actor(), message)
                 .await
@@ -408,6 +661,9 @@ impl Session {
         if after != before {
             doc.edited = true;
         }
+        // Restoring was the user's choice, so the restored Python sources may run.
+        let cells = self.cells(None).await?;
+        self.doc()?.engine.lock().unwrap().approve(&cells);
         let results = self.results(&At::default()).await?;
         Ok(CommitView {
             info: self.info().await?,
@@ -422,16 +678,18 @@ impl Session {
         let current = self.doc()?.store.version();
         let latest = at.ref_name.is_none() && at.version.is_none_or(|v| v == current);
         if latest {
-            Ok(self.doc_mut()?.engine.run(&cells))
+            self.latest_results().await
         } else {
-            Ok(Engine::new().run(&cells))
+            let mut e = Engine::new();
+            e.past = true;
+            Ok(e.run(&cells))
         }
     }
 
     /// Evaluate a calc source while it is being typed, against the latest values (nothing is
     /// committed).
     pub fn preview_calc(&mut self, source: &str) -> Result<CellResult> {
-        Ok(self.doc_mut()?.engine.preview(source))
+        Ok(self.doc()?.engine.lock().unwrap().preview(source))
     }
 
     pub async fn history(&self) -> Result<Vec<VersionView>> {
@@ -459,10 +717,7 @@ impl Session {
 
     /// Set the document's own policy, or `None` to use the app default.
     pub async fn set_document_retention(&mut self, policy: Option<Retention>) -> Result<DocInfo> {
-        self.doc_mut()?
-            .store
-            .set_retention(policy)
-            .map_err(err)?;
+        self.doc_mut()?.store.set_retention(policy).map_err(err)?;
         self.info().await
     }
 
@@ -511,6 +766,20 @@ fn calc(id: &str, order: &str, src: &str, defines: &[&str], reads: &[&str]) -> C
     c
 }
 
+/// The sample's Python cell: the moment along the span, plotted.
+const SAMPLE_PYTHON: &str = "import numpy as np
+import matplotlib.pyplot as plt
+
+x = np.linspace(0, L, 51)
+moment = (w * x * (L - x) / 2).to(\"kip*ft\")
+M_max = moment.max()
+
+plt.figure(figsize=(6, 2.4))
+plt.plot(x.magnitude, moment.magnitude)
+plt.xlabel(\"x (ft)\")
+plt.ylabel(\"M (kip·ft)\")
+plt.grid(alpha=0.3)";
+
 /// `c` with a description (shown beside the calc and in the variable browser).
 fn described(mut c: Cell, description: &str) -> Cell {
     c.attrs["description"] = description.into();
@@ -526,13 +795,10 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
         described(c, "Uniform load, dead + live")
     };
     let l = |v: &str| described(calc("L", "b2", &format!("L = {v} ft"), &["L"], &[]), "Span");
-    let m = described(calc(
-        "M",
-        "b3",
-        "M = w L^2 / 8 = ?? kip·ft",
-        &["M"],
-        &["w", "L"],
-    ), "Maximum bending moment, at midspan");
+    let m = described(
+        calc("M", "b3", "M = w L^2 / 8 = ?? kip·ft", &["M"], &["w", "L"]),
+        "Maximum bending moment, at midspan",
+    );
     s.commit(
         &[
             Change::Upsert(heading("a0", 1, "Beam check")),
@@ -552,13 +818,10 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
     .await?;
     s.commit(&[Change::Upsert(w("1.5"))], me, "update dead load")
         .await?;
-    let mut py = Cell::new(
-        CellKind::Python,
-        "c0",
-        "import numpy as np\nx = np.linspace(0, L, 50)\nmoment = w * x * (L - x) / 2",
-    );
-    py.reads = vec!["w".into(), "L".into()];
-    py.defines = vec!["x".into(), "moment".into()];
+    let mut py = Cell::new(CellKind::Python, "c0", SAMPLE_PYTHON);
+    py.id = "PY".into();
+    py.reads = vec!["L".into(), "w".into()];
+    py.defines = vec!["x".into(), "moment".into(), "M_max".into()];
     s.commit(
         &[
             Change::Upsert(prose("b9", "Moment diagram along the span:")),
@@ -585,6 +848,20 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
                 &[],
                 &["M", "M_allow"],
             )),
+            Change::Upsert(prose(
+                "d1",
+                "The largest moment along the plotted span, against the formula:",
+            )),
+            Change::Upsert(described(
+                calc(
+                    "RATIO",
+                    "d2",
+                    "ratio = M_max / M = ?",
+                    &["ratio"],
+                    &["M_max", "M"],
+                ),
+                "Plotted maximum over w L²/8",
+            )),
         ],
         me,
         "add allowable-moment check",
@@ -610,13 +887,20 @@ mod tests {
         assert!(info.effective_retention.is_keep_everything());
 
         let latest = session.cells(None).await.unwrap();
-        assert_eq!(latest.len(), 12);
+        assert_eq!(latest.len(), 14);
         // The sample evaluates: M = 1.5 kip/ft × (26 ft)² / 8, and its check passes.
         let r = session.results(&At::default()).await.unwrap();
         assert!(r["M"].text.ends_with("126.75 kip·ft"), "{:?}", r["M"]);
         assert_eq!(r["CHK"].error, None, "{:?}", r["CHK"]);
-        let at_v1 = At { version: Some(1), ref_name: None };
-        assert!(session.results(&at_v1).await.unwrap()["M"].text.ends_with("86.4 kip·ft"));
+        let at_v1 = At {
+            version: Some(1),
+            ref_name: None,
+        };
+        assert!(
+            session.results(&at_v1).await.unwrap()["M"]
+                .text
+                .ends_with("86.4 kip·ft")
+        );
         let rev_a = session.cells_at_ref("Rev A").await.unwrap();
         assert!(rev_a.iter().any(|c| c.source == "L = 24 ft"));
         let v1 = session.cells(Some(1)).await.unwrap();
@@ -633,13 +917,160 @@ mod tests {
         assert_eq!(m.attrs["description"], "Maximum bending moment, at midspan");
     }
 
+    /// The real worker, when the Python environment is set up on this machine.
+    fn python_base() -> Option<PathBuf> {
+        let base = PathBuf::from(std::env::var_os("HOME")?)
+            .join("Library/Application Support/io.github.acmeanvil.cruncha/python");
+        cruncha_kernel_py::env::ready(&base, crate::python::LOCK).map(|_| base)
+    }
+
+    async fn wait_for(
+        rx: &std::sync::mpsc::Receiver<ResultsEvent>,
+        done: impl Fn(&ResultsEvent) -> bool,
+    ) -> ResultsEvent {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            while let Ok(ev) = rx.try_recv() {
+                if done(&ev) {
+                    return ev;
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "no results in time");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn python_cells_run_in_the_background_and_feed_calcs() {
+        let Some(base) = python_base() else {
+            eprintln!("no Python environment; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let worker = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python"));
+        let mut session = Session::new(None).with_python(base, worker);
+        let (tx, rx) = std::sync::mpsc::channel();
+        session.on_results(move |ev| {
+            let _ = tx.send(ev);
+        });
+        session
+            .create_sample(&dir.path().join("beam.cruncha"))
+            .await
+            .unwrap();
+        assert!(session.python_status_full().await.unwrap().has_python);
+
+        // At first the Python cell is queued and the ratio waits for it.
+        let r = session.results(&At::default()).await.unwrap();
+        assert!(
+            r["RATIO"].pending || r["RATIO"].error.is_none(),
+            "{:?}",
+            r["RATIO"]
+        );
+        let state = |ev: &ResultsEvent| ev.results["PY"].python.as_ref().map(|p| p.state);
+        let ev = wait_for(&rx, |ev| {
+            matches!(
+                state(ev),
+                Some(crate::engine::PyState::Done | crate::engine::PyState::Error)
+            )
+        })
+        .await;
+        let py = ev.results["PY"].python.as_ref().unwrap();
+        assert_eq!(py.state, crate::engine::PyState::Done, "{py:?}");
+        assert!(
+            matches!(py.outputs.first(), Some(crate::engine::OutputView::Image { src, .. }) if src.starts_with("data:image/png;base64,"))
+        );
+        assert_eq!(ev.results["PY"].defines, ["x", "moment", "M_max"]);
+        assert!(
+            ev.results["RATIO"].text.ends_with("ratio = 1")
+                || ev.results["RATIO"].text.ends_with(" 1"),
+            "{:?}",
+            ev.results["RATIO"]
+        );
+        let m_max = ev.results["PY"]
+            .values
+            .iter()
+            .find(|v| v.name == "M_max")
+            .unwrap();
+        assert!(m_max.tex.contains("126.75"), "{m_max:?}");
+
+        // Editing the span re-runs the (approved) Python cell on its own.
+        let mut l = session
+            .cells(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == "L")
+            .unwrap();
+        l.source = "L = 20 ft".into();
+        session
+            .commit(vec![ChangeView::Upsert { cell: l }], "span")
+            .await
+            .unwrap();
+        let ev = wait_for(&rx, |ev| {
+            ev.results["PY"]
+                .values
+                .iter()
+                .any(|v| v.name == "M_max" && v.tex.contains("75") && !v.tex.contains("126.75"))
+        })
+        .await;
+        assert!(
+            ev.results["RATIO"].text.ends_with("1"),
+            "{:?}",
+            ev.results["RATIO"]
+        );
+
+        // An edited Python cell waits for Run; a syntax error is reported without running.
+        let mut py = session
+            .cells(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == "PY")
+            .unwrap();
+        py.source = "x = (".into();
+        let out = session
+            .commit(vec![ChangeView::Upsert { cell: py.clone() }], "oops")
+            .await
+            .unwrap();
+        assert!(
+            out.results["PY"]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("SyntaxError"),
+            "{:?}",
+            out.results["PY"]
+        );
+        py.source = "import time\ntime.sleep(30)\nx = 1".into();
+        let out = session
+            .commit(vec![ChangeView::Upsert { cell: py }], "slow")
+            .await
+            .unwrap();
+        assert_eq!(
+            out.results["PY"].python.as_ref().unwrap().state,
+            crate::engine::PyState::Edited
+        );
+        // Run, then Stop.
+        session.run_python(Some(vec!["PY".into()])).await.unwrap();
+        wait_for(&rx, |ev| state(ev) == Some(crate::engine::PyState::Running)).await;
+        session.stop_python().unwrap();
+        wait_for(&rx, |ev| {
+            state(ev) == Some(crate::engine::PyState::Interrupted)
+        })
+        .await;
+        session.close().await;
+    }
+
     #[tokio::test]
     async fn snapshots_and_restoring_them() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("beam.cruncha");
         let mut session = Session::new(None);
         session.create_sample(&path).await.unwrap();
-        let info = session.snapshot("  Checked  ", "hand check agrees").await.unwrap();
+        let info = session
+            .snapshot("  Checked  ", "hand check agrees")
+            .await
+            .unwrap();
         let r = info.refs.iter().find(|r| r.name == "Checked").unwrap();
         assert_eq!(r.version, 5);
         assert_eq!(r.message, "hand check agrees");
@@ -649,17 +1080,30 @@ mod tests {
 
         // Back to Rev A (span 24 ft): a new version, evaluated, and M is as it was then.
         let out = session
-            .restore(&At { version: None, ref_name: Some("Rev A".into()) })
+            .restore(&At {
+                version: None,
+                ref_name: Some("Rev A".into()),
+            })
             .await
             .unwrap();
         assert_eq!(out.info.version, 6);
-        assert!(out.results["M"].text.ends_with("108 kip·ft"), "{:?}", out.results["M"]);
-        assert!(!out.results.contains_key("CHK"), "the check came after Rev A");
+        assert!(
+            out.results["M"].text.ends_with("108 kip·ft"),
+            "{:?}",
+            out.results["M"]
+        );
+        assert!(
+            !out.results.contains_key("CHK"),
+            "the check came after Rev A"
+        );
         let h = session.history().await.unwrap();
         assert_eq!(h[0].message, "restore to “Rev A”");
         // And forward again to the snapshot.
         let out = session
-            .restore(&At { version: None, ref_name: Some("Checked".into()) })
+            .restore(&At {
+                version: None,
+                ref_name: Some("Checked".into()),
+            })
             .await
             .unwrap();
         assert!(out.results["M"].text.ends_with("126.75 kip·ft"));
@@ -713,9 +1157,15 @@ mod tests {
         assert_eq!(out.info.version, 3);
         assert_eq!(session.cells(None).await.unwrap().len(), 1);
         // An empty change set commits nothing.
-        assert_eq!(session.commit(vec![], "noop").await.unwrap().info.version, 3);
+        assert_eq!(
+            session.commit(vec![], "noop").await.unwrap().info.version,
+            3
+        );
         // Results of an earlier version.
-        let at = At { version: Some(1), ref_name: None };
+        let at = At {
+            version: Some(1),
+            ref_name: None,
+        };
         assert_eq!(session.results(&at).await.unwrap()["C1"].error, None);
 
         // The edited session prunes on close only if a policy says so: keep everything here.
@@ -800,7 +1250,10 @@ mod tests {
         let mut store = Store::open(&path).await.unwrap();
         for i in 0..20 {
             let c = calc("L", "b2", &format!("L = {} ft", 26 + i), &["L"], &[]);
-            store.commit(&[Change::Upsert(c)], "user:t", "edit").await.unwrap();
+            store
+                .commit(&[Change::Upsert(c)], "user:t", "edit")
+                .await
+                .unwrap();
         }
         drop(store);
         session.open(&path).await.unwrap();

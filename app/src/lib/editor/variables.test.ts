@@ -3,7 +3,7 @@
 import { expect, test } from "vitest";
 import type { Cell, CellResult } from "../api";
 import { descriptionOf, docFromCells, nodeToContent, withDescription } from "./cells";
-import { matches, variablesOf } from "./variables";
+import { isTall, matches, variablesOf } from "./variables";
 
 function cell(id: string, kind: string, key: string, source: string, attrs: unknown = {}): Cell {
   return {
@@ -52,4 +52,12 @@ test("descriptions live in the calc's attrs and round-trip through the editor", 
   expect(JSON.parse(withDescription(changed, " "))).toEqual({ display: "?" });
   expect(nodeToContent(L).attrs).toEqual({ display: "?", description: "Span" });
   expect(descriptionOf("not json")).toBe("");
+});
+
+test("arrays and other multi-line values are collapsible; scalars aren't", () => {
+  const base = variablesOf(docFromCells(cells), (id) => results[id])[0];
+  expect(isTall(base)).toBe(false);
+  expect(isTall({ ...base, shape: "3 × 1 matrix" })).toBe(true);
+  expect(isTall({ ...base, tex: "\\begin{pmatrix}1 \\\\ 2\\end{pmatrix}" })).toBe(true);
+  expect(isTall({ ...base, tex: null, summary: "ndarray float64 (51,)" })).toBe(false);
 });

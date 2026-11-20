@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# What Python cells get (ADR-0005). Compile to requirements.lock with:
+#   uv pip compile requirements.in --python-version 3.13 --generate-hashes -o requirements.lock
+numpy
+scipy
+polars
+pyarrow
+pint
+sympy
+matplotlib

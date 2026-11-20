@@ -20,6 +20,18 @@ use std::sync::LazyLock;
 /// They are floats because Hurmet allows roots: `√(m²)` is `m`, `√m` has the exponent 0.5.
 pub type Dims = [f64; 8];
 
+/// Names of the eight base dimensions, in the order of [`Dims`].
+pub const DIM_NAMES: [&str; 8] = [
+    "length",
+    "mass",
+    "time",
+    "current",
+    "temperature",
+    "amount",
+    "luminous intensity",
+    "money",
+];
+
 /// The exponents of a dimensionless number.
 pub const ALL_ZEROS: Dims = [0.0; 8];
 
@@ -559,7 +571,10 @@ mod tests {
     fn gauge_and_angles() {
         let f = unit("°F");
         assert_eq!(f.expos[4], 1.0);
-        assert!(!f.gauge.is_zero());
+        // Hurmet has 459; 0 °F is exactly 459.67 °R, so 32 °F is exactly 273.15 K.
+        assert_eq!(f.gauge.to_f64(), 459.67);
+        let k = Rational::int(32).add(&f.gauge).multiply(&f.factor);
+        assert_eq!(k.to_f64(), 273.15);
         assert_eq!(unit("°").factor.to_f64(), 0.0174532925199433);
         assert_eq!(unit("\\⦂").factor.to_f64(), 0.01); // the percent placeholder
     }
