@@ -22,7 +22,7 @@
 
   let useDefault = $state(untrack(() => doc.retention == null));
   let policy = $state(
-    structuredClone(untrack(() => doc.retention ?? prefs.defaultRetention)),
+    $state.snapshot(untrack(() => doc.retention ?? prefs.defaultRetention)),
   );
   let confirm = $state<{ preview: Preview; action: "save" | "trim" } | null>(null);
   let busy = $state(false);

@@ -33,6 +33,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
 docs/spikes/               spike write-ups with measured numbers
 docs/adr/  docs/design/  docs/research/
 skills/                    Agent Skills (SKILL.md) for AI agents working inside Cruncha documents
+scripts/run-app.sh         launch the app for review (deps check, npm ci if needed, tauri dev)
 ```
 
 ## Commands
@@ -50,6 +51,7 @@ cargo run   -p cruncha-lang --release --example parse_bench
 
 cd app && npm install                          # once
 npm run tauri dev                              # run the app (Vite on :5173 + the Rust backend)
+scripts/run-app.sh [--check] [--reset-prefs]  # same, from the repo root, with prerequisite checks
 npm run check                                  # svelte-check (TypeScript)
 npm run build                                  # front end to app/dist
 ```

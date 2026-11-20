@@ -20,7 +20,7 @@
     onsaved: (p: Prefs) => void;
   } = $props();
 
-  let policy = $state(structuredClone(untrack(() => prefs.defaultRetention)));
+  let policy = $state($state.snapshot(untrack(() => prefs.defaultRetention)));
   let confirm = $state<Preview | null>(null);
   let busy = $state(false);
   let error = $state<string | null>(null);
