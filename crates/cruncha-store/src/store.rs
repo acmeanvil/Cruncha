@@ -728,9 +728,27 @@ impl Store {
     /// Roll the document back to `version` by committing a *new* version with that content.
     /// History is never rewritten, so a restore can itself be undone.
     pub async fn restore(&mut self, version: u64, actor: &str) -> Result<u64> {
-        let changes: Vec<Change> = self
-            .diff(self.version(), version)
+        let target = self.cells_at(version).await?;
+        self.restore_to(target, version, &format!("restore to version {version}"), actor)
+            .await
+    }
+
+    /// Roll the document back to the named version `name`, as [`Store::restore`] does. This
+    /// works after pruning too: a named version's cells are kept in `pins/`.
+    pub async fn restore_ref(&mut self, name: &str, actor: &str) -> Result<u64> {
+        let r = self
+            .refs()
             .await?
+            .into_iter()
+            .find(|r| r.name == name)
+            .ok_or_else(|| Error::NoSuchRef(name.to_owned()))?;
+        let target = self.cells_at_ref(name).await?;
+        self.restore_to(target, r.doc_version, &format!("restore to “{name}”"), actor)
+            .await
+    }
+
+    async fn restore_to(&mut self, target: Vec<Cell>, version: u64, message: &str, actor: &str) -> Result<u64> {
+        let changes: Vec<Change> = diff_cells(self.cells().await?, target)
             .into_iter()
             .map(|d| match d {
                 CellDiff::Added(c) | CellDiff::Modified { after: c, .. } => Change::Upsert(c),
@@ -743,7 +761,7 @@ impl Store {
         self.commit_with(
             &changes,
             actor,
-            &format!("restore to version {version}"),
+            message,
             CommitKind::Restore,
             Some((META_RESTORED_FROM, json!(version))),
         )

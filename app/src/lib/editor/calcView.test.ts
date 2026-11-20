@@ -137,3 +137,23 @@ test("Temml typesets the evaluator's TeX, with theme colours and lints", async (
   expect(el.querySelector("math")).not.toBeNull();
   expect(el.classList.contains("has-error")).toBe(true);
 });
+
+test("a description is edited with the calc, committed in its attrs and shown beside it", async () => {
+  const { host } = mount([cell("C", "calc", "a0", "x = 1")]);
+  host.querySelector(".calc-display")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  const desc = host.querySelector<HTMLInputElement>("input.calc-desc-input")!;
+  expect(desc.value).toBe("");
+  // Moving from the source to the description keeps the editor open.
+  const input = host.querySelector<HTMLTextAreaElement>("textarea")!;
+  input.dispatchEvent(new FocusEvent("blur", { relatedTarget: desc }));
+  expect(host.querySelector("textarea")).not.toBeNull();
+  desc.value = "Unit test value";
+  desc.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await flushPromises();
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(commit.mock.calls[0][0][0].cell.attrs).toEqual({ description: "Unit test value" });
+  expect(host.querySelector(".calc-display .calc-desc")?.textContent).toBe("Unit test value");
+  // Clicking the description opens the editor there.
+  host.querySelector(".calc-desc")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  expect(document.activeElement?.className).toBe("calc-desc-input");
+});

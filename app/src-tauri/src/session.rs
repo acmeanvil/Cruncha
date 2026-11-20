@@ -375,6 +375,46 @@ impl Session {
         })
     }
 
+    /// Take a snapshot: name the latest version as a known-good point (a store tag; it
+    /// survives history trimming). Names are unique within a document.
+    pub async fn snapshot(&mut self, name: &str, note: &str) -> Result<DocInfo> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a snapshot needs a name".into());
+        }
+        let doc = self.doc_mut()?;
+        doc.store
+            .tag(name, note.trim(), &local_actor())
+            .await
+            .map_err(|e| match e {
+                Error::RefExists(n) => format!("there is already a snapshot named “{n}”"),
+                e => err(e),
+            })?;
+        self.info().await
+    }
+
+    /// Make an earlier version (or snapshot) the latest again, as a new version: history is
+    /// never rewritten, so a restore can be undone the same way.
+    pub async fn restore(&mut self, at: &At) -> Result<CommitView> {
+        let actor = local_actor();
+        let doc = self.doc_mut()?;
+        let before = doc.store.version();
+        let after = match (&at.ref_name, at.version) {
+            (Some(name), _) => doc.store.restore_ref(name, &actor).await,
+            (None, Some(v)) => doc.store.restore(v, &actor).await,
+            (None, None) => Ok(before),
+        }
+        .map_err(err)?;
+        if after != before {
+            doc.edited = true;
+        }
+        let results = self.results(&At::default()).await?;
+        Ok(CommitView {
+            info: self.info().await?,
+            results,
+        })
+    }
+
     /// Results for every calc cell at `at`. The latest version uses the document's engine
     /// (memoized); history is evaluated afresh.
     pub async fn results(&mut self, at: &At) -> Result<HashMap<String, CellResult>> {
@@ -471,19 +511,28 @@ fn calc(id: &str, order: &str, src: &str, defines: &[&str], reads: &[&str]) -> C
     c
 }
 
+/// `c` with a description (shown beside the calc and in the variable browser).
+fn described(mut c: Cell, description: &str) -> Cell {
+    c.attrs["description"] = description.into();
+    c
+}
+
 /// A simply supported beam check with a few revisions and a tag.
 pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
     let me = "user:sample";
     let mut s = Store::create(path, me).await?;
-    let w = |v: &str| calc("W", "b1", &format!("w = {v} kip/ft"), &["w"], &[]);
-    let l = |v: &str| calc("L", "b2", &format!("L = {v} ft"), &["L"], &[]);
-    let m = calc(
+    let w = |v: &str| {
+        let c = calc("W", "b1", &format!("w = {v} kip/ft"), &["w"], &[]);
+        described(c, "Uniform load, dead + live")
+    };
+    let l = |v: &str| described(calc("L", "b2", &format!("L = {v} ft"), &["L"], &[]), "Span");
+    let m = described(calc(
         "M",
         "b3",
         "M = w L^2 / 8 = ?? kip·ft",
         &["M"],
         &["w", "L"],
-    );
+    ), "Maximum bending moment, at midspan");
     s.commit(
         &[
             Change::Upsert(heading("a0", 1, "Beam check")),
@@ -525,12 +574,9 @@ pub async fn sample_document(path: &Path) -> std::result::Result<Store, Error> {
     s.commit(
         &[
             Change::Upsert(heading("c5", 2, "Check")),
-            Change::Upsert(calc(
-                "MA",
-                "c7",
-                "M_allow = 150 kip·ft",
-                &["M_allow"],
-                &[],
+            Change::Upsert(described(
+                calc("MA", "c7", "M_allow = 150 kip·ft", &["M_allow"], &[]),
+                "Allowable moment",
             )),
             Change::Upsert(calc(
                 "CHK",
@@ -583,6 +629,41 @@ mod tests {
         assert!(session.close().await.is_none());
         let info = session.open(&path).await.unwrap();
         assert_eq!(info.version, 5);
+        let m = latest.iter().find(|c| c.id == "M").unwrap();
+        assert_eq!(m.attrs["description"], "Maximum bending moment, at midspan");
+    }
+
+    #[tokio::test]
+    async fn snapshots_and_restoring_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let info = session.snapshot("  Checked  ", "hand check agrees").await.unwrap();
+        let r = info.refs.iter().find(|r| r.name == "Checked").unwrap();
+        assert_eq!(r.version, 5);
+        assert_eq!(r.message, "hand check agrees");
+        let dup = session.snapshot("Checked", "").await.unwrap_err();
+        assert!(dup.contains("already a snapshot"), "{dup}");
+        assert!(session.snapshot(" ", "").await.is_err());
+
+        // Back to Rev A (span 24 ft): a new version, evaluated, and M is as it was then.
+        let out = session
+            .restore(&At { version: None, ref_name: Some("Rev A".into()) })
+            .await
+            .unwrap();
+        assert_eq!(out.info.version, 6);
+        assert!(out.results["M"].text.ends_with("108 kip·ft"), "{:?}", out.results["M"]);
+        assert!(!out.results.contains_key("CHK"), "the check came after Rev A");
+        let h = session.history().await.unwrap();
+        assert_eq!(h[0].message, "restore to “Rev A”");
+        // And forward again to the snapshot.
+        let out = session
+            .restore(&At { version: None, ref_name: Some("Checked".into()) })
+            .await
+            .unwrap();
+        assert!(out.results["M"].text.ends_with("126.75 kip·ft"));
+        assert_eq!(out.results["M"].values[0].name, "M");
     }
 
     #[tokio::test]

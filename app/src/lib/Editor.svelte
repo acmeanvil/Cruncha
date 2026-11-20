@@ -8,7 +8,7 @@
   import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
   import type { Cell, CellResult, CommitView } from "./api";
   import { CalcView } from "./editor/calcView";
-  import { docFromCells } from "./editor/cells";
+  import { docFromCells, withDescription } from "./editor/cells";
   import {
     editorPlugins,
     insertBlock,
@@ -19,6 +19,7 @@
     newParagraph,
   } from "./editor/plugins";
   import { outlineOf, type OutlineItem } from "./editor/outline";
+  import { variablesOf, type Variable } from "./editor/variables";
   import { Results } from "./editor/results";
   import { schema } from "./editor/schema";
   import { DocSync, type SaveState } from "./editor/sync";
@@ -31,6 +32,7 @@
     oncommitted,
     onsavestate,
     onoutline,
+    onvariables,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -40,6 +42,7 @@
     oncommitted: (v: CommitView) => void;
     onsavestate: (s: SaveState) => void;
     onoutline?: (items: OutlineItem[]) => void;
+    onvariables?: (vars: Variable[]) => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -73,10 +76,41 @@
     (view.nodeDOM(pos) as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
+  /** Position of the block for cell `id`, if it is in the document. */
+  function posOf(id: string): number | null {
+    let found: number | null = null;
+    view?.state.doc.forEach((n, pos) => {
+      if (found === null && n.attrs.id === id) found = pos;
+    });
+    return found;
+  }
+
+  /** Jump to the block for cell `id`. */
+  export function jumpToCell(id: string) {
+    const pos = posOf(id);
+    if (pos !== null) jumpTo(pos);
+  }
+
+  /** Set the description of calc cell `id`, and save it. */
+  export function setDescription(id: string, description: string) {
+    const pos = posOf(id);
+    if (!view || !editable || pos === null) return;
+    const node = view.state.doc.nodeAt(pos)!;
+    if (node.type !== schema.nodes.calc) return;
+    const cellAttrs = withDescription(node.attrs.cellAttrs, description);
+    if (cellAttrs === node.attrs.cellAttrs) return;
+    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, cellAttrs }));
+    void sync.flush();
+  }
+
   let outlineTimer: ReturnType<typeof setTimeout> | undefined;
   function refreshOutline(soon = false) {
     clearTimeout(outlineTimer);
-    const run = () => view && onoutline?.(outlineOf(view.state.doc, (id) => store.definesOf(id)));
+    const run = () => {
+      if (!view) return;
+      onoutline?.(outlineOf(view.state.doc, (id) => store.definesOf(id)));
+      onvariables?.(variablesOf(view.state.doc, (id) => store.committed(id)));
+    };
     if (soon) outlineTimer = setTimeout(run, 250);
     else run();
   }
@@ -317,6 +351,14 @@
   }
   .editor :global(.calc-preview) { min-height: 1.6em; padding: 2px 0; }
   .editor :global(.calc-hint) { font-size: 11px; color: var(--muted); }
+  .editor :global(.calc-desc) {
+    margin-left: auto; padding-left: 16px; flex: 0 1 auto; max-width: 45%; text-align: right;
+    font: italic 14px/1.35 var(--doc); color: var(--muted);
+  }
+  .editor :global(.calc-desc-input) {
+    width: 100%; margin: 2px 0 4px; font: italic 14px var(--doc); color: var(--text);
+    background: var(--sunken); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
+  }
   .editor :global(.calc-source) { font: 14px var(--mono); color: var(--code); }
   .editor :global(.calc-source.pending) { color: var(--muted); }
   .editor :global(.calc-error) { color: var(--danger); font: 12.5px var(--sans); }

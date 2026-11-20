@@ -66,6 +66,8 @@ id, kind, order_key, parent_id (for inline cells), source (text), display (selec
 format, unit), defines[] (names), reads[] (names), provenance, created/modified (by actor)
 ```
 
+A calc's **description** (`attrs.description`, one line of text) says what the quantity it defines is. It is not part of the statement, so it never affects a result. It is shown beside the typeset calc and in the variable browser (a sidebar list of every defined name with its value, description, section and users, searchable and sortable).
+
 **Results are not part of the document.** Results live in a separate results table keyed by `(cell_id, input_hash)` (§5.2).
 
 **Provenance**, per cell: `human` | `ai:proposed` | `ai:accepted(by, at)` | `imported(source)`. Reports can display it.
@@ -213,9 +215,9 @@ sections = pl.read_parquet("aisc_w_shapes.parquet").filter(pl.col("Zx") > Z_req)
 | --- | --- |
 | Undo/redo (within a session) | Editor history, which is not tied to Delta versions |
 | "History" slider / view any past state | `doc` time travel: `load_version(n)` or `load_as_of(timestamp)`, joined with the `results` and `data` versions from that time |
-| Named snapshot ("Issued for review rev A") | A row in `refs` that pins `doc_version` and every `data/*` version |
+| Named snapshot ("Issued for review rev A") | A row in `refs` that pins `doc_version` and every `data/*` version. Taken by a person from the History panel ("Take snapshot", with a note), at the latest version; agents may suggest but not take one. The panel shows how many edits came after the newest snapshot. |
 | Diff two versions | Delta Change Data Feed / version diff on `doc`, rendered per cell (source diff plus result diff) |
-| Roll back | A **new commit** that restores the old rows. History is never rewritten, so a rollback can itself be undone. |
+| Roll back | A **new commit** that restores the old rows ("Restore this version/snapshot" when viewing it). History is never rewritten, so a rollback can itself be undone. A snapshot whose version was pruned is restored from its pin. |
 | Branch / AI proposal | **D3:** a proposal is a set of pending rows (`doc` rows with `proposal_id`) shown as tracked changes. Accepting commits them; rejecting deletes them. We avoid full Delta branching for now. |
 
 **Retention:** `VACUUM` deletes Parquet files older than the retention window, and that breaks time travel to versions older than it. Policy (details in ADR-0011, implemented in `Store::prune`):

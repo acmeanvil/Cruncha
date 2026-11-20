@@ -46,6 +46,16 @@ async fn results(at: At, s: State<'_, Shared>) -> Result<HashMap<String, CellRes
 }
 
 #[tauri::command]
+async fn snapshot(name: String, note: String, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.snapshot(&name, &note).await
+}
+
+#[tauri::command]
+async fn restore(at: At, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.restore(&at).await
+}
+
+#[tauri::command]
 async fn preview_calc(source: String, s: State<'_, Shared>) -> Result<CellResult> {
     s.lock().await.preview_calc(&source)
 }
@@ -138,6 +148,8 @@ pub fn run() {
             commit,
             results,
             preview_calc,
+            snapshot,
+            restore,
             close_document,
             document_info,
             cells,

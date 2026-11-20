@@ -102,8 +102,21 @@ export interface CellResult {
   text?: string;
   /** Names the cell defines. */
   defines?: string[];
+  /** Names the cell reads. */
+  reads?: string[];
+  /** The value of each name it defined, as evaluated. */
+  values?: ValueView[];
   /** Lints: the cell runs, but something deserves a look. */
   warnings?: string[];
+}
+
+/** One variable's value (engine.rs `ValueView`). */
+export interface ValueView {
+  name: string;
+  /** The value as TeX, as a later calc's echo shows it. */
+  tex: string;
+  /** "number", "matrix", "dataframe", "text", … */
+  kind: string;
 }
 
 export type Change = { op: "upsert"; cell: Cell } | { op: "delete"; id: string };
@@ -125,6 +138,10 @@ export const api = {
   commit: (changes: Change[], message: string) => invoke<CommitView>("commit", { changes, message }),
   results: (at: At) => invoke<Record<string, CellResult>>("results", { at }),
   previewCalc: (source: string) => invoke<CellResult>("preview_calc", { source }),
+  /** Name the latest version as a known-good snapshot. */
+  snapshot: (name: string, note: string) => invoke<DocInfo>("snapshot", { name, note }),
+  /** Make a version or snapshot the latest again (a new version). */
+  restore: (at: At) => invoke<CommitView>("restore", { at }),
   createSampleDocument: (path: string) => invoke<DocInfo>("create_sample_document", { path }),
   closeDocument: () => invoke<PruneResult | null>("close_document"),
   documentInfo: () => invoke<DocInfo | null>("document_info"),

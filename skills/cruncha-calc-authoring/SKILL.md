@@ -43,6 +43,12 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 - **Each name is defined exactly once in the whole document** (ADR-0004). For a second check of the same quantity, use a qualified name (`M_u,2`, `V_u,end`), not a redefinition.
 - Define inputs above their use. Upward references still compute, but they get a lint badge.
 
+## Descriptions
+
+- A calc can carry a short description of what it defines: `attrs.description` on the cell (a string, e.g. `"Span, centre to centre of bearings"`). It is shown beside the typeset result and in the Variables panel, and it is searchable there. A cell that defines several names shares one description.
+- It is not part of the statement, so it never changes the result. Keep it to one line and say what the quantity *is* (and where it comes from, if not obvious), not its value: `"Factored moment, LC3"`, not `"M = 412 kip·ft"`.
+- When you propose a calc, give every input and every key result a description. Keep the other `attrs` (such as `display`) as they were.
+
 ## Data frames
 
 A literal data frame has headings in row 1, an optional **units row** in row 2, and data after that. `#` in the first heading makes column 1 the row key.
@@ -70,6 +76,7 @@ end
 ## Checklist before proposing a calc
 
 - [ ] Every input has a unit, and a cited source or a placeholder `_`.
+- [ ] Inputs and key results have a description (`attrs.description`).
 - [ ] `?` on every check result, so the echo is visible.
 - [ ] No duplicate names (`read_doc` / `check`).
 - [ ] An `@test` for each acceptance criterion.

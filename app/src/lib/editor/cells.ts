@@ -93,3 +93,19 @@ export function docFromCells(cells: Cell[]): Node {
   if (blocks.length === 0) blocks.push(schema.nodes.paragraph.create());
   return schema.nodes.doc.create(null, blocks);
 }
+
+/** A calc's description (`attrs.description`): shown beside it and in the variable browser. */
+export function descriptionOf(cellAttrs: string): string {
+  const a = parseAttrs(cellAttrs) as { description?: unknown } | null;
+  return typeof a?.description === "string" ? a.description : "";
+}
+
+/** `cellAttrs` JSON with the description set (an empty one is removed). */
+export function withDescription(cellAttrs: string, description: string): string {
+  const a = parseAttrs(cellAttrs);
+  const obj: Record<string, unknown> = a && typeof a === "object" && !Array.isArray(a) ? { ...(a as object) } : {};
+  const d = description.trim();
+  if (d) obj.description = d;
+  else delete obj.description;
+  return JSON.stringify(obj);
+}

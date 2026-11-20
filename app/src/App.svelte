@@ -18,9 +18,11 @@
   import Editor from "./lib/Editor.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import Preferences from "./lib/Preferences.svelte";
+  import SnapshotDialog from "./lib/SnapshotDialog.svelte";
   import { date, describeRetention } from "./lib/format";
   import type { SaveState } from "./lib/editor/sync";
   import type { OutlineItem } from "./lib/editor/outline";
+  import type { Variable } from "./lib/editor/variables";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
   let doc = $state<DocInfo | null>(null);
@@ -30,10 +32,11 @@
   let results = $state.raw<Record<string, CellResult>>({});
   let loads = $state(0);
   let save = $state<SaveState>({ status: "saved", error: null });
-  let modal = $state<"prefs" | "doc" | null>(null);
+  let modal = $state<"prefs" | "doc" | "snapshot" | null>(null);
   let error = $state<string | null>(null);
   let editor = $state<ReturnType<typeof Editor> | undefined>();
   let outline = $state.raw<OutlineItem[]>([]);
+  let variables = $state.raw<Variable[]>([]);
   let sidebar = $state(true);
   let fileMenu = $state(false);
 
@@ -129,6 +132,23 @@
     history = await api.history();
   }
 
+  /** Snapshot the latest version (pending edits are saved first, so they're included). */
+  async function takeSnapshot(name: string, note: string) {
+    await flush();
+    doc = await api.snapshot(name, note);
+  }
+
+  /** Make the version on screen the latest again (a new version; it can be undone the same way). */
+  const restoreShown = () =>
+    attempt(async () => {
+      const s = selected;
+      if (s.kind === "latest") return;
+      const v = await api.restore(s.kind === "ref" ? { ref: s.name } : { version: s.version });
+      doc = v.info;
+      history = await api.history();
+      await show({ kind: "latest" });
+    });
+
   // The open document may follow the default, so its effective policy can change.
   const prefsSaved = (p: Prefs) =>
     attempt(async () => {
@@ -206,6 +226,8 @@
       {#if sidebar}
         <Sidebar
           {outline}
+          {variables}
+          {editable}
           {history}
           refs={doc.refs}
           latest={doc.version}
@@ -213,6 +235,9 @@
           {selected}
           onselect={show}
           onjump={(pos) => editor?.jumpTo(pos)}
+          onjumpcell={(id) => editor?.jumpToCell(id)}
+          ondescribe={(id, d) => editor?.setDescription(id, d)}
+          onsnapshot={() => (modal = "snapshot")}
         />
       {/if}
       <main>
@@ -220,11 +245,17 @@
           <span>{heading}</span>
           {#if selected.kind !== "latest"}
             <span class="muted small">read-only view of history</span>
+            <span class="spacer"></span>
+            <button onclick={restoreShown} title="Adds a new version with this content; nothing is lost">
+              Restore this {selected.kind === "ref" ? "snapshot" : "version"}
+            </button>
             <button class="link" onclick={() => show({ kind: "latest" })}>Back to latest</button>
           {:else}
             <span class="muted small">
               Latest · every change is saved · history: {describeRetention(doc.effectiveRetention).toLowerCase()}{doc.retention == null ? " (app default)" : ""}
             </span>
+            <span class="spacer"></span>
+            <button class="snap" onclick={() => (modal = "snapshot")} title="Mark this version as a known-good point">Take snapshot…</button>
           {/if}
         </div>
         {#if save.error}
@@ -243,6 +274,7 @@
             oncommitted={committed}
             onsavestate={(s) => (save = s)}
             onoutline={(o) => (outline = o)}
+            onvariables={(v) => (variables = v)}
           />
         </div>
       </main>
@@ -274,6 +306,8 @@
 
 {#if modal === "prefs"}
   <Preferences {prefs} {doc} onclose={() => (modal = null)} onsaved={prefsSaved} />
+{:else if modal === "snapshot" && doc}
+  <SnapshotDialog version={doc.version} taken={doc.refs.map((r) => r.name)} onclose={() => (modal = null)} onsave={takeSnapshot} />
 {:else if modal === "doc" && doc}
   <DocumentSettings {doc} {prefs} onclose={() => (modal = null)} onchanged={(d) => void load(d)} />
 {/if}
@@ -315,6 +349,8 @@
     padding: 8px 24px; background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
   }
+  .viewing button { font-size: 12.5px; padding: 2px 10px; }
+  .viewing .snap { color: var(--accent); }
   .page {
     max-width: 880px; margin: 20px auto 48px; background: var(--panel); border: 1px solid var(--border);
     border-radius: 6px; padding: 28px 64px 24px 104px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);

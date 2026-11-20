@@ -3,10 +3,14 @@
 <script lang="ts">
   import type { RefView, Selection, VersionView } from "./api";
   import type { OutlineItem } from "./editor/outline";
+  import type { Variable } from "./editor/variables";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import VariableBrowser from "./VariableBrowser.svelte";
 
   let {
     outline,
+    variables,
+    editable,
     history,
     refs,
     latest,
@@ -14,8 +18,13 @@
     selected,
     onselect,
     onjump,
+    onjumpcell,
+    ondescribe,
+    onsnapshot,
   }: {
     outline: OutlineItem[];
+    variables: Variable[];
+    editable: boolean;
     history: VersionView[];
     refs: RefView[];
     latest: number;
@@ -23,9 +32,12 @@
     selected: Selection;
     onselect: (s: Selection) => void;
     onjump: (pos: number) => void;
+    onjumpcell: (id: string) => void;
+    ondescribe: (id: string, description: string) => void;
+    onsnapshot: () => void;
   } = $props();
 
-  let tab = $state<"outline" | "history">("outline");
+  let tab = $state<"outline" | "variables" | "history">("outline");
   const edits = $derived(history.filter((v) => v.kind !== "maintenance").length);
 </script>
 
@@ -33,6 +45,9 @@
   <div class="tabs" role="tablist">
     <button role="tab" aria-selected={tab === "outline"} class:on={tab === "outline"} onclick={() => (tab = "outline")}>
       Outline
+    </button>
+    <button role="tab" aria-selected={tab === "variables"} class:on={tab === "variables"} onclick={() => (tab = "variables")}>
+      Variables <span class="count">{variables.length}</span>
     </button>
     <button role="tab" aria-selected={tab === "history"} class:on={tab === "history"} onclick={() => (tab = "history")}>
       History <span class="count">{edits}</span>
@@ -54,8 +69,10 @@
           {/each}
         </nav>
       {/if}
+    {:else if tab === "variables"}
+      <VariableBrowser {variables} {editable} onjump={onjumpcell} {ondescribe} />
     {:else}
-      <HistoryPanel {history} {refs} {latest} {earliest} {selected} {onselect} />
+      <HistoryPanel {history} {refs} {latest} {earliest} {selected} {onselect} {onsnapshot} />
     {/if}
   </div>
 </aside>
@@ -67,7 +84,7 @@
   }
   .tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--border); }
   .tabs button {
-    border: none; background: none; border-radius: 6px 6px 0 0; padding: 6px 12px;
+    border: none; background: none; border-radius: 6px 6px 0 0; padding: 6px 10px;
     color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
   .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }

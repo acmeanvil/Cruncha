@@ -28,8 +28,33 @@ pub struct CellResult {
     pub text: String,
     /// Names the cell defines.
     pub defines: Vec<String>,
+    /// Names the cell reads (for the variable browser's "used by").
+    pub reads: Vec<String>,
+    /// The value of each name the cell defined, as evaluated (empty if it didn't run).
+    pub values: Vec<ValueView>,
     /// Lints: shown, but the cell still runs (e.g. a name used above its definition).
     pub warnings: Vec<String>,
+}
+
+/// One variable's value, for the variable browser.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ValueView {
+    pub name: String,
+    /// The value as TeX, the same form a later statement's echo shows (e.g. `24\,\text{ft}`).
+    pub tex: String,
+    /// `number`, `matrix`, `dataframe`, … (see [`cruncha_eval::Kind`]), lower case.
+    pub kind: String,
+}
+
+fn value_views(values: &[(String, cruncha_eval::Value)]) -> Vec<ValueView> {
+    values
+        .iter()
+        .map(|(name, v)| ValueView {
+            name: name.clone(),
+            tex: v.tex().to_owned(),
+            kind: format!("{:?}", v.kind()).to_lowercase(),
+        })
+        .collect()
 }
 
 /// The name Hurmet's `format = "…"` statement assigns; every calc reads it implicitly.
@@ -128,15 +153,33 @@ impl Engine {
         let mut live: HashSet<String> = HashSet::new();
         let order: Vec<String> = graph.order().map(str::to_owned).collect();
         for id in &order {
-            if kind_of.get(id.as_str()) != Some(&CellKind::Calc) {
-                continue;
-            }
-            live.insert(id.clone());
             let node = graph
                 .nodes()
                 .iter()
                 .find(|n| &n.id == id)
                 .expect("graph node for every cell");
+            let kind = kind_of.get(id.as_str()).copied();
+            if kind != Some(CellKind::Calc) {
+                // Code cells take part in the graph, so the variable browser lists their names.
+                if !node.defines.is_empty() {
+                    let label = match kind {
+                        Some(CellKind::Python) => "Python cells",
+                        Some(CellKind::Rust) => "Rust cells",
+                        _ => "these cells",
+                    };
+                    out.insert(
+                        id.clone(),
+                        CellResult {
+                            defines: node.defines.clone(),
+                            reads: node.reads.clone(),
+                            error: Some(format!("{label} can't run yet")),
+                            ..CellResult::default()
+                        },
+                    );
+                }
+                continue;
+            }
+            live.insert(id.clone());
             let issues = graph.issues(id);
             let warnings: Vec<String> = issues
                 .iter()
@@ -145,6 +188,7 @@ impl Engine {
                 .collect();
             let mut result = CellResult {
                 defines: node.defines.clone(),
+                reads: node.reads.iter().filter(|r| *r != FORMAT_VAR).cloned().collect(),
                 warnings,
                 ..CellResult::default()
             };
@@ -196,6 +240,7 @@ impl Engine {
             for (name, value) in &outcome.values {
                 vars.insert(name.clone(), value.clone());
             }
+            result.values = value_views(&outcome.values);
             result.tex = outcome.tex;
             result.text = outcome.result;
             result.error = outcome.error.map(|e| clean_message(&e));
@@ -227,7 +272,9 @@ impl Engine {
             tex: o.tex,
             text: o.result,
             error: o.error.map(|e| clean_message(&e)),
+            values: value_views(&o.values),
             defines: stmt.defines,
+            reads: stmt.reads,
             warnings: Vec::new(),
         }
     }
@@ -278,6 +325,11 @@ mod tests {
         assert!(r["M"].text.ends_with("108 kip·ft"), "{}", r["M"].text);
         assert!(r["M"].tex.contains("108"), "{}", r["M"].tex);
         assert_eq!(r["M"].defines, ["M"]);
+        assert_eq!(r["M"].reads, ["w", "L"]);
+        assert_eq!(r["M"].values.len(), 1);
+        assert_eq!(r["M"].values[0].name, "M");
+        assert_eq!(r["M"].values[0].kind, "number");
+        assert!(r["M"].values[0].tex.contains("108"), "{:?}", r["M"].values);
         assert_eq!(r["T"].error, None, "{:?}", r["T"]);
         // Order follows dependencies: move M above w and L and it still works, with a lint.
         let mut cells = beam();
@@ -338,6 +390,9 @@ mod tests {
         py.defines = vec!["x".into()];
         let r = e.run(&[py, calc("C", "b", "y = 2 x = ?"), calc("L", "c", "L = 3 m")]);
         assert_eq!(r["C"].error.as_deref(), Some("x comes from a Python cell, which can't run yet"));
+        // The Python cell's names are reported too (for the variable browser).
+        assert_eq!(r["PY"].defines, ["x"]);
+        assert!(r["PY"].values.is_empty());
         // A preview uses the document's values, without storing anything.
         let p = e.preview("A = L^2 = ?? m^2");
         assert!(p.text.ends_with("9 m^2") || p.text.ends_with("9 m²"), "{}", p.text);

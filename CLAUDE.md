@@ -17,7 +17,7 @@ Cargo.toml                 workspace (edition 2024, resolver 3)
 crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/cell.rs              Cell, CellKind, Change, Provenance, CellDiff
   src/schema.rs            Arrow schemas + row <-> struct conversion (doc log, refs, pins)
-  src/store.rs             Store: create/open/lock, commit (append + squash), time travel, history, diff, tag, restore, compact, prune
+  src/store.rs             Store: create/open/lock, commit (append + squash), time travel, history, diff, tag, restore (to a version or a snapshot), compact, prune
   src/retention.rs         Retention policy, `_delta_log` commit reader, cutoff computation (ADR-0011)
   src/blobs.rs             content-addressed, zstd-compressed `blobs/` for large cell sources (ADR-0013)
   examples/store_bench.rs  spike S3 benchmark
@@ -46,8 +46,10 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src/App.svelte           shell: toolbar, history panel, cell view, dialogs
   src/lib/api.ts           typed wrappers for the backend's Tauri commands (keep in sync with lib.rs)
   src/lib/Editor.svelte    the document editor; src/lib/editor/: schema (one top-level block per cell), cells <-> blocks,
-                           cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle)
-  src/lib/*.svelte         HistoryPanel, RetentionControl, Preferences, DocumentSettings, …
+                           cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
+                           outline.ts and variables.ts (sidebar models)
+  src/lib/*.svelte         Sidebar (Outline, Variables, History tabs), VariableBrowser, HistoryPanel (snapshots), SnapshotDialog,
+                           RetentionControl, Preferences, DocumentSettings, …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware)
 docs/spikes/               spike write-ups with measured numbers
 docs/adr/  docs/design/  docs/research/
@@ -102,6 +104,7 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
 - One `Store::commit` is one atomic Delta version (a squash, when due, adds a second, maintenance version). Batch changes (on cell submit or idle), never per keystroke.
 - A calc cell's `defines` and `reads` are always recomputed by the backend (`cruncha_eval::prepare`) when it is committed; the editor's values are ignored. Other kinds keep what they were given.
+- A calc's description is `attrs.description` (a string) on its cell, not part of its source; the UI shows it beside the result and in the variable browser. "Snapshots" in the UI are store tags (refs): unique names, kept through pruning, restorable from their pin (`Store::restore_ref`).
 - Results do not live in `doc/`. They go in a separate `results/` table (planned).
 - Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).
 - Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind`, `cruncha.at` (µs; Cruncha's clock), `cruncha.restoredFrom`, `cruncha.prunedBefore` and `cruncha.blobBytes` (new blob bytes, counted by the size limit) (see `store.rs`).

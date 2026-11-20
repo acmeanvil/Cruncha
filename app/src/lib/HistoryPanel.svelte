@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Version history and named versions. Selecting one shows the document as it was. -->
+<!-- Version history and snapshots (named, known-good versions; store tags that survive history
+     trimming). Selecting one shows the document as it was. -->
 <script lang="ts">
   import type { RefView, Selection, VersionView } from "./api";
   import { date } from "./format";
@@ -11,6 +12,7 @@
     earliest,
     selected,
     onselect,
+    onsnapshot,
   }: {
     history: VersionView[];
     refs: RefView[];
@@ -18,7 +20,16 @@
     earliest: number;
     selected: Selection;
     onselect: (s: Selection) => void;
+    onsnapshot?: () => void;
   } = $props();
+
+  /** Newest snapshot first, and how many edits came after the newest one. */
+  const snapshots = $derived([...refs].sort((a, b) => b.version - a.version || b.createdAtMs - a.createdAtMs));
+  const editsSince = $derived(
+    snapshots.length
+      ? history.filter((v) => v.version > snapshots[0].version && v.kind !== "maintenance").length
+      : null,
+  );
 
   let showMaintenance = $state(false);
 
@@ -38,22 +49,40 @@
 </script>
 
 <div class="history">
-  {#if refs.length}
-    <section>
-      <h3>Named versions</h3>
-      {#each refs as r (r.name)}
+  <section>
+    <h3>
+      Snapshots
+      {#if onsnapshot}
+        <button class="take" onclick={onsnapshot} title="Mark the latest version as a known-good point">+ Take snapshot</button>
+      {/if}
+    </h3>
+    {#if snapshots.length === 0}
+      <p class="small muted hint">
+        A snapshot marks a known-good point, such as “Checked” or “Issued for review”. Snapshots are
+        kept even when older history is trimmed, and you can restore one at any time.
+      </p>
+    {:else}
+      {#if editsSince !== null}
+        <p class="small muted since">
+          {editsSince === 0 ? "No edits since" : `${editsSince} edit${editsSince === 1 ? "" : "s"} since`} “{snapshots[0].name}”
+        </p>
+      {/if}
+      {#each snapshots as r (r.name)}
         <button
-          class="row"
+          class="row snap"
           class:sel={selected.kind === "ref" && selected.name === r.name}
           onclick={() => onselect({ kind: "ref", name: r.name })}
         >
-          <span class="tag">{r.name}</span>
-          <span class="muted small">v{r.version}{r.pinned ? " · kept copy" : ""}</span>
+          <span class="head">
+            <span class="tag">{r.name}</span>
+            <span class="muted small">v{r.version}{r.pinned ? " · kept copy" : ""}</span>
+            <span class="muted small when">{date(r.createdAtMs)}</span>
+          </span>
           {#if r.message}<span class="msg small">{r.message}</span>{/if}
         </button>
       {/each}
-    </section>
-  {/if}
+    {/if}
+  </section>
 
   <section>
     <h3>
@@ -97,6 +126,11 @@
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
     margin: 8px 4px; display: flex; justify-content: space-between; align-items: center;
   }
+  .take {
+    text-transform: none; letter-spacing: 0; font-size: 12px; padding: 2px 8px; color: var(--accent);
+  }
+  .hint, .since { margin: 0 4px 6px; }
+  .row.snap { border-left: 3px solid var(--accent); }
   .toggle { text-transform: none; letter-spacing: 0; font-weight: normal; }
   .row {
     display: grid; gap: 1px; width: 100%; text-align: left; border: 1px solid transparent;

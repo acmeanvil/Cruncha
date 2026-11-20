@@ -252,9 +252,18 @@ async fn named_versions_survive_pruning() {
     let r2 = store.prune(&p, "system").await.unwrap().unwrap();
     assert!(r2.pinned.is_empty());
     drop(store);
-    let store = Store::open(&path).await.unwrap();
+    let mut store = Store::open(&path).await.unwrap();
     assert!(same(&store.cells_at_ref("rev A").await.unwrap(), &rev_a));
     assert_eq!(store.refs().await.unwrap().len(), 3);
+
+    // A named version can be restored after its version was pruned (from its kept copy).
+    let v = store.restore_ref("rev A", "user:test").await.unwrap();
+    assert!(same(&store.cells().await.unwrap(), &rev_a));
+    let h = store.history().await.unwrap();
+    assert_eq!(h[0].version, v);
+    assert_eq!(h[0].kind, CommitKind::Restore);
+    assert_eq!(h[0].message, "restore to “rev A”");
+    assert!(matches!(store.restore_ref("nope", "user:test").await, Err(Error::NoSuchRef(_))));
 }
 
 #[tokio::test]

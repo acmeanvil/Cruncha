@@ -39,6 +39,11 @@ export class Results {
     return undefined;
   }
 
+  /** The committed cell `id`'s last result. */
+  committed(id: string): CellResult | undefined {
+    return this.byId.get(id);
+  }
+
   /** Names the committed cell `id` defines (from its last evaluation). */
   definesOf(id: string): string[] | undefined {
     return this.byId.get(id)?.defines;

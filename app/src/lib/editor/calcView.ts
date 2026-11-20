@@ -7,6 +7,7 @@ import { NodeSelection, TextSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import type { CellResult } from "../api";
 import type { Results } from "./results";
+import { descriptionOf, withDescription } from "./cells";
 import { schema } from "./schema";
 
 /** Hurmet colours its echo and errors with fixed colours; use the theme's instead. */
@@ -27,7 +28,16 @@ function sourceWithError(el: HTMLElement, source: string, message: string) {
   el.append(code, err);
 }
 
-export function renderMath(el: HTMLElement, r: CellResult | undefined, source: string) {
+function appendDescription(el: HTMLElement, description: string) {
+  if (!description) return;
+  const d = document.createElement("span");
+  d.className = "calc-desc";
+  d.textContent = description;
+  el.append(d);
+}
+
+/** Show a calc: its typeset line (or source and error), lints, and its description. */
+export function renderMath(el: HTMLElement, r: CellResult | undefined, source: string, description = "") {
   el.replaceChildren();
   el.title = r?.text ?? "";
   if (!r || (!r.tex && !r.error)) {
@@ -35,6 +45,7 @@ export function renderMath(el: HTMLElement, r: CellResult | undefined, source: s
     code.className = "calc-source" + (r ? "" : " pending");
     code.textContent = source || "empty calculation";
     el.append(code);
+    appendDescription(el, description);
     return;
   }
   if (!r.tex) {
@@ -61,6 +72,7 @@ export function renderMath(el: HTMLElement, r: CellResult | undefined, source: s
     w.setAttribute("aria-label", r.warnings.join("; "));
     el.append(w);
   }
+  appendDescription(el, description);
 }
 
 export class CalcView implements NodeView {
@@ -68,6 +80,7 @@ export class CalcView implements NodeView {
   private display: HTMLElement;
   private panel: HTMLElement | null = null;
   private input: HTMLTextAreaElement | null = null;
+  private descInput: HTMLInputElement | null = null;
   private previewEl: HTMLElement | null = null;
   private unsubscribe: () => void;
   private timer: number | undefined;
@@ -88,7 +101,7 @@ export class CalcView implements NodeView {
     this.display.addEventListener("mousedown", (e) => {
       if (!this.view.editable) return;
       e.preventDefault();
-      this.open();
+      this.open((e.target as HTMLElement).closest?.(".calc-desc") ? "description" : "source");
     });
     this.dom.append(this.display);
     this.unsubscribe = results.subscribe(() => this.render());
@@ -98,7 +111,8 @@ export class CalcView implements NodeView {
 
   private render() {
     if (this.panel) return;
-    renderMath(this.display, this.results.get(this.node.attrs.id, this.node.attrs.source), this.node.attrs.source);
+    const { id, source, cellAttrs } = this.node.attrs;
+    renderMath(this.display, this.results.get(id, source), source, descriptionOf(cellAttrs));
   }
 
   update(node: Node) {
@@ -116,10 +130,10 @@ export class CalcView implements NodeView {
     this.dom.classList.remove("selected");
   }
 
-  /** Open the source editor. */
-  open() {
+  /** Open the editor, with the cursor in the source or the description. */
+  open(focus: "source" | "description" = "source") {
     if (this.panel) {
-      this.input?.focus();
+      (focus === "description" ? this.descInput : this.input)?.focus();
       return;
     }
     const pos = this.getPos();
@@ -139,12 +153,34 @@ export class CalcView implements NodeView {
     input.placeholder = "M = w L^2 / 8 = ?? kip·ft";
     this.previewEl = document.createElement("div");
     this.previewEl.className = "calc-preview";
+    const desc = document.createElement("input");
+    desc.className = "calc-desc-input";
+    desc.type = "text";
+    desc.value = descriptionOf(this.node.attrs.cellAttrs);
+    desc.placeholder = "Description (optional): shown beside the result and in Variables";
+    desc.setAttribute("aria-label", "Description");
     const hint = document.createElement("div");
     hint.className = "calc-hint";
-    hint.textContent = "End with = ? to show the result (= ?? unit to choose its unit) · Enter to save · Shift+Enter new line · Esc cancels";
-    this.panel.append(input, this.previewEl, hint);
+    hint.textContent = "End with = ? to show the result (= ?? unit to choose its unit) · Enter to save · Shift+Enter new line · Tab to the description · Esc cancels";
+    this.panel.append(input, this.previewEl, desc, hint);
     this.display.replaceWith(this.panel);
     this.input = input;
+    this.descInput = desc;
+    desc.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.close(true, 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.close(false, 0);
+      }
+    });
+    // Leaving the editor saves it; moving between its two fields doesn't.
+    const leave = (e: FocusEvent) => {
+      if (this.panel && e.relatedTarget instanceof globalThis.Node && this.panel.contains(e.relatedTarget)) return;
+      this.close(true, 0, false);
+    };
+    desc.addEventListener("blur", leave);
     const fit = () => {
       input.style.height = "auto";
       input.style.height = `${input.scrollHeight}px`;
@@ -169,11 +205,15 @@ export class CalcView implements NodeView {
         this.close(true, 1);
       }
     });
-    input.addEventListener("blur", () => this.close(true, 0, false));
+    input.addEventListener("blur", leave);
     fit();
     this.refreshPreview();
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    if (focus === "description") {
+      desc.focus();
+    } else {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
   }
 
   private refreshPreview() {
@@ -196,9 +236,10 @@ export class CalcView implements NodeView {
   private close(save: boolean, move: -1 | 0 | 1, refocus = true) {
     if (!this.panel || !this.input) return;
     const text = this.input.value.trim();
+    const description = this.descInput?.value ?? "";
     const panel = this.panel;
     // Clear first: removing the focused textarea fires `blur`, which calls close again.
-    this.panel = this.input = this.previewEl = null;
+    this.panel = this.input = this.descInput = this.previewEl = null;
     window.clearTimeout(this.timer);
     panel.replaceWith(this.display);
     this.dom.classList.remove("editing");
@@ -213,8 +254,9 @@ export class CalcView implements NodeView {
       const at = Math.min(pos, tr.doc.content.size);
       tr.setSelection(TextSelection.near(tr.doc.resolve(at)));
     } else {
-      if (save && text !== this.node.attrs.source) {
-        tr = tr.setNodeMarkup(pos, undefined, { ...this.node.attrs, source: text });
+      const cellAttrs = save ? withDescription(this.node.attrs.cellAttrs, description) : this.node.attrs.cellAttrs;
+      if (save && (text !== this.node.attrs.source || cellAttrs !== this.node.attrs.cellAttrs)) {
+        tr = tr.setNodeMarkup(pos, undefined, { ...this.node.attrs, source: text, cellAttrs });
       }
       const after = pos + this.node.nodeSize;
       if (move === 1) {
