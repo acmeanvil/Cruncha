@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Spike S3b: compare `doc` table layouts on an identical, seeded editing workload.
 //!
-//! - `store`    — the current `Store` (since ADR-0010 the append-only log itself). The original
-//!   one-row-per-cell MERGE layout was measured as `merge` at commit df02813; see
-//!   docs/spikes/S3-delta-store.md.
+//! - `store`    — the current `Store`: the append-only log (ADR-0010) with large sources out of
+//!   line in `blobs/` (ADR-0013, option D). The original one-row-per-cell MERGE layout was
+//!   measured as `merge` at commit df02813; see docs/spikes/S3-delta-store.md.
+//! - `store-inline` — the same `Store` with every source kept inline (option A alone).
 //! - `append`   — option A: append-only log of cell revisions (`rev`, `deleted`), reduced to the
 //!   latest row per id on read; squashed (overwritten with current rows) every N commits.
 //! - `bucketed` — option B: one row per cell, partitioned by `hash(id) % 16`, MERGE with the
@@ -13,6 +14,11 @@
 //! cargo run -p cruncha-store --release --example store_variants -- <store|append|bucketed|all> \
 //!     [commits=1000] [cells=2000] [squash_every=500]
 //! ```
+//!
+//! `CRUNCHA_BENCH_PROSE=heavy` switches to a prose-heavy document: 40% of cells are
+//! ProseMirror paragraphs of 1–4 KiB (varied words, so they compress realistically), and 5% of
+//! edits only move a cell (new `order_key`, same text). After the workload, every run also
+//! restores the document to its middle version and reports what that commit cost.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -58,7 +64,44 @@ impl Rng {
     }
 }
 
+fn prose_heavy() -> bool {
+    static P: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *P.get_or_init(|| std::env::var("CRUNCHA_BENCH_PROSE").is_ok_and(|v| v == "heavy"))
+}
+
+/// A ProseMirror paragraph of 1–4 KiB: cell `i`'s words, with `rev` spliced in (an edit
+/// changes a few words, as a real one does).
+fn prose_json(i: usize, rev: usize) -> String {
+    const SYL: [&str; 16] = [
+        "ra", "to", "mek", "lin", "su", "dor", "va", "ex", "pli", "ca", "ten", "or", "bu", "qui",
+        "sta", "ne",
+    ];
+    let mut rng = Rng(0x2545_F491_4F6C_DD1D ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9));
+    let words = 150 + rng.below(450);
+    let mut runs = Vec::new();
+    let mut text = String::new();
+    for w in 0..words {
+        if w == words / 2 {
+            text.push_str(&format!("revision {rev} "));
+        }
+        for _ in 0..1 + rng.below(3) {
+            text.push_str(SYL[rng.below(SYL.len())]);
+        }
+        text.push(' ');
+        if rng.below(40) == 0 {
+            runs.push(format!(r#"{{"type":"text","text":{text:?}}}"#));
+            runs.push(r#"{"type":"text","marks":[{"type":"strong"}],"text":"σ_allow "}"#.into());
+            text.clear();
+        }
+    }
+    runs.push(format!(r#"{{"type":"text","text":{text:?}}}"#));
+    format!(r#"{{"type":"paragraph","content":[{}]}}"#, runs.join(","))
+}
+
 fn source_for(i: usize, rev: usize) -> String {
+    if prose_heavy() && i % 5 < 2 {
+        return prose_json(i, rev);
+    }
     match i % 5 {
         0 => format!(
             "Paragraph {i} rev {rev}: {}",
@@ -113,6 +156,13 @@ fn workload(cells: &mut Vec<Cell>, commits: usize) -> Vec<Vec<Change>> {
                 if touched.insert(cells[i].id.clone()) {
                     changes.push(Change::Delete(cells.swap_remove(i).id));
                 }
+            } else if prose_heavy() && roll < 15 {
+                // Move: a new order key, the same text.
+                let i = rng.below(cells.len());
+                if touched.insert(cells[i].id.clone()) {
+                    cells[i].order_key.push('m');
+                    changes.push(Change::Upsert(cells[i].clone()));
+                }
             } else {
                 let i = rng.below(cells.len());
                 if touched.insert(cells[i].id.clone()) {
@@ -134,7 +184,10 @@ fn now_us() -> i64 {
 
 fn dir_stats(p: &Path) -> (u64, u64) {
     let (mut files, mut bytes) = (0, 0);
-    for e in std::fs::read_dir(p).unwrap().flatten() {
+    let Ok(rd) = std::fs::read_dir(p) else {
+        return (0, 0);
+    };
+    for e in rd.flatten() {
         let m = e.metadata().unwrap();
         if m.is_dir() {
             let (f, b) = dir_stats(&e.path());
@@ -305,7 +358,7 @@ fn to_bucket_batch(changes: &[Change]) -> Res<RecordBatch> {
 // ---------------------------------------------------------------- backends
 
 enum Backend {
-    Current(Store),
+    Current(Box<Store>),
     Append {
         table: DeltaTable,
         squash_every: usize,
@@ -321,7 +374,12 @@ enum Backend {
 impl Backend {
     async fn create(kind: &str, path: &Path, squash_every: usize) -> Res<Backend> {
         Ok(match kind {
-            "store" => Backend::Current(Store::create(path, "user:bench").await?),
+            "store" => Backend::Current(Box::new(Store::create(path, "user:bench").await?)),
+            "store-inline" => {
+                let mut s = Store::create(path, "user:bench").await?;
+                s.set_blob_threshold(usize::MAX);
+                Backend::Current(Box::new(s))
+            }
             "append" => Backend::Append {
                 table: create(&path.join("doc"), &LOG_SCHEMA, &[]).await?,
                 squash_every,
@@ -342,7 +400,7 @@ impl Backend {
             Res::Ok(deltalake::open_table(url).await?)
         };
         Ok(match kind {
-            "store" => Backend::Current(Store::open(path).await?),
+            "store" | "store-inline" => Backend::Current(Box::new(Store::open(path).await?)),
             "append" => Backend::Append {
                 table: open().await?,
                 squash_every,
@@ -484,11 +542,17 @@ async fn run(kind: &str, commits: usize, n_cells: usize, squash_every: usize) ->
     let plan = workload(&mut cells, commits);
 
     let mut b = Backend::create(kind, &path, squash_every).await?;
+    let t0 = Instant::now();
     b.commit(&initial).await?;
+    let t_initial = t0.elapsed();
     let (_, base_bytes) = dir_stats(&path);
     let v_initial = b.version();
 
-    println!("\n## {kind}: {commits} commits on a {n_cells}-cell document");
+    println!(
+        "\n## {kind}: {commits} commits on a {n_cells}-cell document{} (initial commit {:.0} ms)",
+        if prose_heavy() { " (prose-heavy)" } else { "" },
+        ms(t_initial)
+    );
     let mut lat = Vec::with_capacity(commits);
     let mut reads = Vec::new();
     let started = Instant::now();
@@ -512,6 +576,7 @@ async fn run(kind: &str, commits: usize, n_cells: usize, squash_every: usize) ->
     }
     let wall = started.elapsed();
     let (_, end_bytes) = dir_stats(&path);
+    let blob_bytes = dir_stats(&path.join("blobs")).1;
     let mut sorted = lat.clone();
     sorted.sort();
     println!(
@@ -533,9 +598,10 @@ async fn run(kind: &str, commits: usize, n_cells: usize, squash_every: usize) ->
         );
     }
     println!(
-        "  growth: {:.2} KiB/commit (initial doc commit {:.1} KiB)",
+        "  growth: {:.2} KiB/commit (initial doc commit {:.1} KiB); blobs/ {:.1} KiB in total",
         (end_bytes - base_bytes) as f64 / 1024.0 / commits as f64,
-        base_bytes as f64 / 1024.0
+        base_bytes as f64 / 1024.0,
+        blob_bytes as f64 / 1024.0
     );
     let mid = v_initial + (b.version() - v_initial) / 2;
     let (_, tt) = read_latency(&b, Some(mid)).await?;
@@ -547,6 +613,19 @@ async fn run(kind: &str, commits: usize, n_cells: usize, squash_every: usize) ->
     );
 
     let final_cells = b.cells_at(None).await?;
+    if let Backend::Current(store) = &mut b {
+        let (_, before) = dir_stats(&path);
+        let t0 = Instant::now();
+        store.restore(mid, "user:bench").await?;
+        let t = t0.elapsed();
+        let (_, after) = dir_stats(&path);
+        println!(
+            "  restore to v{mid}: {:.1} ms, {:.1} KiB written",
+            ms(t),
+            (after - before) as f64 / 1024.0
+        );
+        store.restore(store.version() - 1, "user:bench").await?;
+    }
     drop(b);
     let (r, t_open) = timed(Backend::reopen(kind, &path, squash_every)).await;
     let b = r?;

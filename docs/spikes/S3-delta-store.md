@@ -185,7 +185,7 @@ The append layout uses the same Delta commit protocol, so it is expected to beha
    A also stops depending on document size: its per-commit growth is close to the fixed floor whether the document has 200 or 2,000 cells. At a heavy 300 commits a day, that's about 2 MiB a day per document.
 2. **Reject B.** It is slower than MERGE and less effective than A.
 3. **The statistics change is already applied to `Store`.** It is harmless for MERGE (the growth there is dominated by rewriting the document) and essential for A.
-4. **Watch item: time travel and reopen latency grow with the total version count.** At 3,000 versions they reach 119 ms and 73 ms, up from about 50 ms and 30 ms at 1,000. This is probably snapshot replay of an ever-growing set of remove tombstones: `deletedFileRetentionDuration` is set to 100 years, so the tombstones are never dropped from checkpoints. We never VACUUM, so we can likely use a short tombstone retention without affecting time travel. **Verify this in a follow-up before relying on it.**
+4. **Watch item: time travel and reopen latency grow with the total version count.** At 3,000 versions they reach 119 ms and 73 ms, up from about 50 ms and 30 ms at 1,000. This is probably snapshot replay of an ever-growing set of remove tombstones: `deletedFileRetentionDuration` is set to 100 years, so the tombstones are never dropped from checkpoints. We never VACUUM, so we can likely use a short tombstone retention without affecting time travel. **Verify this in a follow-up before relying on it.** (2026-11-19: pruning under ADR-0011 does *not* relieve this. Measured on a 200-commit document pruned to 20 saves, the tombstone count went from 239 to 240: VACUUM deletes the files, but their remove actions stay in every checkpoint until `deletedFileRetentionDuration` passes, and we never change that property. The follow-up spike must cover pruned documents too.)
 5. **The fixed per-commit floor (about 6 KiB) is now the dominant cost.** Further cuts would come from fewer commits (cadence, design option E) or from batching inline-cell changes, not from layout.
 
 ## Implemented (ADR-0010), `Store` format 2
@@ -199,3 +199,52 @@ The same workload (2,000 cells, 1,000 commits) against the real `Store` (`store_
 This matches the prototype within noise. Compared with the original MERGE store: **2.7× faster commits and 8.1× less growth.** All 16 store tests pass, including the SIGKILL crash test, whose kills now also land during automatic squashes.
 
 (The run header prints `squash_every=500`; that is the example's CLI default, which applies only to the `append` prototype. `Store` uses `DEFAULT_SQUASH_EVERY = 50`.)
+
+---
+
+# Spike S3c: A against A + D (out-of-line content)
+
+*Date: 2026-11-19. Code: `examples/store_variants.rs` (`store-inline` against `store`), `src/blobs.rs`. Same machine; release build.*
+
+S3b already measured **A against B**: A won, B was rejected, and A shipped as ADR-0010. S3c adds **D** on top of A. Sources of at least 1 KiB are written once to content-addressed, zstd-compressed `blobs/`, and the row keeps only `source_hash` (ADR-0013). Option **C** (deletion vectors) still can't be measured: deltalake-core 1.1.4, the newest release, reads deletion vectors but its DELETE and MERGE never write them.
+
+## Method
+
+Both runs use the real `Store`, with a squash every 50 commits and statistics on `id`, on a 2,000-cell document over 1,000 commits. `store-inline` sets `set_blob_threshold(usize::MAX)`.
+
+- **Default workload:** the S3b one. Prose is about 340 B, below the threshold.
+- **Prose-heavy workload** (`CRUNCHA_BENCH_PROSE=heavy`):
+  - 40% of cells are ProseMirror paragraphs of 1–4 KiB, built from varied words so they compress realistically;
+  - an edit changes a few words;
+  - 5% of operations only move a cell.
+- **Restore:** after the workload, each run restores the middle version and reports what that one commit wrote.
+
+```sh
+CRUNCHA_BENCH_PROSE=heavy cargo run -p cruncha-store --release --example store_variants -- store 1000 2000
+```
+
+## Results
+
+| Prose-heavy, 2,000 cells | A (inline) | **A + D** |
+| --- | --- | --- |
+| Commit p50 / p95 | 21.2 / 33.9 ms | **19.3–20.5 / 28–31 ms** |
+| **Growth per commit** | 27.2 KiB | **9.05 KiB** (3.0× less) |
+| History after 1,000 commits | 28.2 MiB | **9.7 MiB** (1.6 MiB of it in `blobs/`) |
+| **Restore to the middle version** | 385 KiB written | **40 KiB** (9.7× less) |
+| Read latest, warm | 11–13 ms | **6.6–8.2 ms** |
+| Time travel (mid / v1) | 75 / 44 ms | 62–74 / 38–42 ms |
+| Reopen + first read (cold blob cache) | 45 + 16 ms | 37–53 + **40–88 ms** |
+| Initial 2,000-cell commit (800 new blobs) | 29 ms | **160–215 ms** |
+
+On the default workload no source reaches 1 KiB, so A + D writes no blobs and matches A within noise: 7.31 KiB per commit for both, and the same latencies.
+
+## Findings
+
+1. **D pays off where S3 predicted: copies of unchanged text.** In a prose-heavy document under A, every squash rewrites all the prose, which is about 20 KiB a commit when amortized. D removes that, plus the text copies in restores, moves and pins. A + D's growth (9 KiB) is close to A's per-commit floor plus the edited paragraphs themselves.
+2. **The cost is the first read of a cold document:** one small file per distinct large source.
+   - Sequential reads took 105–215 ms. Reading 32 at a time, as implemented, takes 40–88 ms.
+   - After that, a 64 MiB cache serves them, so warm reads are faster than inline.
+   - Importing a large document is likewise a one-time cost of about 165 ms for 800 blobs.
+3. **Calc- and code-heavy documents are unaffected:** nothing crosses the threshold.
+4. **Pruning now also deletes unreferenced blobs** (ADR-0011 step 7), so the size limit and "Trim history" free text that only old versions used.
+5. **Ground for C:** the reader (`reduce_log`) already handles one live row per id, and the writer is isolated in two `Store` steps. Blobs keep rows small under either layout. See ADR-0013, "Room for deletion vectors".

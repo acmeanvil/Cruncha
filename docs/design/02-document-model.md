@@ -160,9 +160,12 @@ A document is a **directory**, `beam-check.cruncha/`, containing Delta tables:
 
 ```
 beam-check.cruncha/
-├── doc/          Delta table: one row per block/cell (current state = latest version)
-│                 id, kind, order_key, parent_id, source, attrs_json, defines, reads,
-│                 provenance, modified_by, modified_at
+├── doc/          Delta table: append-only log of cell revisions (ADR-0010), reduced to the
+│                 latest row per id on read. id, kind, order_key, parent_id, source, attrs,
+│                 defines, reads, provenance, modified_by, modified_at, rev, deleted,
+│                 source_hash
+├── blobs/        large cell sources (≥ 1 KiB), zstd, named by sha256 (ADR-0013)
+├── pins/         copies of named versions whose history was pruned (ADR-0011)
 ├── results/      Delta table: cell_id, input_hash, engine_ver, value (Arrow IPC bytes),
 │                 display_text, display_mathml, status, error, duration_ms
 ├── data/<name>/  one Delta table per data frame (Polars reads and writes these directly)
@@ -174,7 +177,7 @@ beam-check.cruncha/
 
 ### 5.3 How writes work
 
-- **Commit cadence:** a calc, Python or Rust cell commits when it is **submitted**, as in Hurmet's prompt model. Prose commits after about **1–2 s of idle** and on blur. Each commit `MERGE`s only the rows that changed. A typical commit writes one Parquet file of a few KB plus one log entry.
+- **Commit cadence:** a calc, Python or Rust cell commits when it is **submitted**, as in Hurmet's prompt model. Prose commits after about **1–2 s of idle** and on blur. Each commit appends only the rows that changed (ADR-0010), with large sources written once to `blobs/` (ADR-0013). A typical commit writes one Parquet file of a few KB plus one log entry.
 - **Who made each change:** every commit records `actor` (a human user, `ai:<session>`, or `cli`) in Delta's `commitInfo`. The history then answers "who changed what, and when", AI included.
 - **Small-file control:** a checkpoint every N commits, and a background `OPTIMIZE` (compaction) when the app is idle. A heavy editing session might produce a few hundred commits an hour. That's well within what Delta can handle after compaction, but **Spike S3 must measure it.**
 - **Concurrency:** a single writer per document, namely the engine process holding a lock file. The UI, the AI/MCP agents and the CLI all go **through that process**. If no engine is running, the CLI writes directly using Delta's optimistic concurrency.
@@ -215,8 +218,9 @@ sections = pl.read_parquet("aisc_w_shapes.parquet").filter(pl.col("Zx") > Z_req)
 | Roll back | A **new commit** that restores the old rows. History is never rewritten, so a rollback can itself be undone. |
 | Branch / AI proposal | **D3:** a proposal is a set of pending rows (`doc` rows with `proposal_id`) shown as tracked changes. Accepting commits them; rejecting deletes them. We avoid full Delta branching for now. |
 
-**Retention:** `VACUUM` deletes Parquet files older than the retention window, and that breaks time travel to versions older than it. Policy:
+**Retention:** `VACUUM` deletes Parquet files older than the retention window, and that breaks time travel to versions older than it. Policy (details in ADR-0011, implemented in `Store::prune`):
 - **Retain all history by default.** Document tables are tiny, so this is cheap.
+- A document may opt into limits on saves, size, or days of *activity* (counted back from the last edit). Pruning runs only after new edits, keeps the newest 100 versions, and first copies older refs into `pins/`.
 - For large `data/*` tables, offer "compact history". Before vacuuming, it **materializes every pinned `refs` version** as a copy.
 - Large raw imports are content-addressed and never vacuumed while any ref uses them.
 
@@ -274,7 +278,7 @@ tests/conformance/   ported Hurmet golden tests + our own
 
 | ID | Spike | Answers |
 | --- | --- | --- |
-| S1 | Port Hurmet's lexer and parser to Rust against its 217 calc golden tests | Can we match its syntax? How big is the parser really? |
+| S1 | Port Hurmet's lexer and parser to Rust against its 217 calc golden tests | Can we match its syntax? How big is the parser really? **Done 2026-11-19** ([write-up](../spikes/S1-calc-parser.md)): 282/283 golden cases match; about 4,500 lines of Rust in `crates/cruncha-lang`. |
 | S2 | `cruncha-graph`: a dependency graph over mixed calc and Python cells, with rename invalidation and cancellation | Is the execution model sound? |
 | S3 | **Delta store benchmark:** 2,000 small MERGE commits on local disk; time-travel latency; OPTIMIZE and checkpoint behavior; a Polars round trip of `data/*`; crash halfway through a commit | Does always-committed Delta hold up? This is the riskiest assumption. |
 | S4 | Python worker: an Arrow IPC round trip of a 1M-row Polars frame with units in metadata; AST dependency scan | Data-passing cost, and how reliable dependency detection is |

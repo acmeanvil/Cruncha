@@ -84,10 +84,22 @@ pub fn log_extra_fields() -> Vec<Field> {
     ]
 }
 
-/// Schema of the `doc` table: an append-only log of cell revisions (ADR-0010).
+/// Out-of-line content column (format 3, ADR-0013): the SHA-256 of a `source` stored in
+/// `blobs/`. When set, `source` is null.
+pub const SOURCE_HASH_COLUMN: &str = "source_hash";
+
+/// The column format 3 adds. Last in every schema, so migrated tables (which gain it at the
+/// end) and new ones have the same column order.
+pub fn blob_fields() -> Vec<Field> {
+    vec![Field::new(SOURCE_HASH_COLUMN, DataType::Utf8, true)]
+}
+
+/// Schema of the `doc` table: an append-only log of cell revisions (ADR-0010), with large
+/// sources out of line (ADR-0013).
 pub static DOC_LOG_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
     let mut fields = doc_fields();
     fields.extend(log_extra_fields());
+    fields.extend(blob_fields());
     Arc::new(Schema::new(fields))
 });
 
@@ -100,6 +112,23 @@ pub static REFS_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
         Field::new("actor", DataType::Utf8, true),
         Field::new("created_at", utc_us(), true),
     ]))
+});
+
+/// Pin column of the `pins` table: the name of the ref whose cells the row preserves.
+pub const PIN_COLUMN: &str = "pin";
+
+/// Schema of the `pins` table (ADR-0011): full copies of named versions whose history was
+/// pruned. One row per cell per pinned ref.
+pub static PINS_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
+    // `id` is nullable here: a ref of an empty document is pinned as a single all-null row.
+    let mut fields = vec![Field::new(PIN_COLUMN, DataType::Utf8, false)];
+    fields.extend(
+        doc_fields()
+            .into_iter()
+            .map(|f| if f.name() == "id" { f.with_nullable(true) } else { f }),
+    );
+    fields.extend(blob_fields());
+    Arc::new(Schema::new(fields))
 });
 
 fn list_array(rows: impl Iterator<Item = Option<Vec<String>>>) -> ListArray {
@@ -176,20 +205,29 @@ pub fn changes_to_batch(changes: &[Change], modified_by: &str, now_us: i64) -> R
 }
 
 /// Build revision-log rows for one commit at version `rev`. Deletes become tombstone rows
-/// (`deleted = true`, other columns null).
+/// (`deleted = true`, other columns null). `hashes[i]`, when set, is the blob holding change
+/// `i`'s source: the row then stores the hash and a null `source`.
 pub fn changes_to_log_batch(
     changes: &[Change],
+    hashes: &[Option<String>],
     modified_by: &str,
     now_us: i64,
     rev: i64,
 ) -> Result<RecordBatch> {
+    assert_eq!(changes.len(), hashes.len());
     let m = changes_to_batch(changes, modified_by, now_us)?;
     let mut columns: Vec<ArrayRef> = DOC_COLUMNS
         .iter()
         .map(|c| {
-            m.column_by_name(c)
+            let col = m
+                .column_by_name(c)
                 .expect("merge batch has doc columns")
-                .clone()
+                .clone();
+            if *c == "source" {
+                null_where_hashed(&col, hashes)
+            } else {
+                col
+            }
         })
         .collect();
     columns.push(Arc::new(Int64Array::from(vec![rev; changes.len()])));
@@ -199,7 +237,93 @@ pub fn changes_to_log_batch(
             .map(|c| Some(matches!(c, Change::Delete(_))))
             .collect::<BooleanArray>(),
     ));
+    columns.push(Arc::new(hashes.iter().cloned().collect::<StringArray>()));
     Ok(RecordBatch::try_new(DOC_LOG_SCHEMA.clone(), columns)?)
+}
+
+fn null_where_hashed(source: &ArrayRef, hashes: &[Option<String>]) -> ArrayRef {
+    let s = source
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("source is Utf8");
+    Arc::new(
+        (0..s.len())
+            .map(|i| (hashes[i].is_none() && s.is_valid(i)).then(|| s.value(i)))
+            .collect::<StringArray>(),
+    )
+}
+
+/// Rows of the `pins` table preserving `cells` exactly (including who modified them and when)
+/// under the ref name `pin`. `hashes` as for [`changes_to_log_batch`].
+pub fn cells_to_pin_batch(
+    pin: &str,
+    cells: &[Cell],
+    hashes: &[Option<String>],
+) -> Result<RecordBatch> {
+    assert_eq!(cells.len(), hashes.len());
+    if cells.is_empty() {
+        let mut columns: Vec<ArrayRef> = vec![Arc::new(StringArray::from(vec![pin]))];
+        columns.extend(
+            PINS_SCHEMA.fields()[1..]
+                .iter()
+                .map(|f| new_null_array(f.data_type(), 1)),
+        );
+        return Ok(RecordBatch::try_new(PINS_SCHEMA.clone(), columns)?);
+    }
+    let strs = |f: &dyn Fn(&Cell) -> Option<String>| -> ArrayRef {
+        Arc::new(cells.iter().map(f).collect::<StringArray>())
+    };
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(StringArray::from(vec![pin; cells.len()])),
+        strs(&|c| Some(c.id.clone())),
+        strs(&|c| Some(c.kind.as_str().to_owned())),
+        strs(&|c| Some(c.order_key.clone())),
+        strs(&|c| c.parent_id.clone()),
+        Arc::new(
+            cells
+                .iter()
+                .zip(hashes)
+                .map(|(c, h)| h.is_none().then(|| c.source.clone()))
+                .collect::<StringArray>(),
+        ),
+        strs(&|c| Some(c.attrs.to_string())),
+        Arc::new(list_array(cells.iter().map(|c| Some(c.defines.clone())))),
+        Arc::new(list_array(cells.iter().map(|c| Some(c.reads.clone())))),
+        strs(&|c| Some(c.provenance.to_json())),
+        strs(&|c| Some(c.modified_by.clone())),
+        Arc::new(
+            cells
+                .iter()
+                .map(|c| Some(c.modified_at_us))
+                .collect::<TimestampMicrosecondArray>()
+                .with_timezone("UTC"),
+        ),
+        Arc::new(hashes.iter().cloned().collect::<StringArray>()),
+    ];
+    Ok(RecordBatch::try_new(PINS_SCHEMA.clone(), columns)?)
+}
+
+/// The names pinned in scanned `pins` rows, and the rows pinned under `wanted` (if given).
+/// Decode the rows with [`batch_to_cells_with`].
+pub fn read_pins(
+    batches: &[RecordBatch],
+    wanted: Option<&str>,
+    rows: &mut Vec<RecordBatch>,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut names = std::collections::BTreeSet::new();
+    for b in batches {
+        let b = conform_filling(b, &PINS_SCHEMA)?;
+        let pin = column::<StringArray>(&b, PIN_COLUMN)?;
+        names.extend(pin.iter().flatten().map(str::to_owned));
+        if let Some(w) = wanted {
+            let id = column::<StringArray>(&b, "id")?;
+            let mask: BooleanArray = (0..b.num_rows())
+                .map(|i| Some(pin.value(i) == w && id.is_valid(i)))
+                .collect();
+            rows.push(deltalake::arrow::compute::filter_record_batch(&b, &mask)?);
+        }
+    }
+    Ok(names)
 }
 
 /// Like [`conform`], but columns missing from `batch` are filled with nulls when the target
@@ -296,8 +420,39 @@ fn str_vec(a: &ListArray, i: usize) -> Result<Vec<String>> {
     Ok(values.iter().flatten().map(str::to_owned).collect())
 }
 
-/// Decode `doc` table rows. Column lookup is by name, so column order on disk doesn't matter.
+/// The blob hashes referenced by `batch` (rows whose source is out of line).
+pub fn blob_hashes(batch: &RecordBatch) -> Result<Vec<String>> {
+    let Some(col) = batch.column_by_name(SOURCE_HASH_COLUMN) else {
+        return Ok(Vec::new());
+    };
+    let col = deltalake::arrow::compute::cast(col, &DataType::Utf8)?;
+    let col = col
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("cast to Utf8");
+    Ok(col.iter().flatten().map(str::to_owned).collect())
+}
+
+/// Decode `doc` table rows whose sources are all inline. Column lookup is by name, so column
+/// order on disk doesn't matter.
 pub fn batch_to_cells(batch: &RecordBatch, out: &mut Vec<Cell>) -> Result<()> {
+    batch_to_cells_with(batch, &HashMap::new(), out)
+}
+
+/// Decode `doc` (or `pins`) rows, taking out-of-line sources from `blobs` (by hash; see
+/// [`blob_hashes`]).
+pub fn batch_to_cells_with(
+    batch: &RecordBatch,
+    blobs: &HashMap<String, Arc<str>>,
+    out: &mut Vec<Cell>,
+) -> Result<()> {
+    let hashes = match batch.column_by_name(SOURCE_HASH_COLUMN) {
+        Some(c) => Some(deltalake::arrow::compute::cast(c, &DataType::Utf8)?),
+        None => None,
+    };
+    let hashes = hashes
+        .as_ref()
+        .map(|c| c.as_any().downcast_ref::<StringArray>().expect("Utf8"));
     let batch = &conform(batch, &DOC_SCHEMA)?;
     let id = column::<StringArray>(batch, "id")?;
     let kind = column::<StringArray>(batch, "kind")?;
@@ -320,7 +475,13 @@ pub fn batch_to_cells(batch: &RecordBatch, out: &mut Vec<Cell>) -> Result<()> {
             kind,
             order_key: order_key.value(i).to_owned(),
             parent_id: opt_str(parent_id, i),
-            source: source.value(i).to_owned(),
+            source: match hashes.filter(|h| h.is_valid(i)) {
+                Some(h) => blobs
+                    .get(h.value(i))
+                    .ok_or_else(|| Error::Corrupt(format!("blob {} not loaded", h.value(i))))?
+                    .to_string(),
+                None => source.value(i).to_owned(),
+            },
             attrs: serde_json::from_str(attrs.value(i))?,
             defines: str_vec(defines, i)?,
             reads: str_vec(reads, i)?,

@@ -1,0 +1,266 @@
+[
+ [
+  "sin(a+b)/2",
+  "\\dfrac{\\sin(a + b)}{2}"
+ ],
+ [
+  "a/b c",
+  "\\dfrac{a}{b} c"
+ ],
+ [
+  "(w L)/8 (e)",
+  "\\dfrac{w L}{8}\\, (e)"
+ ],
+ [
+  "(w length)/8 (e)",
+  "\\dfrac{w \\,\\mathrm{length}}{8}\\, (e)"
+ ],
+ [
+  "M = (w L^2)/8",
+  "M = \\dfrac{w L^{2}}{8}"
+ ],
+ [
+  "M = sin x/8",
+  "M = \\dfrac{\\sin{x}}{8}"
+ ],
+ [
+  "a/b",
+  "\\dfrac{a}{b}"
+ ],
+ [
+  "(a b)",
+  "(a b)"
+ ],
+ [
+  "{a b}",
+  "\\{a b \\}"
+ ],
+ [
+  "(a)³/4",
+  "\\dfrac{(a)^{3}}{4}"
+ ],
+ [
+  "(a)^3/4",
+  "\\dfrac{(a)^{3}}{4}"
+ ],
+ [
+  "a (b \\atop c) d",
+  "a \\left({{b}\\atop{c}}\\right) d"
+ ],
+ [
+  "(a\tb; c\td)",
+  "\\begin{pmatrix}a & b \\\\ c & d \\end{pmatrix}"
+ ],
+ [
+  "{a if b; c if d}",
+  "\\begin{cases}a & \\text{if}~ b \\\\ c & \\text{if}~ d \\end{cases}"
+ ],
+ [
+  "f_c′=4500 'psi'",
+  "f_\\text{c}' = 4,500 \\; {\\text{psi}}"
+ ],
+ [
+  "f_c′=4500psi",
+  "f_\\text{c}' = 4,500 \\; {\\text{psi}}"
+ ],
+ [
+  "root 3 x",
+  "\\sqrt[3]{x}"
+ ],
+ [
+  "5 modulo 4",
+  "5 \\mathbin{modulo} 4"
+ ],
+ [
+  "sqrt(a b)",
+  "\\sqrt{a b}"
+ ],
+ [
+  "sin^2 x",
+  "\\sin^{2}{x}"
+ ],
+ [
+  "sin^(-1) x",
+  "\\sin^{\\text{-}1}{x}"
+ ],
+ [
+  "log10 x",
+  "\\log_{10}{x}"
+ ],
+ [
+  "v_(x=0)/n",
+  "\\dfrac{v_{x = 0}}{n}"
+ ],
+ [
+  "w^sin x y",
+  "w^{\\sin{x}} y"
+ ],
+ [
+  "x_wind L",
+  "x_\\text{wind} L"
+ ],
+ [
+  "root 3 (a + b)",
+  "\\sqrt[3]{a + b}"
+ ],
+ [
+  "sin^(a+b) x",
+  "\\sin^{a + b}{x}"
+ ],
+ [
+  "(π (D - I))/4",
+  "\\dfrac{π (D - I)}{4}"
+ ],
+ [
+  "f_c′/200",
+  "\\dfrac{f_\\text{c}'}{200}"
+ ],
+ [
+  "(b^2/2)",
+  "\\left(\\dfrac{b^{2}}{2}\\right)"
+ ],
+ [
+  "sqrt f_c′",
+  "\\sqrt{f_\\text{c}'}"
+ ],
+ [
+  "sqrt \\hat θ^2",
+  "\\sqrt{\\hat{θ}^{2}}"
+ ],
+ [
+  "sin^2 \\hat θ",
+  "\\sin^{2}{\\hat{θ}}"
+ ],
+ [
+  "((n (n+1))/2)",
+  "\\left(\\dfrac{n (n + 1)}{2}\\right)"
+ ],
+ [
+  "β_1 = {0.85 if f_c′ <= 4000; 0.65 if f_c′ >= 8000; 0.85 - f_c′/20000 otherwise}",
+  "β_\\text{1} = \\begin{cases}0.85 & \\text{if}~ f_\\text{c}' ≤ 4,000 \\\\ 0.65 & \\text{if}~ f_\\text{c}' ≥ 8,000 \\\\ 0.85 - \\dfrac{f_\\text{c}'}{20,000}& \\text{otherwise}~ \\end{cases}"
+ ],
+ [
+  "x = (-b +- sqrt(b^2-4 a c))/(2 a)",
+  "x = \\dfrac{\\text{-} b ± \\sqrt{b^{2}- 4 \\, a c}}{2 \\, a}"
+ ],
+ [
+  "f(x) = \\int_(-∞)^∞ \\hat f (ξ)  e^(2 π i ξ x)  \"d\" ξ",
+  "f(x)= ∫_{\\text{-} ∞}^{∞}\\hat{f} (ξ) e^{2 \\, π i ξ x}\\text{d}ξ"
+ ],
+ [
+  "\\int_(-∞)^∞ \\hat f",
+  "∫_{\\text{-} ∞}^{∞}\\hat{f}"
+ ],
+ [
+  "r = 1/((|cos θ|^p + |sin θ|^p)^(1///p))",
+  "r = \\dfrac{1}{(|\\cos{θ}|^{p}+ |\\sin{θ}|^{p})^{1 / p}}"
+ ],
+ [
+  "b \\uarr n = \\underbrace(b·b·b \\cdots b)_(n \" copies of \" b) =",
+  "b \\uarr n = \\underbrace{b ⋅ b ⋅ b ⋯ b}_{n \\text{ copies of\\,}b}="
+ ],
+ [
+  "\\underbrace(b·b)_(n)",
+  "\\underbrace{b ⋅ b}_{n}"
+ ],
+ [
+  "|y^n|/3",
+  "\\dfrac{|y^{n}|}{3}"
+ ],
+ [
+  "A_0^n n/k",
+  "A_\\text{0}^{n} \\dfrac{n}{k}"
+ ],
+ [
+  "C = <<n \\atop k>>",
+  "C = \\left⟨{{n}\\atop{k}}\\right⟩"
+ ],
+ [
+  "(exp(-exp(u)))/((u+γ)^2+π^2)",
+  "\\dfrac{\\exp(\\text{-} \\exp(u))}{(u + γ)^{2}+ π^{2}}"
+ ],
+ [
+  "α = ``B\tC\tD\n7.0\t9.5\t11.5``[\"C\"]",
+  "α = \\renewcommand{\\arraycolsep}{8pt}\\renewcommand{\\arraystretch}{1.15}\\begin{array}{ccc}{B}&{C}&{D} \\\\ \\hline 7&9.5&11.5\\end{array}[\\text{C}]"
+ ],
+ [
+  "H^2 = \\dot a/a",
+  "H^{2}= \\dfrac{\\dot{a}}{a}"
+ ],
+ [
+  "P = (1.2(D/H))",
+  "P = \\left(1.2 \\left(\\dfrac{D}{H}\\right)\\right)"
+ ],
+ [
+  "M = (\\mathcal O (a b))/5",
+  "M = \\dfrac{\\mathcal{O}(a b)}{5}"
+ ],
+ [
+  "c_s = (n_c A_s)/b (√(1 + (2 b d)/(n_c A_s))-1)",
+  "c_\\text{s} = \\dfrac{n_\\text{c} A_\\text{s}}{b} \\left(\\sqrt{1 + \\dfrac{2 \\, b d}{n_\\text{c} A_\\text{s}}}- 1 \\right)"
+ ],
+ [
+  "A --> \"heat\" B",
+  "A \\xrightarrow{\\text{heat}}B"
+ ],
+ [
+  "i \\mathbf ℏ ∂/(∂t) |ψ (t)⟩ = \\hat 𝐇 |ψ (t)⟩",
+  "i \\mathbf{ℏ}\\dfrac{∂}{∂ t}|ψ (t)⟩= \\hat{𝐇}|ψ (t)⟩"
+ ],
+ [
+  "⟨ϕ|",
+  "⟨ϕ |"
+ ],
+ [
+  "(n \\atop k) = n!/(n! (n - k)!)",
+  "\\left({{n}\\atop{k}}\\right)= \\dfrac{n!}{n! (n - k)!}"
+ ],
+ [
+  "δ I (y\\; v) = \\lim_(ε→0)(I (y+ε v)-I [y])/ε ≡ \\left. d/(d ε) I (y + ε v) |_(ε=0)",
+  "δ I (y ;\\: v)= \\lim_{ε → 0}\\dfrac{I (y + ε v)- I [y]}{ε}≡ \\left.\\dfrac{d}{d ε} I (y + ε v)\\right|_{ε = 0}"
+ ],
+ [
+  "8 'm2'",
+  "8 \\; {\\text{m}^{2}}"
+ ],
+ [
+  "7.495e-6 'AU3/days2'",
+  "7.495\\text{e-}6 \\; {\\text{AU}^{3}\\text{/days}^{2}}"
+ ],
+ [
+  "tan^2 θ",
+  "\\tan^{2}{θ}"
+ ],
+ [
+  "(1 - ε) tan²(θ/2) = (1 - ε) tan²(E/2)",
+  "(1 - ε) \\tan^{2}\\left(\\dfrac{θ}{2}\\right)= (1 - ε) \\tan^{2}\\left(\\dfrac{E}{2}\\right)"
+ ],
+ [
+  "σ^2 = 1/(n (n-1)) (n ∑_(i=1)^n x_i^2 - (∑_(i=1)^n x_k)^2)",
+  "σ^{2}= \\dfrac{1}{n (n - 1)}\\left(n ∑_{i = 1}^{n} x_\\text{i}^{2}- \\left(∑_{i = 1}^{n} x_\\text{k} \\right)^{2}\\right)"
+ ],
+ [
+  "(2 n)!!/(2 n+1)^2",
+  "\\dfrac{(2 \\, n)!!}{(2 \\, n + 1)^{2}}"
+ ],
+ [
+  "(1\t2; 3\t4)",
+  "\\begin{pmatrix}1 & 2 \\\\ 3 & 4 \\end{pmatrix}"
+ ],
+ [
+  "cos⁻¹ 0.5",
+  "\\cos^{\\text{-}1}{0.5}"
+ ],
+ [
+  "(1/2 A + 1/2 B) / 8 =",
+  "\\dfrac{\\frac{1}{2}\\, A + \\frac{1}{2}\\, B}{8}="
+ ],
+ [
+  "‖a‖",
+  "‖a ‖"
+ ],
+ [
+  "5 2/3",
+  "5\\,\\sfrac{2}{3}"
+ ]
+]

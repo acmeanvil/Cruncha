@@ -1,0 +1,25 @@
+[package]
+name = "cruncha-app"
+description = "Cruncha desktop app: Tauri shell around cruncha-store (ADR-0008)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "cruncha_app_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cruncha-store = { path = "../../crates/cruncha-store" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }

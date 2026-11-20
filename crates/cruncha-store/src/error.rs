@@ -24,6 +24,8 @@ pub enum Error {
     UnsupportedFormat(u32),
     #[error("no such version: {0}")]
     NoSuchVersion(u64),
+    #[error("history before version {earliest} has been pruned")]
+    Pruned { earliest: u64 },
     #[error("no such ref: {0}")]
     NoSuchRef(String),
     #[error("ref already exists: {0}")]

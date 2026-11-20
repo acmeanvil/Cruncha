@@ -5,15 +5,20 @@
 //!
 //! See `docs/design/02-document-model.md` §5.
 
+mod blobs;
 mod cell;
 mod error;
+mod retention;
 #[doc(hidden)] // Exposed for spikes and benchmarks; not a stable API.
 pub mod schema;
 mod store;
 
+pub use blobs::DEFAULT_BLOB_THRESHOLD;
 pub use cell::{Cell, CellDiff, CellKind, Change, Provenance};
 pub use error::{Error, Result};
+pub use retention::{DEFAULT_FLOOR, MIN_FLOOR, Retention};
 pub use schema::Ref;
 pub use store::{
-    CommitKind, CompactStats, FORMAT, FORMAT_VERSION, Manifest, Store, VersionInfo, diff_cells,
+    CommitKind, CompactStats, FORMAT, FORMAT_VERSION, Manifest, PruneReport, RetentionPreview, Store,
+    VersionInfo, diff_cells,
 };

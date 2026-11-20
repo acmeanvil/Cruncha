@@ -67,5 +67,5 @@ None of that depends on GPU rendering, and all of it can be reproduced in web UI
 
 ## Action Items
 
-1. [ ] Tauri skeleton whose backend opens a `cruncha-store` container, with a read-only document view.
-2. [ ] Decide the front-end framework for the non-editor UI (Svelte, Solid or React) as part of that skeleton.
+1. [x] Tauri skeleton whose backend opens a `cruncha-store` container, with a read-only document view.
+2. [x] Decide the front-end framework for the non-editor UI (Svelte, Solid or React) as part of that skeleton: Svelte 5 (ADR-0012).

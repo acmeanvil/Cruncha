@@ -1,0 +1,1087 @@
+[
+ [
+  "wideFlanges.area.end",
+  "¿wideFlanges \"area\" . \"end\" .",
+  "wideFlanges.area.end = @"
+ ],
+ [
+  "2^3^4",
+  "®2/1 ®3/1 ®4/1 ^ ^",
+  "2^3^4 = @"
+ ],
+ [
+  "2 × 3ft·in",
+  "®2/1 ®3/1 applyUnit ft·in ×",
+  "2 × 3ft·in = @@ in²"
+ ],
+ [
+  "2 × 3ft·in/ft",
+  "®2/1 ®3/1 applyUnit ft·in/ft ×",
+  "2 × 3ft·in/ft = @@ in"
+ ],
+ [
+  "5 modulo 4",
+  "®5/1 ®4/1 modulo",
+  "5 modulo 4 = @"
+ ],
+ [
+  "b",
+  "¿b",
+  "b = @"
+ ],
+ [
+  "str[2]",
+  "¿str ®2/1 [] 1",
+  "str[2] = @"
+ ],
+ [
+  "\"a \"\"string\"\"\" & \" works\"",
+  "\"a \"string\"\" \" works\" &",
+  "\"a \"\"string\"\"\" & \" works\" = @"
+ ],
+ [
+  "\"\" & \"x\"",
+  "\"\" \"x\" &",
+  "\"\" & \"x\" = @"
+ ],
+ [
+  "quoteStr",
+  "¿quoteStr",
+  "quoteStr = @"
+ ],
+ [
+  "str[2:4]",
+  "¿str ®2/1 ®4/1 : [] 1",
+  "str[2:4] = @"
+ ],
+ [
+  "str[3:end]",
+  "¿str ®3/1 \"∞\" : [] 1",
+  "str[3:end] = @"
+ ],
+ [
+  "1/0",
+  "®1/1 ®0/1 /",
+  "1/0 = @"
+ ],
+ [
+  "(w L^2)/8 + (P L)/4",
+  "¿w ¿L ®2/1 ^ ⌧ ®8/1 / ¿P ¿L ⌧ ®4/1 / +",
+  "(w L^2)/8 + (P L)/4 = @@ lbf·ft"
+ ],
+ [
+  "sin(θ)",
+  "¿θ sin",
+  "sin(θ) = @"
+ ],
+ [
+  "cos(θ)",
+  "¿θ cos",
+  "cos(θ) = @"
+ ],
+ [
+  "tan(θ)",
+  "¿θ tan",
+  "tan(θ) = @"
+ ],
+ [
+  "sin θ",
+  "¿θ sin",
+  "sin θ = @"
+ ],
+ [
+  "cos θ",
+  "¿θ cos",
+  "cos θ = @"
+ ],
+ [
+  "tan θ",
+  "¿θ tan",
+  "tan θ = @"
+ ],
+ [
+  "asin(half)",
+  "¿half asin",
+  "asin(half) = @"
+ ],
+ [
+  "acos(half)",
+  "¿half acos",
+  "acos(half) = @"
+ ],
+ [
+  "atan(half)",
+  "¿half atan",
+  "atan(half) = @"
+ ],
+ [
+  "2 + 2",
+  "®2/1 ®2/1 +",
+  "2 + 2 = @"
+ ],
+ [
+  "1 - 0.9999375^1000",
+  "®1/1 ®9999375/10000000 ®1000/1 ^ -",
+  "1 - 0.9999375^1000 = @"
+ ],
+ [
+  "(3 num)/2",
+  "®3/1 ¿num ⌧ ®2/1 /",
+  "(3 num)/2 = @"
+ ],
+ [
+  "rebar[\"#3\"][\"area\"]",
+  "¿rebar \"#3\" [] 1 \"area\" [] 1",
+  "rebar[\"#3\"][\"area\"] =@"
+ ],
+ [
+  "{ 5 if n ≤ 4; 2 if n ≥ 12; 5 - (n - 4)/20 otherwise }",
+  "¿n ®4/1 ≤ ¿n ®12/1 ≥ true cases 3 ®5/1 ®2/1 ®5/1§¿n§®4/1§-§®20/1§/§-",
+  "{ 5 if n ≤ 4; 2 if n ≥ 12; 5 - (n - 4)/20 otherwise } =@"
+ ],
+ [
+  "[2:5...]",
+  "®2/1 ®5/1 : matrix 1 1",
+  "[2:5...] = @"
+ ],
+ [
+  "[1:2:5...]",
+  "®1/1 ®2/1 : ®5/1 : matrix 1 1",
+  "[1:2:5...] = @"
+ ],
+ [
+  "vector[2]",
+  "¿vector ®2/1 [] 1",
+  "vector[2] = @"
+ ],
+ [
+  "vector[1:2]",
+  "¿vector ®1/1 ®2/1 : [] 1",
+  "vector[1:2] = @"
+ ],
+ [
+  "vector[1:end]",
+  "¿vector ®1/1 \"∞\" : [] 1",
+  "vector[1:end] = @"
+ ],
+ [
+  "matrix[1, 2]",
+  "¿matrix ®1/1 ®2/1 [] 2",
+  "matrix[1, 2] = @"
+ ],
+ [
+  "matrix[1:2, 2]",
+  "¿matrix ®1/1 ®2/1 : ®2/1 [] 2",
+  "matrix[1:2, 2] = @"
+ ],
+ [
+  "matrix[1, 1:2]",
+  "¿matrix ®1/1 ®1/1 ®2/1 : [] 2",
+  "matrix[1, 1:2] = @"
+ ],
+ [
+  "matrix[1,:]",
+  "¿matrix ®1/1  ®1/1 \"∞\" : [] 2",
+  "matrix[1,:] = @"
+ ],
+ [
+  "matrix[:, 1:2]",
+  "¿matrix  ®1/1 \"∞\" : ®1/1 ®2/1 : [] 2",
+  "matrix[:, 1:2] = @"
+ ],
+ [
+  "matrix[:, 1:end]",
+  "¿matrix  ®1/1 \"∞\" : ®1/1 \"∞\" : [] 2",
+  "matrix[:, 1:end] = @"
+ ],
+ [
+  "2 vector",
+  "®2/1 ¿vector ⌧",
+  "2 vector = @"
+ ],
+ [
+  "vector·vector",
+  "¿vector ¿vector ·",
+  "vector·vector = @"
+ ],
+ [
+  "vector∘vector",
+  "¿vector ¿vector ∘",
+  "vector∘vector = @"
+ ],
+ [
+  "vector^T",
+  "¿vector ¿T ^",
+  "vector^T = @"
+ ],
+ [
+  "matrix⁻¹",
+  "¿matrix ®-1/1 ^",
+  "matrix⁻¹ = @"
+ ],
+ [
+  "|matrix|",
+  "¿matrix |",
+  "|matrix| = @"
+ ],
+ [
+  "|vector|",
+  "¿vector |",
+  "|vector| = @"
+ ],
+ [
+  "abs(vector)",
+  "¿vector abs",
+  "abs(vector) = @"
+ ],
+ [
+  "[2; 3] ∘ matrix",
+  "®2/1 ®3/1 matrix 2 1 ¿matrix ∘",
+  "[2; 3] ∘ matrix = @"
+ ],
+ [
+  "[2, 3] ∘ matrix",
+  "®2/1 ®3/1 matrix 1 2 ¿matrix ∘",
+  "[2, 3] ∘ matrix = @"
+ ],
+ [
+  "[2; 3] matrix",
+  "®2/1 ®3/1 matrix 2 1 ¿matrix ⌧",
+  "[2; 3] matrix = @"
+ ],
+ [
+  "[2, 3] matrix",
+  "®2/1 ®3/1 matrix 1 2 ¿matrix ⌧",
+  "[2, 3] matrix = @"
+ ],
+ [
+  "[2; 3] [4, 5]",
+  "®2/1 ®3/1 matrix 2 1 ®4/1 ®5/1 matrix 1 2 ⌧",
+  "[2; 3] [4, 5] = @"
+ ],
+ [
+  "matrix ∘ [2; 3]",
+  "¿matrix ®2/1 ®3/1 matrix 2 1 ∘",
+  "matrix ∘ [2; 3] = @"
+ ],
+ [
+  "matrix ∘ [2, 3]",
+  "¿matrix ®2/1 ®3/1 matrix 1 2 ∘",
+  "matrix ∘ [2, 3] = @"
+ ],
+ [
+  "frameRow[\"#4\"]",
+  "¿frameRow \"#4\" [] 1",
+  "frameRow[\"#4\"] =@"
+ ],
+ [
+  "frameRow.area",
+  "¿frameRow \"area\" .",
+  "frameRow.area = @"
+ ],
+ [
+  "barArea[\"#4\"]",
+  "¿barArea \"#4\" [] 1",
+  "barArea[\"#4\"] = @"
+ ],
+ [
+  "barArea.area",
+  "¿barArea \"area\" .",
+  "barArea.area = @"
+ ],
+ [
+  "(\"area\" ∈ rebar)",
+  "\"area\" ¿rebar ∈",
+  "(\"area\" ∈ rebar) = @"
+ ],
+ [
+  "(\"#3\" ∈ rebar)",
+  "\"#3\" ¿rebar ∈",
+  "(\"#3\" ∈ rebar) = @"
+ ],
+ [
+  "(\"bogus\" ∈ rebar)",
+  "\"bogus\" ¿rebar ∈",
+  "(\"bogus\" ∈ rebar) = @"
+ ],
+ [
+  "unitLessBarArea[\"#4\"]",
+  "¿unitLessBarArea \"#4\" [] 1",
+  "unitLessBarArea[\"#4\"] = @"
+ ],
+ [
+  "unitLessBarArea.area",
+  "¿unitLessBarArea \"area\" .",
+  "unitLessBarArea.area = @"
+ ],
+ [
+  "wideFlanges.W8X31",
+  "¿wideFlanges \"W8X31\" .",
+  "wideFlanges.W8X31 = @"
+ ],
+ [
+  "wideFlanges[2]",
+  "¿wideFlanges ®2/1 [] 1",
+  "wideFlanges[2] = @"
+ ],
+ [
+  "wideFlanges.W8X31.area",
+  "¿wideFlanges \"W8X31\" . \"area\" .",
+  "wideFlanges.W8X31.area = @"
+ ],
+ [
+  "wideFlanges.W8X31.area",
+  "¿wideFlanges \"W8X31\" . \"area\" .",
+  "wideFlanges.W8X31.area = @"
+ ],
+ [
+  "wideFlanges.area.W8X31",
+  "¿wideFlanges \"area\" . \"W8X31\" .",
+  "wideFlanges.area.W8X31 = @@ in²"
+ ],
+ [
+  "wideFlanges[\"area\"].W8X31",
+  "¿wideFlanges \"area\" [] 1 \"W8X31\" .",
+  "wideFlanges[\"area\"].W8X31 = @@ in²"
+ ],
+ [
+  "wideFlanges.W8X31[\"area\"]",
+  "¿wideFlanges \"W8X31\" . \"area\" [] 1",
+  "wideFlanges.W8X31[\"area\"] = @"
+ ],
+ [
+  "wideFlanges[\"area\"][\"W8X31\"]",
+  "¿wideFlanges \"area\" [] 1 \"W8X31\" [] 1",
+  "wideFlanges[\"area\"][\"W8X31\"] = @@ in²"
+ ],
+ [
+  "wideFlanges[\"W8X31\"][\"area\"]",
+  "¿wideFlanges \"W8X31\" [] 1 \"area\" [] 1",
+  "wideFlanges[\"W8X31\"][\"area\"] = @@ in²"
+ ],
+ [
+  "wideFlanges[\"W8X31\", \"area\"]",
+  "¿wideFlanges \"W8X31\" \"area\" [] 2",
+  "wideFlanges[\"W8X31\", \"area\"] = @@ in²"
+ ],
+ [
+  "wideFlanges[[\"W10X49\"; \"W8X31\"]][\"area\", \"d\"]",
+  "¿wideFlanges \"W10X49\" \"W8X31\" matrix 2 1 [] 1 \"area\" \"d\" [] 2",
+  "wideFlanges[[\"W10X49\"; \"W8X31\"]][\"area\", \"d\"] = @"
+ ],
+ [
+  "wideFlanges[2:3, 2]",
+  "¿wideFlanges ®2/1 ®3/1 : ®2/1 [] 2",
+  "wideFlanges[2:3, 2] = @"
+ ],
+ [
+  "wideFlanges[2, 2]",
+  "¿wideFlanges ®2/1 ®2/1 [] 2",
+  "wideFlanges[2, 2] = @"
+ ],
+ [
+  "wideFlanges.W8X31.end",
+  "¿wideFlanges \"W8X31\" . \"end\" .",
+  "wideFlanges.W8X31.end = @"
+ ],
+ [
+  "\"ab\" & \"cd\"",
+  "\"ab\" \"cd\" &",
+  "\"ab\" & \"cd\" = @"
+ ],
+ [
+  "1.2 & 3.4",
+  "®12/10 ®34/10 &",
+  "1.2 & 3.4 = @"
+ ],
+ [
+  "vector & 3.6",
+  "¿vector ®36/10 &",
+  "vector & 3.6 = @"
+ ],
+ [
+  "1.2 & vector",
+  "®12/10 ¿vector &",
+  "1.2 & vector = @"
+ ],
+ [
+  "vector & vector",
+  "¿vector ¿vector &",
+  "vector & vector = @"
+ ],
+ [
+  "[vector, vector]",
+  "¿vector ¿vector matrix 1 2",
+  "[vector, vector] = @"
+ ],
+ [
+  "vcat(vector, vector)",
+  "¿vector ¿vector vcat",
+  "vcat(vector, vector) = @"
+ ],
+ [
+  "vector^T & vector^T",
+  "¿vector ¿T ^ ¿vector ¿T ^ &",
+  "vector^T & vector^T = @"
+ ],
+ [
+  "vcat(vector^T, vector^T)",
+  "¿vector ¿T ^ ¿vector ¿T ^ vcat",
+  "vcat(vector^T, vector^T) = @"
+ ],
+ [
+  "matrix & vector[1:2]",
+  "¿matrix ¿vector ®1/1 ®2/1 : [] 1 &",
+  "matrix & vector[1:2] = @"
+ ],
+ [
+  "vcat(matrix, vector[1:2]^T)",
+  "¿matrix ¿vector ®1/1 ®2/1 : [] 1 ¿T ^ vcat",
+  "vcat(matrix, vector[1:2]^T) = @"
+ ],
+ [
+  "vector[1:2] & matrix",
+  "¿vector ®1/1 ®2/1 : [] 1 ¿matrix &",
+  "vector[1:2] & matrix  = @"
+ ],
+ [
+  "vcat(vector[1:2]^T, matrix)",
+  "¿vector ®1/1 ®2/1 : [] 1 ¿T ^ ¿matrix vcat",
+  "vcat(vector[1:2]^T, matrix)  = @"
+ ],
+ [
+  "matrix & matrix",
+  "¿matrix ¿matrix &",
+  "matrix & matrix = @"
+ ],
+ [
+  "vcat(matrix, matrix)",
+  "¿matrix ¿matrix vcat",
+  "vcat(matrix, matrix) = @"
+ ],
+ [
+  "vcat(3, 4)",
+  "®3/1 ®4/1 vcat",
+  "vcat(3, 4) = @"
+ ],
+ [
+  "rebar & radius",
+  "¿rebar ¿radius &",
+  "rebar & radius = @"
+ ],
+ [
+  "2 frameRow",
+  "®2/1 ¿frameRow ⌧",
+  "2 frameRow = @"
+ ],
+ [
+  "(2)(4) + 1",
+  "®2/1 ®4/1 ⌧ ®1/1 +",
+  "(2)(4) + 1 = @"
+ ],
+ [
+  "(2) (4) + 1",
+  "®2/1 ®4/1 ⌧ ®1/1 +",
+  "(2) (4) + 1 = @"
+ ],
+ [
+  "{ 5 if n == 10; 0 otherwise }",
+  "¿n ®10/1 == true cases 2 ®5/1 ®0/1",
+  "{ 5 if n == 10; 0 otherwise } = @"
+ ],
+ [
+  "√4",
+  "®4/1 √",
+  "√4 = @"
+ ],
+ [
+  "[1:3...]",
+  "®1/1 ®3/1 : matrix 1 1",
+  "[1:3...] = @"
+ ],
+ [
+  "num³ √9",
+  "¿num ®3/1 ^ ®9/1 √ ⌧",
+  "num³ √9 = @"
+ ],
+ [
+  "abs(0.5) num",
+  "®5/10 abs ¿num ⌧",
+  "abs(0.5) num = @"
+ ],
+ [
+  "num (1/4)",
+  "¿num ®1/1 ®4/1 / ⌧",
+  "num (1/4) = @"
+ ],
+ [
+  "num² (1/4)",
+  "¿num ®2/1 ^ ®1/1 ®4/1 / ⌧",
+  "num² (1/4) = @"
+ ],
+ [
+  "num.name",
+  "¿num \"name\" .",
+  "num.name = @"
+ ],
+ [
+  "real(z1)",
+  "¿z1 real",
+  "real(z1) = @"
+ ],
+ [
+  "imag(z1)",
+  "¿z1 imag",
+  "imag(z1) = @"
+ ],
+ [
+  "|z1|",
+  "¿z1 |",
+  "|z1| = @"
+ ],
+ [
+  "angle(z1)",
+  "¿z1 angle",
+  "angle(z1) = @"
+ ],
+ [
+  "angle(z1)",
+  "¿z1 angle",
+  "angle(z1) = @@°"
+ ],
+ [
+  "conj(z1)",
+  "¿z1 conj",
+  "conj(z1) = @"
+ ],
+ [
+  "z1 + z2",
+  "¿z1 ¿z2 +",
+  "z1 + z2 = @"
+ ],
+ [
+  "z1 - z2",
+  "¿z1 ¿z2 -",
+  "z1 - z2 = @"
+ ],
+ [
+  "z1 * z2",
+  "¿z1 ¿z2 *",
+  "z1 * z2 = @"
+ ],
+ [
+  "z1 / z2",
+  "¿z1 ¿z2 /",
+  "z1 / z2 = @"
+ ],
+ [
+  "exp(z1)",
+  "¿z1 exp",
+  "exp(z1) = @"
+ ],
+ [
+  "z1^z2",
+  "¿z1 ¿z2 ^",
+  "z1^z2 = @"
+ ],
+ [
+  "e^z1",
+  "®27182818284590452353602874713527/10000000000000000000000000000000 ¿z1 ^",
+  "e^z1 = @"
+ ],
+ [
+  "z1^2",
+  "¿z1 ®2/1 ^",
+  "z1^2 = @"
+ ],
+ [
+  "log(z1)",
+  "¿z1 log",
+  "log(z1) = @"
+ ],
+ [
+  "sin(z1)",
+  "¿z1 sin",
+  "sin(z1) = @"
+ ],
+ [
+  "cos(z1)",
+  "¿z1 cos",
+  "cos(z1) = @"
+ ],
+ [
+  "tan(z1)",
+  "¿z1 tan",
+  "tan(z1) = @"
+ ],
+ [
+  "sec(z1)",
+  "¿z1 sec",
+  "sec(z1) = @"
+ ],
+ [
+  "csc(z1)",
+  "¿z1 csc",
+  "csc(z1) = @"
+ ],
+ [
+  "cot(z1)",
+  "¿z1 cot",
+  "cot(z1) = @"
+ ],
+ [
+  "acos(z1)",
+  "¿z1 acos",
+  "acos(z1) = @"
+ ],
+ [
+  "asin(z1)",
+  "¿z1 asin",
+  "asin(z1) = @"
+ ],
+ [
+  "atan(z1)",
+  "¿z1 atan",
+  "atan(z1) = @"
+ ],
+ [
+  "asec(z1)",
+  "¿z1 asec",
+  "asec(z1) = @"
+ ],
+ [
+  "acsc(z1)",
+  "¿z1 acsc",
+  "acsc(z1) = @"
+ ],
+ [
+  "acot(z1)",
+  "¿z1 acot",
+  "acot(z1) = @"
+ ],
+ [
+  "sinh(z1)",
+  "¿z1 sinh",
+  "sinh(z1) = @"
+ ],
+ [
+  "cosh(z1)",
+  "¿z1 cosh",
+  "cosh(z1) = @"
+ ],
+ [
+  "tanh(z1)",
+  "¿z1 tanh",
+  "tanh(z1) = @"
+ ],
+ [
+  "acosh(z1)",
+  "¿z1 acosh",
+  "acosh(z1) = @"
+ ],
+ [
+  "asinh(z1)",
+  "¿z1 asinh",
+  "asinh(z1) = @"
+ ],
+ [
+  "atanh(z1)",
+  "¿z1 atanh",
+  "atanh(z1) = @"
+ ],
+ [
+  "asech(z1)",
+  "¿z1 asech",
+  "asech(z1) = @"
+ ],
+ [
+  "acsch(z1)",
+  "¿z1 acsch",
+  "acsch(z1) = @"
+ ],
+ [
+  "acoth(z1)",
+  "¿z1 acoth",
+  "acoth(z1) = @"
+ ],
+ [
+  "2 (4∠30°)",
+  "®2/1 ®4/1 ®30/1 applyUnit ° ∠ ⌧",
+  "2 (4∠30°) = @@"
+ ],
+ [
+  "⎿33.2⏌",
+  "®332/10 ⎿⏌",
+  "⎿33.2⏌ = @"
+ ],
+ [
+  "testFor(1, 3)",
+  "®1/1 ®3/1 function testFor 2",
+  "testFor(1, 3) = @"
+ ],
+ [
+  "reverse(\"abc\")",
+  "\"abc\" function reverse 1",
+  "reverse(\"abc\") = @"
+ ],
+ [
+  "sumVec(vector)",
+  "¿vector function sumVec 1",
+  "sumVec(vector) = @"
+ ],
+ [
+  "testWhile(3)",
+  "®3/1 function testWhile 1",
+  "testWhile(3) = @"
+ ],
+ [
+  "testBreak()",
+  "function testBreak 0",
+  "testBreak() = @"
+ ],
+ [
+  "testThrow()",
+  "function testThrow 0",
+  "testThrow() = @"
+ ],
+ [
+  "2 'ft' + 3 'inch'",
+  "®2/1 applyUnit ft ®3/1 applyUnit inch +",
+  "2 'ft' + 3 'inch' = @@ inch"
+ ],
+ [
+  "1micron",
+  "®1/1 applyUnit micron",
+  "1micron = @@ m"
+ ],
+ [
+  "2ft + 3inch",
+  "®2/1 applyUnit ft ®3/1 applyUnit inch +",
+  "2ft + 3inch = @@ inch"
+ ],
+ [
+  "2 'ft' + 3 'inch'",
+  "®2/1 applyUnit ft ®3/1 applyUnit inch +",
+  "2 'ft' + 3 'inch' = @@ V"
+ ],
+ [
+  "[1; 2] < [2; 4]",
+  "®1/1 ®2/1 matrix 2 1 ®2/1 ®4/1 matrix 2 1 <",
+  "[1; 2] < [2; 4] = @"
+ ],
+ [
+  "[3; 2] < [2; 4]",
+  "®3/1 ®2/1 matrix 2 1 ®2/1 ®4/1 matrix 2 1 <",
+  "[3; 2] < [2; 4] = @"
+ ],
+ [
+  "{\"Good\" if [1; 2] < [2; 4]; \"Bad\" otherwise}",
+  "®1/1 ®2/1 matrix 2 1 ®2/1 ®4/1 matrix 2 1 < true cases 2 \"Good\" \"Bad\"",
+  "{\"Good\" if [1; 2] < [2; 4]; \"Bad\" otherwise} = @"
+ ],
+ [
+  "{\"Good\" if [3; 2] < [2; 4]; \"Bad\" otherwise}",
+  "®3/1 ®2/1 matrix 2 1 ®2/1 ®4/1 matrix 2 1 < true cases 2 \"Good\" \"Bad\"",
+  "{\"Good\" if [3; 2] < [2; 4]; \"Bad\" otherwise} = @"
+ ],
+ [
+  "accumulate([2; 3; 0; 4])",
+  "®2/1 ®3/1 ®0/1 ®4/1 matrix 4 1 accumulate 1",
+  "accumulate([2; 3; 0; 4]) = @"
+ ],
+ [
+  "cos⁻¹ 0.5",
+  "®5/10 acos",
+  "cos⁻¹ 0.5 = @"
+ ],
+ [
+  "cos^(-1) 0.5",
+  "®5/10 acos",
+  "cos^(-1) 0.5 = @"
+ ],
+ [
+  "gamma(5)",
+  "®5/1 gamma",
+  "gamma(5) = @"
+ ],
+ [
+  "Γ(5)",
+  "®5/1 Γ",
+  "Γ(5) = @"
+ ],
+ [
+  "factorial(4)",
+  "®4/1 factorial",
+  "factorial(4) = @"
+ ],
+ [
+  "lgamma(5)",
+  "®5/1 lgamma",
+  "lgamma(5) = @"
+ ],
+ [
+  "lfact(4)",
+  "®4/1 lfact",
+  "lfact(4) = @"
+ ],
+ [
+  "isnan(\"five\")",
+  "⁅isnan \"five\" isnan",
+  "isnan(\"five\") = @"
+ ],
+ [
+  "isnan(5)",
+  "⁅isnan ®5/1 isnan",
+  "isnan(5) = @"
+ ],
+ [
+  "divByZero = 1/0",
+  "¿divByZero ®1/1 ®0/1 / =",
+  "divByZero = 1/0 = @"
+ ],
+ [
+  "isnan(divByZero)",
+  "⁅isnan ¿divByZero isnan",
+  "isnan(divByZero) = @"
+ ],
+ [
+  "isnan(divByZero + 1)",
+  "⁅isnan ¿divByZero ®1/1 + isnan",
+  "isnan(divByZero + 1) = @"
+ ],
+ [
+  "isnan(noSuchVariable)",
+  "⁅isnan ¿noSuchVariable isnan",
+  "isnan(noSuchVariable) = @"
+ ],
+ [
+  "isnan(num + 1)",
+  "⁅isnan ¿num ®1/1 + isnan",
+  "isnan(num + 1) = @"
+ ],
+ [
+  "Char(87)",
+  "®87/1 Char",
+  "Char(87) = @"
+ ],
+ [
+  "!true",
+  "true ¬",
+  "!true = @"
+ ],
+ [
+  "true && false",
+  "true false &&",
+  "true && false = @"
+ ],
+ [
+  "true == false",
+  "true false ==",
+  "true == false = @"
+ ],
+ [
+  "true = false",
+  "true false =",
+  "true = false = @"
+ ],
+ [
+  "true or false",
+  "true false or",
+  "true or false = @"
+ ],
+ [
+  "true || false",
+  "true false ||",
+  "true || false = @"
+ ],
+ [
+  "ceil(4.5)",
+  "®45/10 ceil",
+  "ceil(4.5) = @"
+ ],
+ [
+  "floor(-4.5)",
+  "®-45/10 floor",
+  "floor(-4.5) = @"
+ ],
+ [
+  "matrix2table(matrix, [\"D\", \"L\"], [\"A\", \"B\"])",
+  "¿matrix \"D\" \"L\" matrix 1 2 \"A\" \"B\" matrix 1 2 matrix2table 3",
+  "matrix2table(matrix, [\"D\", \"L\"], [\"A\", \"B\"]) = @"
+ ],
+ [
+  "2 < 3",
+  "®2/1 ®3/1 <",
+  "@test 2 < 3"
+ ],
+ [
+  "2 > 3",
+  "®2/1 ®3/1 >",
+  "@test 2 > 3"
+ ],
+ [
+  "sum(matrix, 2)",
+  "¿matrix ®2/1 sum 2",
+  "sum(matrix, 2) = @"
+ ],
+ [
+  "ones(2, 3)",
+  "®2/1 ®3/1 ones",
+  "ones(2, 3) = @"
+ ],
+ [
+  "findfirst([false; false; true; false])",
+  "false false true false matrix 4 1 findfirst 1",
+  "findfirst([false; false; true; false]) = @"
+ ],
+ [
+  "findfirst(4, [1; 3; 4; 6; 3])",
+  "®4/1 ®1/1 ®3/1 ®4/1 ®6/1 ®3/1 matrix 5 1 findfirst 2",
+  "findfirst(4, [1; 3; 4; 6; 3]) = @"
+ ],
+ [
+  "findmax([1; 4; 6; 3])",
+  "®1/1 ®4/1 ®6/1 ®3/1 matrix 4 1 findmax",
+  "findmax([1; 4; 6; 3]) = @"
+ ],
+ [
+  "5!!",
+  "®5/1 !!",
+  "5!! = @"
+ ],
+ [
+  "30!!",
+  "®30/1 !!",
+  "30!! = @"
+ ],
+ [
+  "newton(x → cos x, y → -sin y, 1.5)",
+  "\"x\" \"¿x§cos\" → \"y\" \"¿y§sin§~\" → ®15/10 function newton 3",
+  "newton(x → cos x, y → -sin y, 1.5) = @"
+ ],
+ [
+  "4 ∑_(n=1)³ 2 n + 3",
+  "®4/1 \"n\" ®1/1 ®3/1 \"®2/1§¿n§⌧\" ∑ ⌧ ®3/1 +",
+  "4 ∑_(n=1)³ 2 n + 3 = @"
+ ],
+ [
+  "∑_(n=0)⁴ 2 n",
+  "\"n\" ®0/1 ®4/1 \"®2/1§¿n§⌧\" ∑",
+  "∑_(n=0)⁴ 2 n = @"
+ ],
+ [
+  "1 'in⁻¹' × 2 'in⁻²'",
+  "®1/1 applyUnit in⁻¹ ®2/1 applyUnit in⁻² ×",
+  "1 'in⁻¹' × 2 'in⁻²' = @@ in⁻³"
+ ],
+ [
+  "'2025-01-20' + 12weeks",
+  "⌾1737331200 ®12/1 applyUnit weeks +",
+  "'2025-01-20' + 12weeks = @@"
+ ],
+ [
+  "'2025-04-18' - '2000-1-1'",
+  "⌾1744934400 ⌾946684800 -",
+  "'2025-04-18' - '2000-1-1' = @@ days"
+ ],
+ [
+  "savedate()",
+  "savedate",
+  "savedate() = @@"
+ ],
+ [
+  "aDate + 12weeks",
+  "¿aDate ®12/1 applyUnit weeks +",
+  "aDate + 12weeks = @@"
+ ],
+ [
+  "‖vector‖",
+  "¿vector ‖",
+  "‖vector‖ = @"
+ ],
+ [
+  "‖matrix‖",
+  "¿matrix ‖",
+  "‖matrix‖ = @"
+ ],
+ [
+  "hypot(3, 4)",
+  "®3/1 ®4/1 hypot 2",
+  "hypot(3, 4) = @"
+ ],
+ [
+  "hypot(3, 4, 5)",
+  "®3/1 ®4/1 ®5/1 hypot 3",
+  "hypot(3, 4, 5) = @"
+ ],
+ [
+  "5 mod 3",
+  "®5/1 ®3/1 modulo",
+  "5 mod 3 = @"
+ ],
+ [
+  "5 2/3 + 1 1/3",
+  "®17/3 ®4/3 +",
+  "5 2/3 + 1 1/3 = @"
+ ],
+ [
+  "1USD",
+  "®1/1 applyUnit USD",
+  "1USD = @@ USD"
+ ],
+ [
+  "2CAD",
+  "®2/1 applyUnit CAD",
+  "2CAD = C$@@"
+ ],
+ [
+  "2 ph",
+  "®2/1 ¿ph ⌧",
+  "2 ph = @@ psi"
+ ],
+ [
+  "2/5",
+  "®2/1 ®5/1 /",
+  "2/5  =  @%"
+ ],
+ [
+  "2 p",
+  "®2/1 ¿p ⌧",
+  "2 p = @%"
+ ],
+ [
+  "2 p",
+  "®2/1 ¿p ⌧",
+  "2 p = @@%"
+ ],
+ [
+  "0.2 × 2",
+  "®2/10 ®2/1 ×",
+  "0.2 × 2 = %%"
+ ],
+ [
+  "0.2 × 2",
+  "®2/10 ®2/1 ×",
+  "0.2 × 2 = %\\%"
+ ],
+ [
+  "b2 or false",
+  "¿b2 false or",
+  "b2 or false = @"
+ ],
+ [
+  "3′",
+  "®3/1 applyUnit ′",
+  "3′ = @@ inch"
+ ],
+ [
+  "3″",
+  "®3/1 applyUnit ″",
+  "3″ = @@ inch"
+ ],
+ [
+  "2 L_(1,2)",
+  "®2/1 ¿L_(1,2) ⌧",
+  "2 L_(1,2) = @@ m"
+ ]
+]
