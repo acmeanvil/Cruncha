@@ -1,6 +1,6 @@
 # ADR-0013: Large cell sources are stored out of line in content-addressed blobs
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-19)
 **Date:** 2026-11-19
 **Deciders:** acmeanvil
 **Refines:** ADR-0010 (the `doc` revision log) and ADR-0011 (pruning gains a blob step). Implements option D of spike S3 on top of option A, and leaves a seam for option C.

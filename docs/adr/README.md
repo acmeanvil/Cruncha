@@ -16,7 +16,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0010](0010-doc-table-append-only-log.md) | The `doc` table is an append-only revision log with periodic squash (refines 0003) | Accepted |
 | [0011](0011-user-configurable-history-retention.md) | User-configurable history retention: saves, size and activity-relative limits; dormant documents are never pruned | Accepted |
 | [0012](0012-ui-framework-svelte.md) | UI framework for the app shell: Svelte 5 with Vite and TypeScript (resolves 0008 item 2) | Accepted |
-| [0013](0013-out-of-line-cell-content.md) | Large cell sources are stored out of line in content-addressed blobs (refines 0010, 0011; ground for deletion vectors) | Proposed |
+| [0013](0013-out-of-line-cell-content.md) | Large cell sources are stored out of line in content-addressed blobs (refines 0010, 0011; ground for deletion vectors) | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 
