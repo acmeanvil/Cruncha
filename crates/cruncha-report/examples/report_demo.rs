@@ -100,6 +100,7 @@ fn main() {
             },
         ],
         defines: vec![("x".into(), "ndarray (51,)".into()), ("M_max".into(), "266.9 kip·ft".into())],
+        provenance: None,
     });
     blocks.push(Block::Code {
         id: "py2".into(),
@@ -108,6 +109,7 @@ fn main() {
         status: Status::NotCalculated { reason: "edited since it last ran: press Run".into() },
         outputs: vec![],
         defines: vec![],
+        provenance: None,
     });
     calc("Δ = 0.42 in", "Deflection (from the cell above — imagine)", &mut blocks);
 

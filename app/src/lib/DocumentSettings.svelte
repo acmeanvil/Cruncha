@@ -125,6 +125,14 @@
       onclose();
     });
 
+  let clearing = $state(false);
+  const clearResults = () =>
+    run(async () => {
+      onchanged(await api.clearResults());
+      clearing = false;
+      message = "Stored results were cleared.";
+    });
+
   const trim = () =>
     run(async () => {
       if (!confirm) {
@@ -218,6 +226,21 @@
       {/if}
       {#if !confirm}
         <p><button disabled={busy} onclick={trim}>Trim history now…</button></p>
+      {/if}
+      <h3>Stored results</h3>
+      <p class="small muted">
+        Python output kept with the document ({bytes(doc.resultsBytes)}), so cells whose inputs haven't changed
+        don't run again and past versions show what they computed. It isn't part of the history size.
+      </p>
+      {#if clearing}
+        <p class="small">
+          Drop every stored result? Past versions will show their Python cells as not calculated, and cells run
+          again when the document is next opened with Python.
+          <button disabled={busy} onclick={() => (clearing = false)}>Cancel</button>
+          <button class="danger" disabled={busy} onclick={clearResults}>Clear stored results</button>
+        </p>
+      {:else}
+        <p><button disabled={busy || confirm != null || doc.resultsBytes === 0} onclick={() => (clearing = true)}>Clear stored results…</button></p>
       {/if}
     {/if}
   {/if}

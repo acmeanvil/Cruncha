@@ -22,8 +22,9 @@ use base64::Engine as _;
 use cruncha_eval::{Options, Outcome, Plain, Statement, UnitAware, Value, Vars};
 use cruncha_graph::{Graph, Issue, Node};
 use cruncha_kernel_py::{Output, PyError, RunRequest, RunResult, Status};
-use cruncha_store::{Cell, CellKind};
-use serde::Serialize;
+use cruncha_kernel_py::Defined;
+use cruncha_store::{Cell, CellKind, RunRecord, RunStatus};
+use serde::{Deserialize, Serialize};
 
 /// What a cell shows.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -124,7 +125,7 @@ fn value_views(values: &[(String, Value)]) -> Vec<ValueView> {
 pub enum PyState {
     /// There's no Python environment yet.
     NoPython,
-    /// A past version: Python output isn't kept with the history yet.
+    /// A past version with no stored result for this cell (nothing runs for history).
     Past,
     /// The document isn't trusted to run code.
     Untrusted,
@@ -151,6 +152,22 @@ pub struct PyView {
     pub stderr: String,
     pub outputs: Vec<OutputView>,
     pub error: Option<PyError>,
+    /// Set when the outcome was read from the document's stored results (ADR-0018) rather
+    /// than run in this session.
+    pub stored: Option<StoredFrom>,
+}
+
+/// Where a stored result came from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredFrom {
+    /// `user:<name>@<host>`.
+    pub by: String,
+    /// Cruncha's clock, µs.
+    pub at_us: i64,
+    pub env: String,
+    /// Computed on another computer: its numbers weren't reproduced here.
+    pub elsewhere: bool,
 }
 
 impl PyView {
@@ -163,12 +180,14 @@ impl PyView {
             stderr: String::new(),
             outputs: Vec::new(),
             error: None,
+            stored: None,
         }
     }
 }
 
-/// Rich output, ready for the web view (images as data URLs).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// Rich output, ready for the web view (images as data URLs). Also how outputs are stored
+/// (ADR-0018), so a change here needs a new [`RESULT_FORMAT`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OutputView {
     Image {
@@ -229,14 +248,18 @@ impl From<&Output> for OutputView {
 #[derive(Debug, Clone)]
 pub struct PyJob {
     pub id: String,
-    pub key: u64,
+    /// [`py_input_hash`]: what the run's result depends on.
+    pub key: String,
     pub request: RunRequest,
 }
+
+/// What a run defined: values calcs can use, and every name with its summary.
+type RunValues = (Vec<(String, Value)>, Vec<(String, String)>);
 
 /// The outcome of a Python cell's last run.
 #[derive(Clone)]
 struct PyOutcome {
-    key: u64,
+    key: String,
     source: String,
     /// Values calcs can use.
     values: Vec<(String, Value)>,
@@ -283,12 +306,22 @@ pub struct Engine {
     py_memo: HashMap<String, PyOutcome>,
     approved: HashMap<String, String>,
     /// The job running now: cell id and key (a stale job of an edited cell isn't "running").
-    running: Option<(String, u64)>,
+    running: Option<(String, String)>,
     /// Is there a Python environment? Is the document trusted to run code?
     pub python_available: bool,
     pub trusted: bool,
+    /// The Python environment's label (`env-…`); part of every Python cell's input hash.
+    pub env: String,
     /// Evaluating a past version: Python cells don't run.
     pub past: bool,
+    /// `user:<name>@<host>`: who this computer's runs are recorded as.
+    pub computed_by: String,
+    /// The latest document version (recorded with each run).
+    pub doc_version: u64,
+    /// Finished runs not yet written to the document's `results/`.
+    unstored: Vec<RunRecord>,
+    /// Memo misses of the current evaluation.
+    missed: Vec<(String, String)>,
 }
 
 impl Default for Engine {
@@ -301,6 +334,11 @@ impl Default for Engine {
 pub struct Run {
     pub results: HashMap<String, CellResult>,
     pub jobs: Vec<PyJob>,
+    /// Python cells with no outcome for their current inputs, `(cell id, input hash)`: what
+    /// to look up in the stored results before anything runs.
+    pub missing: Vec<(String, String)>,
+    /// Every Python cell's input hash, by cell id (whether it had an outcome or not).
+    pub keys: HashMap<String, String>,
 }
 
 impl Engine {
@@ -317,7 +355,12 @@ impl Engine {
             running: None,
             python_available: false,
             trusted: false,
+            env: String::new(),
             past: false,
+            computed_by: String::new(),
+            doc_version: 0,
+            unstored: Vec::new(),
+            missed: Vec::new(),
         }
     }
 
@@ -386,26 +429,33 @@ impl Engine {
     }
 
     pub fn set_running(&mut self, job: Option<&PyJob>) {
-        self.running = job.map(|j| (j.id.clone(), j.key));
+        self.running = job.map(|j| (j.id.clone(), j.key.clone()));
+    }
+
+    /// Calc values and summaries from what a run defined.
+    fn values_of(&self, defines: &[Defined]) -> RunValues {
+        let mut values = Vec::new();
+        let mut defined = Vec::new();
+        for d in defines {
+            defined.push((d.name.clone(), d.summary.clone()));
+            let plain: Option<Plain> = serde_json::from_value(d.plain.clone()).ok();
+            if let Some(v) = plain
+                .as_ref()
+                .and_then(|p| Value::from_plain_with(p, &self.opts).ok())
+            {
+                values.push((d.name.clone(), v));
+            }
+        }
+        (values, defined)
     }
 
     /// Store the outcome of a job.
     pub fn record(&mut self, job: &PyJob, result: Result<RunResult, String>) {
-        let mut values = Vec::new();
-        let mut defined = Vec::new();
+        let (mut values, mut defined) = (Vec::new(), Vec::new());
         let view = match result {
             Ok(r) => {
-                for d in &r.defines {
-                    defined.push((d.name.clone(), d.summary.clone()));
-                    let plain: Option<Plain> = serde_json::from_value(d.plain.clone()).ok();
-                    if let Some(v) = plain
-                        .as_ref()
-                        .and_then(|p| Value::from_plain_with(p, &self.opts).ok())
-                    {
-                        values.push((d.name.clone(), v));
-                    }
-                }
-                PyView {
+                (values, defined) = self.values_of(&r.defines);
+                let view = PyView {
                     state: match r.status {
                         Status::Done => PyState::Done,
                         Status::Error => PyState::Error,
@@ -417,7 +467,30 @@ impl Engine {
                     stderr: r.stderr,
                     outputs: r.outputs.iter().map(OutputView::from).collect(),
                     error: r.error,
+                    stored: None,
+                };
+                // Kept for the document (ADR-0018). An interrupted run says nothing about
+                // its inputs, and a past version never runs.
+                if r.status != Status::Interrupted && !self.past {
+                    self.unstored.push(RunRecord {
+                        cell_id: job.id.clone(),
+                        input_hash: job.key.clone(),
+                        status: if r.status == Status::Done { RunStatus::Done } else { RunStatus::Error },
+                        values: serde_json::to_value(&r.defines).unwrap_or_default(),
+                        outputs: serde_json::to_value(&view.outputs).unwrap_or_default(),
+                        stdout: view.stdout.clone(),
+                        stderr: view.stderr.clone(),
+                        error: view.error.as_ref().and_then(|e| serde_json::to_string(e).ok()),
+                        duration_ms: r.ms.max(0.0).round() as u64,
+                        env: self.env.clone(),
+                        computed_at_us: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_micros() as i64),
+                        computed_by: self.computed_by.clone(),
+                        doc_version: self.doc_version,
+                    });
                 }
+                view
             }
             Err(e) => PyView::state(PyState::Error, Some(e)),
         };
@@ -428,7 +501,7 @@ impl Engine {
         self.py_memo.insert(
             job.id.clone(),
             PyOutcome {
-                key: job.key,
+                key: job.key.clone(),
                 source: job.request.source.clone(),
                 values,
                 defined,
@@ -438,6 +511,60 @@ impl Engine {
         if self.running.as_ref().is_some_and(|(id, _)| *id == job.id) {
             self.running = None;
         }
+    }
+
+    /// Finished runs to write to the document's stored results (and forget here).
+    pub fn take_unstored(&mut self) -> Vec<RunRecord> {
+        std::mem::take(&mut self.unstored)
+    }
+
+    /// Use stored runs (ADR-0018) as the outcomes of cells whose input hash they match, as if
+    /// they had run. `cells` gives each cell's source. Returns how many were used. A stored
+    /// run's values are data: nothing runs, and trust isn't needed to show them.
+    pub fn use_stored(&mut self, cells: &[Cell], runs: Vec<RunRecord>) -> usize {
+        let source: HashMap<&str, &str> = cells.iter().map(|c| (c.id.as_str(), c.source.as_str())).collect();
+        let host = |by: &str| by.rsplit_once('@').map(|(_, h)| h.to_owned());
+        let mut used = 0;
+        for r in runs {
+            let Some(src) = source.get(r.cell_id.as_str()) else { continue };
+            let defines: Vec<Defined> = serde_json::from_value(r.values).unwrap_or_default();
+            let outputs: Vec<OutputView> = serde_json::from_value(r.outputs).unwrap_or_default();
+            let (values, defined) = self.values_of(&defines);
+            let elsewhere = host(&r.computed_by) != host(&self.computed_by);
+            let view = PyView {
+                state: match r.status {
+                    RunStatus::Done => PyState::Done,
+                    RunStatus::Error => PyState::Error,
+                    RunStatus::Interrupted => PyState::Interrupted,
+                },
+                note: None,
+                ms: Some(r.duration_ms as f64),
+                stdout: r.stdout,
+                stderr: r.stderr,
+                outputs,
+                error: r.error.and_then(|e| serde_json::from_str(&e).ok()),
+                stored: Some(StoredFrom { by: r.computed_by, at_us: r.computed_at_us, env: r.env, elsewhere }),
+            };
+            self.py_memo.insert(
+                r.cell_id,
+                PyOutcome { key: r.input_hash, source: (*src).to_owned(), values, defined, view },
+            );
+            used += 1;
+        }
+        used
+    }
+
+    /// A fresh engine for evaluating a past version: this one's Python scans, environment and
+    /// identity, no memo, and nothing runs.
+    pub fn for_past(&self) -> Engine {
+        let mut e = Engine::new();
+        e.py_names = self.py_names.clone();
+        e.env = self.env.clone();
+        e.computed_by = self.computed_by.clone();
+        e.python_available = self.python_available;
+        e.trusted = self.trusted;
+        e.past = true;
+        e
     }
 
     /// Is a Python cell allowed to run on its own?
@@ -508,6 +635,7 @@ impl Engine {
 
     pub fn evaluate(&mut self, cells: &[Cell]) -> Run {
         self.evaluated = 0;
+        self.missed.clear();
         let graph = self.graph(cells);
         let cell_of: HashMap<&str, &Cell> = cells.iter().map(|c| (c.id.as_str(), c)).collect();
         let kind_of: HashMap<&str, CellKind> = cells.iter().map(|c| (c.id.as_str(), c.kind)).collect();
@@ -518,7 +646,7 @@ impl Engine {
         let mut live: HashSet<String> = HashSet::new();
         // Python cells that will produce values later (queued or running) / their keys.
         let mut py_pending: HashSet<String> = HashSet::new();
-        let mut py_keys: HashMap<String, u64> = HashMap::new();
+        let mut py_keys: HashMap<String, String> = HashMap::new();
         // Names defined in Python whose values calcs can't use, with what they are.
         let mut opaque: HashMap<String, String> = HashMap::new();
         let order: Vec<String> = graph.order().map(str::to_owned).collect();
@@ -636,7 +764,7 @@ impl Engine {
         self.memo.retain(|id, _| live.contains(id));
         self.py_memo.retain(|id, _| live.contains(id));
         self.vars = vars;
-        Run { results: out, jobs }
+        Run { results: out, jobs, missing: std::mem::take(&mut self.missed), keys: py_keys }
     }
 
     /// Why a cell can't use its inputs yet, if it can't.
@@ -667,7 +795,7 @@ impl Engine {
                         )));
                     }
                     let why = if self.past {
-                        "Python results aren't kept for past versions yet"
+                        "its cell has no stored result for this version"
                     } else if !self.python_available {
                         "Python isn't set up yet"
                     } else if !self.trusted {
@@ -706,7 +834,7 @@ impl Engine {
         result: &mut CellResult,
         jobs: &mut Vec<PyJob>,
         py_pending: &mut HashSet<String>,
-        py_keys: &mut HashMap<String, u64>,
+        py_keys: &mut HashMap<String, String>,
         opaque: &mut HashMap<String, String>,
     ) {
         let id = cell.id.as_str();
@@ -737,8 +865,7 @@ impl Engine {
             return set(result, PyState::Blocked, Some(e.to_string()));
         }
         // Inputs: calc values (sent along) and Python values (already in the worker).
-        let mut h = DefaultHasher::new();
-        cell.source.hash(&mut h);
+        let mut parts: Vec<(String, String)> = Vec::with_capacity(result.reads.len());
         let mut request = RunRequest {
             cell: cell.id.clone(),
             source: cell.source.clone(),
@@ -748,7 +875,6 @@ impl Engine {
         let mut waiting = false;
         let mut blocked: Option<String> = None;
         for name in &result.reads {
-            name.hash(&mut h);
             let definer = graph.definer(name);
             let definer_kind = definer.and_then(|d| cell_of.get(d)).map(|c| c.kind);
             match definer_kind {
@@ -765,13 +891,16 @@ impl Engine {
                             "{name} comes from a Python cell that hasn't run successfully"
                         ));
                     }
-                    py_keys.get(d).hash(&mut h);
+                    let upstream = py_keys.get(d).map_or("?", String::as_str);
+                    parts.push((name.clone(), format!("python:{upstream}")));
                     request.python_inputs.push(name.clone());
                 }
                 Some(CellKind::Calc) => match vars.get(name) {
                     Some(v) => {
-                        format!("{v:?}").hash(&mut h);
-                        match v.to_plain() {
+                        let plain = v.to_plain();
+                        let json = serde_json::to_value(&plain).expect("plain serializes");
+                        parts.push((name.clone(), format!("calc:{}", canonical_json(&json))));
+                        match plain {
                             Plain::Unsupported { kind, .. } => {
                                 blocked.get_or_insert(format!(
                                     "{name} ({kind}) can't be passed to Python yet"
@@ -786,19 +915,21 @@ impl Engine {
                         }
                     }
                     None => {
+                        parts.push((name.clone(), "missing".into()));
                         blocked
                             .get_or_insert(format!("{name} has no value (its calc has an error)"));
                     }
                 },
                 Some(_) => {
+                    parts.push((name.clone(), "other".into()));
                     blocked.get_or_insert(format!("{name} comes from a cell that can't run yet"));
                 }
                 // Not defined anywhere: Python raises NameError, which says it best.
-                None => {}
+                None => parts.push((name.clone(), "undefined".into())),
             }
         }
-        let key = h.finish();
-        py_keys.insert(id.to_owned(), key);
+        let key = py_input_hash(cell.kind, &cell.source, &self.env, parts);
+        py_keys.insert(id.to_owned(), key.clone());
 
         let memo_hit = self.py_memo.get(id).filter(|o| o.key == key);
         if let Some(o) = memo_hit {
@@ -824,7 +955,8 @@ impl Engine {
             result.python = Some(o.view.clone());
             return;
         }
-        if self.running.as_ref() == Some(&(id.to_owned(), key)) {
+        self.missed.push((id.to_owned(), key.clone()));
+        if self.running.as_ref() == Some(&(id.to_owned(), key.clone())) {
             py_pending.insert(id.to_owned());
             return set(result, PyState::Running, None);
         }
@@ -916,6 +1048,72 @@ fn py_value_views(o: &PyOutcome) -> Vec<ValueView> {
 /// Hurmet marks names in messages with `$…$`; the UI shows plain text.
 fn clean_message(m: &str) -> String {
     m.replace('$', "")
+}
+
+/// Bump when a change to the engine or the worker would make an old stored result wrong for
+/// the same inputs (how values or outputs are encoded, how inputs are passed): every code
+/// cell's input hash changes, so nothing stored earlier is reused (ADR-0018).
+pub const RESULT_FORMAT: u32 = 1;
+
+/// What a code cell's run depends on, as hex SHA-256 (ADR-0018 §2): stable across Rust
+/// versions, platforms and sessions, so it can key stored results. `inputs` are each name it
+/// reads with what that name is (`calc:<canonical Plain JSON>`, `python:<upstream hash>`, …);
+/// their order doesn't matter.
+pub fn py_input_hash(kind: CellKind, source: &str, env: &str, mut inputs: Vec<(String, String)>) -> String {
+    use sha2::{Digest, Sha256};
+    fn field(h: &mut Sha256, s: &str) {
+        h.update((s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    }
+    inputs.sort();
+    inputs.dedup();
+    let mut h = Sha256::new();
+    field(&mut h, &format!("cruncha-result/{RESULT_FORMAT}"));
+    field(&mut h, kind.as_str());
+    field(&mut h, source);
+    field(&mut h, env);
+    h.update((inputs.len() as u64).to_le_bytes());
+    for (name, what) in &inputs {
+        field(&mut h, name);
+        field(&mut h, what);
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// JSON with object keys sorted and no whitespace, whatever map order serde_json uses.
+pub fn canonical_json(v: &serde_json::Value) -> String {
+    fn write(v: &serde_json::Value, out: &mut String) {
+        match v {
+            serde_json::Value::Object(o) => {
+                let mut keys: Vec<&String> = o.keys().collect();
+                keys.sort();
+                out.push('{');
+                for (i, k) in keys.into_iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&serde_json::to_string(k).expect("string serializes"));
+                    out.push(':');
+                    write(&o[k], out);
+                }
+                out.push('}');
+            }
+            serde_json::Value::Array(a) => {
+                out.push('[');
+                for (i, x) in a.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write(x, out);
+                }
+                out.push(']');
+            }
+            scalar => out.push_str(&scalar.to_string()),
+        }
+    }
+    let mut out = String::new();
+    write(v, &mut out);
+    out
 }
 
 /// What determines a calc's outcome: its source and the values of what it reads.
@@ -1240,5 +1438,86 @@ mod tests {
             r.results["Z"]
         );
         assert_eq!(r.results["PY"].values[0].kind, "python");
+    }
+
+    #[test]
+    fn python_input_hash_is_stable_and_order_independent() {
+        let inputs = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+        let a = py_input_hash(CellKind::Python, "y = L * 2", "env-1", inputs(&[("L", "calc:{\"v\":1}"), ("w", "python:ab")]));
+        // A fixed encoding: this value must never change without bumping RESULT_FORMAT.
+        assert_eq!(a, GOLDEN_HASH);
+        let b = py_input_hash(CellKind::Python, "y = L * 2", "env-1", inputs(&[("w", "python:ab"), ("L", "calc:{\"v\":1}")]));
+        assert_eq!(a, b, "the order of reads doesn't matter");
+        for other in [
+            py_input_hash(CellKind::Python, "y = L * 3", "env-1", inputs(&[("L", "calc:{\"v\":1}"), ("w", "python:ab")])),
+            py_input_hash(CellKind::Python, "y = L * 2", "env-2", inputs(&[("L", "calc:{\"v\":1}"), ("w", "python:ab")])),
+            py_input_hash(CellKind::Python, "y = L * 2", "env-1", inputs(&[("L", "calc:{\"v\":2}"), ("w", "python:ab")])),
+            py_input_hash(CellKind::Python, "y = L * 2", "env-1", inputs(&[("L", "calc:{\"v\":1}")])),
+            // Length-prefixed fields: moving text between fields changes the hash.
+            py_input_hash(CellKind::Python, "y = L * 2env-1", "", inputs(&[("L", "calc:{\"v\":1}"), ("w", "python:ab")])),
+        ] {
+            assert_ne!(a, other);
+        }
+        assert_eq!(canonical_json(&serde_json::json!({"b": [1, {"d": 2, "c": "x"}], "a": null})), r#"{"a":null,"b":[1,{"c":"x","d":2}]}"#);
+    }
+
+    /// Also computed independently with Python's hashlib from the encoding in `py_input_hash`.
+    const GOLDEN_HASH: &str = "02637db6f304c86dcac63b09556214fe48472eb2fcea079155fba0ea8a36a3a6";
+
+    #[test]
+    fn python_keys_follow_calc_values_and_the_environment() {
+        let cells = vec![calc("A", "a0", "L = 2 m"), py_cell("PY", "a1", "y = L")];
+        let mut e = Engine::new();
+        e.python_available = true;
+        e.trusted = true;
+        e.approve(&cells);
+        e.set_py_names("y = L", PyNames { defines: vec!["y".into()], reads: vec!["L".into()], ..Default::default() });
+        let key = |e: &mut Engine, cells: &[Cell]| e.evaluate(cells).jobs[0].key.clone();
+        let k1 = key(&mut e, &cells);
+        assert_eq!(k1, key(&mut e, &cells), "same inputs, same key");
+        assert_eq!(k1.len(), 64);
+        let changed = vec![calc("A", "a0", "L = 3 m"), py_cell("PY", "a1", "y = L")];
+        assert_ne!(k1, key(&mut e, &changed));
+        e.env = "env-other".into();
+        assert_ne!(k1, key(&mut e, &cells));
+    }
+
+    #[test]
+    fn stored_runs_show_without_trust_and_feed_calcs() {
+        let cells = vec![calc("A", "a0", "L = 2"), py_cell("PY", "a1", "y = L"), calc("B", "a2", "z = y + 1 = ?")];
+        let mut e = Engine::new();
+        e.python_available = true;
+        e.computed_by = "user:me@here".into();
+        e.set_py_names("y = L", PyNames { defines: vec!["y".into()], reads: vec!["L".into()], ..Default::default() });
+        let run = e.evaluate(&cells);
+        assert_eq!(run.results["PY"].python.as_ref().unwrap().state, PyState::Untrusted);
+        let (id, key) = run.missing[0].clone();
+        assert_eq!(run.keys["PY"], key);
+        let mut tmp = Engine::new();
+        tmp.run(&[calc("T", "a", "y = 4")]);
+        let plain = serde_json::to_value(tmp.vars.get("y").unwrap().to_plain()).unwrap();
+        let record = RunRecord {
+            cell_id: id,
+            input_hash: key,
+            status: RunStatus::Done,
+            values: serde_json::json!([{ "name": "y", "summary": "4", "plain": plain }]),
+            outputs: serde_json::json!([{ "kind": "text", "text": "hi" }]),
+            stdout: String::new(),
+            stderr: String::new(),
+            error: None,
+            duration_ms: 3,
+            env: String::new(),
+            computed_at_us: 1,
+            computed_by: "user:them@there".into(),
+            doc_version: 1,
+        };
+        assert_eq!(e.use_stored(&cells, vec![record]), 1);
+        let run = e.evaluate(&cells);
+        let py = run.results["PY"].python.as_ref().unwrap();
+        assert_eq!(py.state, PyState::Done);
+        assert!(py.stored.as_ref().unwrap().elsewhere);
+        assert_eq!(py.outputs, vec![OutputView::Text { text: "hi".into() }]);
+        assert!(run.missing.is_empty() && run.jobs.is_empty());
+        assert!(run.results["B"].text.ends_with('5'), "{:?}", run.results["B"]);
     }
 }

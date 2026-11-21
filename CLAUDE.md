@@ -21,9 +21,10 @@ crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/retention.rs         Retention policy, `_delta_log` commit reader, cutoff computation (ADR-0011)
   src/blobs.rs             content-addressed, zstd-compressed `blobs/` for large cell sources (ADR-0013)
   src/proposals.rs         agents' proposals (ADR-0016): `proposals/` schema, ProposedChange, Proposal folding
+  src/results.rs           stored code-cell runs (ADR-0018): `results/` schema, RunRecord, long strings ↔ blob references (`$blob`/`$json`)
   examples/store_bench.rs  spike S3 benchmark
   examples/store_variants.rs  spike S3b: merge vs append-only vs bucketed layouts
-  tests/                   integration tests (tempdir containers): store, retention, blobs, proposals, crash
+  tests/                   integration tests (tempdir containers): store, retention, blobs, proposals, results, crash
 crates/cruncha-lang/       Hurmet lexer + parser port (spike S1; MIT notice in LICENSE-HURMET): parse_tex, parse_calc
   tests/golden.rs          Hurmet's golden TeX/RPN tests (tests/fixtures/*.json); keep green when adding an AST
   src/lib.rs `hurmet`      helpers shared with cruncha-eval (doc-hidden, not a stable API)
@@ -71,6 +72,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
+                           src/stored.rs stored results (ADR-0018): look up before running, flush finished runs, trim after a prune,
                            src/report.rs the latest version as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
                            src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from Settings → Agents outside Cruncha,
                            src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent;
@@ -144,7 +146,7 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - API keys live only in the OS credential store (`secrets.rs`): never in `preferences.json`, never sent to the web UI, read only when an agent starts and passed in its environment. Prefs hold connections without keys.
 - A document's own settings (type sizes `attrs.textSizes`, report `attrs.report`) live in its meta cell and are versioned; app-wide settings (defaults, agents, report style) live in `preferences.json`.
 - A report never evaluates: cells without a usable result print as NOT CALCULATED (with the reason), never as a pass. `@test` pass/fail comes from `Outcome::check`, not from display text. The report's title block and options are the `meta` cell's `attrs.report` (the editor doesn't show that cell). Same version → byte-identical PDF.
-- Results do not live in `doc/`. They go in a separate `results/` table (planned).
+- Results do not live in `doc/`. Code-cell runs go in the append-only `results/` table (ADR-0018, container format 5; created by the first stored run), keyed by `(cell_id, input_hash)`. The hash is `engine::py_input_hash`: SHA-256 over a fixed, length-prefixed encoding of `RESULT_FORMAT`, kind, source, environment label and each read with its canonical `Plain` JSON (or upstream hash). **Changing how values or outputs are encoded, or how inputs are passed, means bumping `RESULT_FORMAT`**; the golden hash test guards the encoding. Storing a run is a `results/` commit, never a document version, and never counts toward the history size or retention. Long strings (images, specs) go to `blobs/` before the row, and the row lists them in its `blobs` column so prune keeps them. Stored results are data: shown without trust and for past versions, never run; ones from another host are labelled "not run on this computer" (app and report). Calc results are never stored. After a prune, `stored::retain_after_prune` keeps runs computed at an available version and runs the latest version, the earliest available version or any snapshot looks up; "Clear stored results" drops them all.
 - Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).
 - Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind`, `cruncha.at` (µs; Cruncha's clock), `cruncha.restoredFrom`, `cruncha.prunedBefore`, `cruncha.proposal` (the accepted proposal's id) and `cruncha.blobBytes` (new blob bytes, counted by the size limit) (see `store.rs`).
 

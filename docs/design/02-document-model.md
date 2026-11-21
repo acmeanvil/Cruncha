@@ -173,8 +173,10 @@ beam-check.cruncha/
 │                 source_hash
 ├── blobs/        large cell sources (≥ 1 KiB), zstd, named by sha256 (ADR-0013)
 ├── pins/         copies of named versions whose history was pruned (ADR-0011)
-├── results/      Delta table: cell_id, input_hash, engine_ver, value (Arrow IPC bytes),
-│                 display_text, display_mathml, status, error, duration_ms
+├── results/      Delta table (ADR-0018): stored code-cell runs. cell_id, input_hash
+│                 (SHA-256 of source, inputs, environment, result format), status,
+│                 values, outputs (JSON; long strings as blob refs), stdout, stderr,
+│                 error, duration_ms, env, computed_at_us, computed_by, doc_version, blobs
 ├── data/<name>/  one Delta table per data frame (Polars reads and writes these directly)
 ├── assets/       content-addressed blobs (images, figures): sha256 → file (never rewritten)
 ├── refs/         Delta table: named versions/tags → {doc_version, data_versions{}, message, author}

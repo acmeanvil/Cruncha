@@ -10,8 +10,10 @@
 //! ├── pins/          Delta table: copies of named versions whose history was pruned (ADR-0011;
 //! │                  created by the first prune that needs it)
 //! ├── blobs/         large cell sources, zstd-compressed, named by SHA-256 (ADR-0013)
-//! └── proposals/     Delta table: agents' proposed changes and their decisions (ADR-0016;
-//!                    created by the first proposal)
+//! ├── proposals/     Delta table: agents' proposed changes and their decisions (ADR-0016;
+//! │                  created by the first proposal)
+//! └── results/       Delta table: stored runs of code cells, keyed by their inputs (ADR-0018;
+//!                    created by the first stored run)
 //! ```
 //!
 //! Every [`Store::commit`] is one atomic Delta transaction, so there is no "save": a crash
@@ -49,6 +51,7 @@ use crate::blobs::{self, Blobs};
 use crate::cell::{Cell, CellDiff, Change};
 use crate::error::{Error, Result};
 use crate::proposals::{self, Proposal, ProposalStatus, ProposedChange};
+use crate::results::{self, PutReport, RunEntry, RunRecord};
 use crate::retention::{self, LogEntry, Retention};
 use crate::schema::{self, Ref, SOURCE_HASH_COLUMN};
 
@@ -57,7 +60,9 @@ pub const FORMAT: &str = "cruncha-container";
 /// 3: large sources live in `blobs/`, referenced by `source_hash` (ADR-0013).
 /// 4: agents' proposals may live in `proposals/` (ADR-0016); an older Cruncha would ignore
 /// them, so it must refuse the container.
-pub const FORMAT_VERSION: u32 = 4;
+/// 5: code-cell results may live in `results/` (ADR-0018), referencing blobs an older Cruncha's
+/// prune would delete.
+pub const FORMAT_VERSION: u32 = 5;
 /// Squash the revision log after this many commits (spike S3b: 50 balances commit latency,
 /// read latency and growth).
 pub const DEFAULT_SQUASH_EVERY: u64 = 50;
@@ -188,6 +193,10 @@ pub struct Store {
     pins: Option<DeltaTable>,
     /// `proposals/`, once an agent has proposed something.
     proposals: Option<DeltaTable>,
+    /// `results/`, once a run has been stored.
+    results: Option<DeltaTable>,
+    /// Blobs the live `results/` rows reference (counted apart from history).
+    result_blobs: HashSet<String>,
     /// Added to the clock for Cruncha's own timestamps. Tests use it to simulate time passing.
     clock_offset_us: i64,
     /// Out-of-line sources.
@@ -315,7 +324,9 @@ fn referenced_blobs(dir: &Path, out: &mut HashSet<String>) -> Result<()> {
             .map_err(|e| Error::Corrupt(format!("{}: {e}", path.display())))?;
         let schema = builder.parquet_schema();
         let Some(idx) = (0..schema.num_columns()).find(|&i| {
-            schema.column(i).path().parts() == [SOURCE_HASH_COLUMN.to_owned()]
+            let col = schema.column(i);
+            let parts = col.path().parts();
+            parts == [SOURCE_HASH_COLUMN.to_owned()] || parts == [results::BLOBS_COLUMN.to_owned()]
         }) else {
             continue; // written before format 3: no out-of-line sources
         };
@@ -325,7 +336,19 @@ fn referenced_blobs(dir: &Path, out: &mut HashSet<String>) -> Result<()> {
             .build()
             .map_err(|e| Error::Corrupt(format!("{}: {e}", path.display())))?;
         for batch in reader {
-            out.extend(schema::blob_hashes(&batch?)?);
+            let batch = batch?;
+            if let Some(col) = batch.column_by_name(results::BLOBS_COLUMN) {
+                let col = deltalake::arrow::compute::cast(col, &deltalake::arrow::datatypes::DataType::Utf8)?;
+                let col = col
+                    .as_any()
+                    .downcast_ref::<deltalake::arrow::array::StringArray>()
+                    .ok_or_else(|| Error::Corrupt("results blobs column mistyped".into()))?;
+                for v in col.iter().flatten() {
+                    out.extend(v.split_whitespace().map(str::to_owned));
+                }
+            } else {
+                out.extend(schema::blob_hashes(&batch)?);
+            }
         }
     }
     Ok(())
@@ -367,6 +390,8 @@ impl Store {
             refs,
             pins: None,
             proposals: None,
+            results: None,
+            result_blobs: HashSet::new(),
             clock_offset_us: 0,
             blob_threshold: blobs::DEFAULT_BLOB_THRESHOLD,
             since_squash: 0,
@@ -405,6 +430,12 @@ impl Store {
         } else {
             None
         };
+        let results_dir = root.join("results");
+        let results = if results_dir.join("_delta_log").is_dir() {
+            Some(deltalake::open_table(dir_url(&results_dir)?).await?)
+        } else {
+            None
+        };
         // Every append adds one data file and a squash leaves at most one, so the live file
         // count recovers the squash counter across sessions.
         let since_squash = live_files(&doc)?.saturating_sub(1);
@@ -417,6 +448,8 @@ impl Store {
             refs,
             pins,
             proposals,
+            results,
+            result_blobs: HashSet::new(),
             clock_offset_us: 0,
             since_squash,
             squash_every: DEFAULT_SQUASH_EVERY,
@@ -426,6 +459,12 @@ impl Store {
             store.migrate().await?;
         }
         store.recover_accepted().await?;
+        store.result_blobs = store
+            .result_rows()
+            .await?
+            .into_iter()
+            .flat_map(|r| r.blobs)
+            .collect();
         Ok(store)
     }
 
@@ -876,9 +915,16 @@ impl Store {
         self.write_manifest()
     }
 
-    /// Bytes of history on disk: `doc/` data and log, and blobs (pins excluded).
+    /// Bytes of history on disk: `doc/` data and log, and blobs (pins and stored results
+    /// excluded).
     pub fn history_size_bytes(&self) -> Result<u64> {
-        Ok(blobs::dir_size(&self.root.join("doc"))? + self.blobs.size_bytes()?)
+        let all = blobs::dir_size(&self.root.join("doc"))? + self.blobs.size_bytes()?;
+        Ok(all.saturating_sub(self.blobs.size_of(&self.result_blobs)))
+    }
+
+    /// Bytes of stored results on disk: `results/` and the blobs its rows reference.
+    pub fn results_size_bytes(&self) -> Result<u64> {
+        Ok(blobs::dir_size(&self.root.join("results"))? + self.blobs.size_of(&self.result_blobs))
     }
 
     /// What [`Store::prune`] would do under `policy`, without deleting anything. The UI shows
@@ -998,19 +1044,9 @@ impl Store {
         )
         .await?;
 
-        // 6. Delete blobs that no remaining data file (of any available version) or pin
-        //    references. Files on disk are a superset of what versions from the cutoff on
-        //    read, so this never removes a blob they need.
-        let mut keep = HashSet::new();
-        let (doc_dir, pins_dir) = (self.root.join("doc"), self.root.join("pins"));
-        let keep = tokio::task::spawn_blocking(move || -> Result<HashSet<String>> {
-            referenced_blobs(&doc_dir, &mut keep)?;
-            referenced_blobs(&pins_dir, &mut keep)?;
-            Ok(keep)
-        })
-        .await
-        .map_err(|e| Error::Corrupt(format!("blob scan: {e}")))??;
-        let (blobs_deleted, _) = self.blobs.retain(&keep).await?;
+        // 6. Delete blobs that no remaining data file (of any available version), pin or
+        //    stored result references.
+        let blobs_deleted = self.gc_blobs().await?;
 
         // 6b. Decided proposals older than the cutoff go too (ADR-0016); those accepted into a
         //     pinned version stay with the pin.
@@ -1382,6 +1418,232 @@ impl Store {
         checkpoints::cleanup_expired_logs_for(latest, table.log_store().as_ref(), now_ms, None).await?;
         self.proposals = Some(table);
         Ok(drop.len())
+    }
+
+    /// Delete every blob that no data file left in `doc/`, `pins/` or `results/` references.
+    /// Files on disk are a superset of what available versions read, so this never removes a
+    /// blob they need. Returns the number deleted.
+    async fn gc_blobs(&self) -> Result<usize> {
+        let dirs = ["doc", "pins", "results"].map(|d| self.root.join(d));
+        let keep = tokio::task::spawn_blocking(move || -> Result<HashSet<String>> {
+            let mut keep = HashSet::new();
+            for d in &dirs {
+                referenced_blobs(d, &mut keep)?;
+            }
+            Ok(keep)
+        })
+        .await
+        .map_err(|e| Error::Corrupt(format!("blob scan: {e}")))??;
+        Ok(self.blobs.retain(&keep).await?.0)
+    }
+
+    async fn result_rows(&self) -> Result<Vec<results::Row>> {
+        match &self.results {
+            None => Ok(Vec::new()),
+            Some(t) => results::batches_to_rows(&scan(t).await?),
+        }
+    }
+
+    /// Write the blobs of `runs` and return their rows, unwritten. The blobs are on disk
+    /// before any row references them, so a crash after this leaves only unreferenced blobs
+    /// (removed by the next prune or [`Store::retain_results`]).
+    async fn put_result_blobs(&self, runs: Vec<RunRecord>, report: &mut PutReport) -> Result<Vec<results::Row>> {
+        let mut texts = Vec::new();
+        let mut rows = Vec::with_capacity(runs.len());
+        for r in runs {
+            if results::run_bytes(&r) > results::MAX_RUN_BYTES {
+                report.too_large.push(r.cell_id);
+                continue;
+            }
+            let start = texts.len();
+            let values = results::externalize(r.values, &mut texts)?;
+            let outputs = results::externalize(r.outputs, &mut texts)?;
+            let mut blobs: Vec<String> = texts[start..].iter().map(|t| blobs::hash(t)).collect();
+            blobs.sort();
+            blobs.dedup();
+            rows.push(results::Row {
+                entry: RunEntry {
+                    cell_id: r.cell_id,
+                    input_hash: r.input_hash,
+                    status: r.status,
+                    env: r.env,
+                    computed_at_us: r.computed_at_us,
+                    computed_by: r.computed_by,
+                    doc_version: r.doc_version,
+                },
+                values,
+                outputs,
+                stdout: results::cap(r.stdout, results::MAX_TEXT_BYTES),
+                stderr: results::cap(r.stderr, results::MAX_TEXT_BYTES),
+                error: r.error.map(|e| results::cap(e, results::MAX_TEXT_BYTES)),
+                duration_ms: r.duration_ms,
+                blobs,
+            });
+        }
+        report.blob_bytes += self.blobs.put_many(texts).await?.iter().map(|(_, n)| n).sum::<u64>();
+        Ok(rows)
+    }
+
+    /// Only the first half of [`Store::put_results`]: what a crash between writing the blobs
+    /// and the row leaves. Returns the blob bytes written.
+    #[doc(hidden)] // For crash tests.
+    pub async fn put_result_blobs_only(&self, runs: Vec<RunRecord>) -> Result<u64> {
+        let mut report = PutReport::default();
+        self.put_result_blobs(runs, &mut report).await?;
+        Ok(report.blob_bytes)
+    }
+
+    /// Store finished runs of code cells (ADR-0018): blobs first, then one append to
+    /// `results/`. Never a document version: `doc/` and its history are untouched. A run
+    /// larger than [`results::MAX_RUN_BYTES`] is skipped and reported.
+    pub async fn put_results(&mut self, runs: Vec<RunRecord>, actor: &str) -> Result<PutReport> {
+        let mut report = PutReport::default();
+        let rows = self.put_result_blobs(runs, &mut report).await?;
+        if rows.is_empty() {
+            return Ok(report);
+        }
+        let table = match &self.results {
+            Some(t) => t.clone(),
+            None => {
+                let dir = self.root.join("results");
+                if dir.join("_delta_log").is_dir() {
+                    deltalake::open_table(dir_url(&dir)?).await?
+                } else {
+                    create_table(&dir, "results", &results::RESULTS_SCHEMA, actor).await?
+                }
+            }
+        };
+        let table = table
+            .write([results::rows_to_batch(&rows)?])
+            .with_save_mode(SaveMode::Append)
+            .with_commit_properties(commit_props(
+                CommitKind::Maintenance,
+                actor,
+                &format!("store {} result(s)", rows.len()),
+                self.now_us(),
+                &[],
+            ))
+            .await?;
+        self.results = Some(table);
+        report.written = rows.len();
+        self.result_blobs.extend(rows.into_iter().flat_map(|r| r.blobs));
+        Ok(report)
+    }
+
+    /// Every stored run, without values or outputs, oldest first.
+    pub async fn result_entries(&self) -> Result<Vec<RunEntry>> {
+        let mut out: Vec<RunEntry> = self.result_rows().await?.into_iter().map(|r| r.entry).collect();
+        out.sort_by_key(|e| e.computed_at_us);
+        Ok(out)
+    }
+
+    /// The stored runs for `keys` (`(cell_id, input_hash)`), newest per key. Keys with no
+    /// stored run are absent.
+    pub async fn results_for(&self, keys: &HashSet<(String, String)>) -> Result<HashMap<(String, String), RunRecord>> {
+        let mut newest: HashMap<(String, String), results::Row> = HashMap::new();
+        for r in self.result_rows().await? {
+            let k = (r.entry.cell_id.clone(), r.entry.input_hash.clone());
+            if !keys.contains(&k) {
+                continue;
+            }
+            if newest.get(&k).is_none_or(|o| o.entry.computed_at_us <= r.entry.computed_at_us) {
+                newest.insert(k, r);
+            }
+        }
+        let loaded = self
+            .blobs
+            .get_many(newest.values().flat_map(|r| r.blobs.iter().map(String::as_str)))
+            .await?;
+        let get = |h: &str| {
+            loaded
+                .get(h)
+                .cloned()
+                .ok_or_else(|| Error::Corrupt(format!("result blob {h} not listed by its row")))
+        };
+        newest
+            .into_iter()
+            .map(|(k, r)| {
+                let values = results::internalize(serde_json::from_str(&r.values)?, &get)?;
+                let outputs = results::internalize(serde_json::from_str(&r.outputs)?, &get)?;
+                Ok((
+                    k,
+                    RunRecord {
+                        cell_id: r.entry.cell_id,
+                        input_hash: r.entry.input_hash,
+                        status: r.entry.status,
+                        values,
+                        outputs,
+                        stdout: r.stdout,
+                        stderr: r.stderr,
+                        error: r.error,
+                        duration_ms: r.duration_ms,
+                        env: r.entry.env,
+                        computed_at_us: r.entry.computed_at_us,
+                        computed_by: r.entry.computed_by,
+                        doc_version: r.entry.doc_version,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// Keep only the stored runs `keep` accepts (by cell id and input hash) and delete the
+    /// rest, with their files, log and unreferenced blobs. The caller decides what the
+    /// retained versions and snapshots can still use (ADR-0018 §5); a `keep` that accepts
+    /// nothing clears the table. Results are a cache, so their own history isn't kept.
+    /// Returns how many runs were dropped. Safe to repeat after a crash.
+    pub async fn retain_results(&mut self, keep: impl Fn(&str, &str) -> bool, actor: &str) -> Result<usize> {
+        let Some(table) = self.results.clone() else {
+            return Ok(0);
+        };
+        let rows = self.result_rows().await?;
+        let total = rows.len();
+        let kept: Vec<results::Row> = rows
+            .into_iter()
+            .filter(|r| keep(&r.entry.cell_id, &r.entry.input_hash))
+            .collect();
+        let dropped = total - kept.len();
+        let mut table = table;
+        if dropped > 0 {
+            table = table
+                .write([results::rows_to_batch(&kept)?])
+                .with_save_mode(SaveMode::Overwrite)
+                .with_commit_properties(commit_props(
+                    CommitKind::Maintenance,
+                    actor,
+                    &format!("drop {dropped} stored result(s)"),
+                    self.now_us(),
+                    &[],
+                ))
+                .await?;
+        }
+        let latest = table.version().unwrap_or(0);
+        checkpoints::create_checkpoint(&table, None).await?;
+        let now_ms = chrono::Utc::now().timestamp_millis() + 1000;
+        let (table, _) = table
+            .vacuum()
+            .with_mode(VacuumMode::Lite)
+            .with_retention_period(chrono::Duration::zero())
+            .with_enforce_retention_duration(false)
+            .with_clock(Arc::new(FixedClock(now_ms)))
+            .with_commit_properties(commit_props(
+                CommitKind::Maintenance,
+                actor,
+                "vacuum dropped results",
+                self.now_us(),
+                &[],
+            ))
+            .await?;
+        checkpoints::cleanup_expired_logs_for(latest, table.log_store().as_ref(), now_ms, None).await?;
+        self.results = Some(table);
+        self.result_blobs = kept.into_iter().flat_map(|r| r.blobs).collect();
+        self.gc_blobs().await?;
+        Ok(dropped)
+    }
+
+    /// Drop every stored result ("Clear stored results").
+    pub async fn clear_results(&mut self, actor: &str) -> Result<usize> {
+        self.retain_results(|_, _| false, actor).await
     }
 }
 

@@ -54,7 +54,7 @@ pub struct At {
 }
 
 /// The actor recorded on this user's commits.
-fn local_actor() -> String {
+pub(crate) fn local_actor() -> String {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "local".into());
@@ -182,6 +182,8 @@ pub struct DocInfo {
     pub version: u64,
     pub earliest_version: u64,
     pub history_bytes: u64,
+    /// Stored code-cell results (ADR-0018), counted apart from history.
+    pub results_bytes: u64,
     /// The document's own policy; `None` means it uses the app default.
     pub retention: Option<Retention>,
     /// The policy that applies: the document's own or the app default.
@@ -364,6 +366,8 @@ impl Session {
         let python = Python::new(&self.python_base, &self.worker_dir);
         let mut engine = Engine::new();
         engine.python_available = python.interpreter().is_some();
+        engine.env = crate::python::env_label(&self.python_base);
+        engine.computed_by = crate::stored::this_computer(&local_actor());
         self.doc = Some(OpenDoc {
             store,
             engine: Arc::new(Mutex::new(engine)),
@@ -420,8 +424,10 @@ impl Session {
     async fn latest_results(&mut self) -> Result<HashMap<String, CellResult>> {
         let cells = self.cells(None).await?;
         self.scan_python(&cells).await?;
+        self.flush_results().await?;
         let doc = self.doc()?;
-        let run = doc.engine.lock().unwrap().evaluate(&cells);
+        doc.engine.lock().unwrap().doc_version = doc.store.version();
+        let run = crate::stored::evaluate(&doc.store, &doc.engine, &cells).await.map_err(err)?;
         if !run.jobs.is_empty() {
             let doc_id = doc.store.manifest().id.clone();
             let version = doc.store.version();
@@ -563,12 +569,22 @@ impl Session {
     pub async fn close(&mut self) -> Option<PruneView> {
         let mut doc = self.doc.take()?;
         doc.python.shutdown().await;
+        if let Err(e) = crate::stored::flush(&mut doc.store, &doc.engine, &local_actor()).await {
+            eprintln!("cruncha: storing results on close failed: {e}");
+        }
         if !doc.edited || doc.pruned {
             return None;
         }
         let policy = self.effective_retention(&doc.store);
         match doc.store.prune(&policy, "system").await {
-            Ok(r) => r.map(Into::into),
+            Ok(r) => {
+                if r.is_some()
+                    && let Err(e) = crate::stored::retain_after_prune(&mut doc.store, &doc.engine, "system").await
+                {
+                    eprintln!("cruncha: trimming stored results failed: {e}");
+                }
+                r.map(Into::into)
+            }
             Err(e) => {
                 eprintln!("cruncha: pruning on close failed: {e}");
                 None
@@ -605,6 +621,7 @@ impl Session {
             version: s.version(),
             earliest_version: earliest,
             history_bytes: s.history_size_bytes().map_err(err)?,
+            results_bytes: s.results_size_bytes().map_err(err)?,
             retention: s.retention().cloned(),
             effective_retention: self.effective_retention(s),
             refs,
@@ -915,10 +932,26 @@ impl Session {
         if latest {
             self.latest_results().await
         } else {
-            let mut e = Engine::new();
-            e.past = true;
-            Ok(e.run(&cells))
+            // History is evaluated afresh; Python cells show their stored results (ADR-0018).
+            let doc = self.doc()?;
+            let past = Mutex::new(doc.engine.lock().unwrap().for_past());
+            Ok(crate::stored::evaluate(&doc.store, &past, &cells).await.map_err(err)?.results)
         }
+    }
+
+    /// Write the Python runs finished since the last call to the document's stored results.
+    /// Never a document version. Returns how many were stored.
+    pub async fn flush_results(&mut self) -> Result<usize> {
+        let Some(doc) = self.doc.as_mut() else { return Ok(0) };
+        crate::stored::flush(&mut doc.store, &doc.engine, &local_actor()).await.map_err(err)
+    }
+
+    /// Drop every stored result of the open document ("Clear stored results"). This session's
+    /// outcomes stay on screen; they are stored again when cells next run.
+    pub async fn clear_results(&mut self) -> Result<DocInfo> {
+        let doc = self.doc_mut()?;
+        doc.store.clear_results(&local_actor()).await.map_err(err)?;
+        self.info().await
     }
 
     /// Evaluate a calc source while it is being typed, against the latest values (nothing is
@@ -1071,6 +1104,9 @@ impl Session {
         let r = doc.store.prune(&policy, "system").await.map_err(err)?;
         if r.is_some() {
             doc.pruned = true;
+            crate::stored::retain_after_prune(&mut doc.store, &doc.engine, "system")
+                .await
+                .map_err(err)?;
         }
         Ok(r.map(Into::into))
     }
@@ -1274,6 +1310,57 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no results in time");
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn stored_python_results_survive_reopening_and_show_in_history() {
+        let Some(base) = python_base() else {
+            eprintln!("no Python environment; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let worker = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python"));
+        let mut session = Session::new(None).with_python(base.clone(), worker.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        session.on_results(move |ev| {
+            let _ = tx.send(ev);
+        });
+        let info = session.create_sample(&path).await.unwrap();
+        session.results(&At::default()).await.unwrap();
+        let state = |r: &HashMap<String, CellResult>| r["PY"].python.as_ref().map(|p| p.state);
+        let ev = wait_for(&rx, |ev| state(&ev.results) == Some(crate::engine::PyState::Done)).await;
+        assert!(ev.results["PY"].python.as_ref().unwrap().stored.is_none(), "ran here");
+        assert_eq!(session.flush_results().await.unwrap(), 1);
+        assert!(session.info().await.unwrap().results_bytes > 0);
+        let version = info.version;
+        session.close().await;
+
+        // Reopened: the cell's inputs are unchanged, so its stored run is used, nothing queued.
+        let mut session = Session::new(None).with_python(base, worker);
+        session.open(&path).await.unwrap();
+        let r = session.results(&At::default()).await.unwrap();
+        let py = r["PY"].python.as_ref().unwrap();
+        assert_eq!(py.state, crate::engine::PyState::Done, "{py:?}");
+        let from = py.stored.as_ref().expect("from stored results");
+        assert!(!from.elsewhere);
+        assert!(matches!(py.outputs.first(), Some(crate::engine::OutputView::Image { .. })));
+        assert!(r["RATIO"].error.is_none(), "calcs read the stored values: {:?}", r["RATIO"]);
+        // Once it's a past version, it shows them too, without running anything.
+        session
+            .commit(vec![ChangeView::Upsert { cell: prose("zz", "a note") }], "note")
+            .await
+            .unwrap();
+        let past = session.results(&At { version: Some(version), ref_name: None }).await.unwrap();
+        assert_eq!(past["PY"].python.as_ref().unwrap().state, crate::engine::PyState::Done);
+
+        // Cleared: the past version has nothing to show.
+        let before = session.info().await.unwrap().results_bytes;
+        let info = session.clear_results().await.unwrap();
+        assert!(info.results_bytes < before / 2, "{} of {before} left", info.results_bytes);
+        let past = session.results(&At { version: Some(version), ref_name: None }).await.unwrap();
+        assert_eq!(past["PY"].python.as_ref().unwrap().state, crate::engine::PyState::Past);
+        session.close().await;
     }
 
     #[tokio::test]
@@ -1561,6 +1648,15 @@ mod tests {
         let pdf = cruncha_report::render(&report, files).unwrap();
         assert!(pdf.pages >= 2);
         assert!(pdf.pdf.starts_with(b"%PDF"));
+        // A stored result from another computer prints with where it came from.
+        let mut stored = report.clone();
+        for b in &mut stored.blocks {
+            if let Block::Code { provenance, .. } = b {
+                *provenance = Some("Computed on office-mac, 2026-11-01; not run on this computer (stored result)".into());
+            }
+        }
+        let a = cruncha_report::render(&stored, Vec::new()).unwrap();
+        assert!(a.pdf.len() > pdf.pdf.len() / 2);
     }
 
     #[tokio::test]

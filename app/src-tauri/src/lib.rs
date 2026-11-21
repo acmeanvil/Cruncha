@@ -19,6 +19,7 @@ mod python;
 mod report;
 mod secrets;
 mod session;
+mod stored;
 
 use std::path::PathBuf;
 
@@ -638,6 +639,12 @@ async fn prune_now(s: State<'_, Shared>) -> Result<Option<PruneView>> {
     s.lock().await.prune_now().await
 }
 
+/// Drop the open document's stored code-cell results (ADR-0018).
+#[tauri::command]
+async fn clear_results(s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.clear_results().await
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -650,6 +657,15 @@ pub fn run() {
             let handle = app.handle().clone();
             session.on_results(move |ev| {
                 let _ = handle.emit("results", ev);
+                // Keep finished runs with the document (ADR-0018), off the run loop.
+                if let Some(shared) = handle.try_state::<Shared>() {
+                    let shared = shared.inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = shared.lock().await.flush_results().await {
+                            eprintln!("cruncha: storing results failed: {e}");
+                        }
+                    });
+                }
             });
             let handle = app.handle().clone();
             session.on_proposals(move |doc_id| {
@@ -690,6 +706,7 @@ pub fn run() {
             set_document_retention,
             retention_preview,
             prune_now,
+            clear_results,
             proposals,
             accept_proposal,
             reject_proposal,

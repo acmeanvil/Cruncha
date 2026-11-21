@@ -224,6 +224,8 @@ export interface DocInfo {
   version: number;
   earliestVersion: number;
   historyBytes: number;
+  /** Stored code-cell results, counted apart from history. */
+  resultsBytes: number;
   retention: Retention | null;
   effectiveRetention: Retention;
   refs: RefView[];
@@ -330,6 +332,17 @@ export interface PyView {
   stderr: string;
   outputs: OutputView[];
   error: PyError | null;
+  /** Read from the document's stored results (ADR-0018), not run this session. */
+  stored: StoredFrom | null;
+}
+
+export interface StoredFrom {
+  /** `user:<name>@<host>`. */
+  by: string;
+  atUs: number;
+  env: string;
+  /** Computed on another computer: not reproduced here. */
+  elsewhere: boolean;
 }
 
 export interface PythonStatus {
@@ -481,6 +494,7 @@ export const api = {
     invoke<DocInfo>("set_document_retention", { policy }),
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),
   pruneNow: () => invoke<PruneResult | null>("prune_now"),
+  clearResults: () => invoke<DocInfo>("clear_results"),
   /** The open document's proposals, newest first (open ones with "if accepted" results). */
   proposals: () => invoke<ProposalView[]>("proposals"),
   acceptProposal: (id: string, force: boolean) => invoke<CommitView>("accept_proposal", { id, force }),

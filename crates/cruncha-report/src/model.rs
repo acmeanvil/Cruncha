@@ -141,6 +141,11 @@ pub enum Block {
         outputs: Vec<Output>,
         /// Names the cell defines, with their values as plain text.
         defines: Vec<(String, String)>,
+        /// Where its output came from when it wasn't computed on this computer (a stored
+        /// result, ADR-0018), e.g. "Computed on office-mac, 2026-11-01; not run on this
+        /// computer". Printed with the cell and counted in the summary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<String>,
     },
     /// A cell kind the report can't show yet.
     Other {

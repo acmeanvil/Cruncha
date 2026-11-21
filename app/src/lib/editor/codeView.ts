@@ -5,12 +5,12 @@
 // URLs, never as HTML from the worker.
 import type { Node } from "prosemirror-model";
 import type { EditorView, NodeView, ViewMutationRecord } from "prosemirror-view";
-import type { CellResult, OutputView, PyState } from "../api";
+import type { CellResult, OutputView, PyState, StoredFrom } from "../api";
 import type { Results } from "./results";
 
 const STATE_LABEL: Record<PyState, string> = {
   no_python: "Python isn't set up",
-  past: "not kept for past versions",
+  past: "no stored result for this version",
   untrusted: "not trusted to run",
   edited: "edited · Run to update",
   blocked: "waiting on an input",
@@ -31,6 +31,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** Where a stored result came from, for the cell's header (ADR-0018). */
+export function storedLabel(f: StoredFrom): { text: string; title: string } {
+  const host = f.by.includes("@") ? f.by.slice(f.by.lastIndexOf("@") + 1) : "another computer";
+  const who = f.by.replace(/^user:/, "").replace(/@.*$/, "");
+  const date = new Date(f.atUs / 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return f.elsewhere
+    ? {
+        text: `computed on ${host}, ${date} · not run on this computer`,
+        title: `Stored with the document by ${who} on ${host} (${f.env || "unknown environment"}). Its numbers weren't reproduced here.`,
+      }
+    : { text: `stored ${date}`, title: `From the document's stored results (${f.env || "unknown environment"}); it didn't need to run again.` };
 }
 
 function seconds(ms: number) {
@@ -114,6 +127,12 @@ export class CodeView implements NodeView {
     if (py) {
       const label = STATE_LABEL[py.state] + (py.state === "done" && py.ms != null ? ` · ${seconds(py.ms)}` : "");
       this.head.append(el("span", `code-state ${py.state}`, label));
+      if (py.stored) {
+        const l = storedLabel(py.stored);
+        const tag = el("span", `code-stored${py.stored.elsewhere ? " elsewhere" : ""}`, l.text);
+        tag.title = l.title;
+        this.head.append(tag);
+      }
     }
     const id = this.node.attrs.id as string | null;
     if (this.view.editable && id) {

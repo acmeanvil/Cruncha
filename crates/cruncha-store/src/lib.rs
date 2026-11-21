@@ -9,6 +9,7 @@ mod blobs;
 mod cell;
 mod error;
 mod proposals;
+mod results;
 mod retention;
 #[doc(hidden)] // Exposed for spikes and benchmarks; not a stable API.
 pub mod schema;
@@ -18,6 +19,7 @@ pub use blobs::DEFAULT_BLOB_THRESHOLD;
 pub use cell::{Cell, CellDiff, CellKind, Change, Provenance};
 pub use error::{Error, Result};
 pub use proposals::{Proposal, ProposalStatus, ProposedCell, ProposedChange};
+pub use results::{MAX_RUN_BYTES, MAX_TEXT_BYTES, PutReport, RunEntry, RunRecord, RunStatus};
 pub use retention::{DEFAULT_FLOOR, MIN_FLOOR, Retention};
 pub use schema::Ref;
 pub use store::{

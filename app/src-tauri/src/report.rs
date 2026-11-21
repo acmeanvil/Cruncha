@@ -144,7 +144,7 @@ fn formula_tex(source: &str) -> Option<String> {
 
 /// Errors that mean "not computed" rather than "wrong": inputs from Python that aren't there.
 fn not_calculated(error: &str) -> bool {
-    error.contains("comes from a Python cell") || error.contains("Python results aren't kept")
+    error.contains("comes from a Python cell")
 }
 
 fn calc_status(r: &CellResult) -> Status {
@@ -176,7 +176,7 @@ fn python_status(r: &CellResult) -> Status {
                 .unwrap_or_else(|| "it failed".into()),
         },
         PyState::NoPython => reason("Python isn't set up on this computer"),
-        PyState::Past => reason("Python output isn't kept for past versions yet"),
+        PyState::Past => reason("no stored result for this version"),
         PyState::Untrusted => reason("this document isn't trusted to run code here"),
         PyState::Edited => reason("edited since it last ran: press Run"),
         PyState::Blocked => reason("an input isn't available"),
@@ -274,6 +274,13 @@ pub fn build(
                     status: python_status(r),
                     outputs,
                     defines,
+                    provenance: r.python.as_ref().and_then(|p| p.stored.as_ref()).filter(|f| f.elsewhere).map(|f| {
+                        let host = f.by.rsplit_once('@').map_or("another computer", |(_, h)| h);
+                        format!(
+                            "Computed on {host}, {}; not run on this computer (stored result)",
+                            &iso_utc(f.at_us / 1000)[..10]
+                        )
+                    }),
                 });
             }
             k => blocks.push(Block::Other { kind: k.as_str().to_owned(), source: c.source.clone() }),

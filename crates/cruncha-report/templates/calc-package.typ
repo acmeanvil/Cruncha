@@ -149,6 +149,9 @@
       }
     ] #label("cell-" + b.id)
     #problem(b.status)
+    #if b.at("provenance", default: none) != none {
+      block(above: 0.4em, text(size: 0.85em, style: "italic", fill: warn-color, b.provenance))
+    }
     #for o in b.outputs {
       if o.type == "image" {
         block(breakable: false, above: 0.6em, align(center, image(o.path, width: 85%)))
@@ -218,6 +221,7 @@
 // The check summary: every check and every problem, with the sheet it is on.
 #let checks = r.blocks.filter(b => b.type == "calc" and b.check)
 #let problems = r.blocks.filter(b => (b.type == "calc" or b.type == "code") and b.status.state in ("error", "notCalculated"))
+#let elsewhere = r.blocks.filter(b => b.type == "code" and b.at("provenance", default: none) != none)
 #let sheet-of(id) = context {
   let found = query(label("cell-" + id))
   if found.len() > 0 { str(counter(page).at(found.first().location()).first()) } else { "?" }
@@ -235,7 +239,11 @@
     #if failed > 0 { badge(fail-color)[#failed NOT OK] }
     #if open > 0 { badge(warn-color)[#open not calculated] }
     #if problems.len() > 0 { badge(warn-color)[#problems.len() cells with problems] }
+    #if elsewhere.len() > 0 { badge(warn-color)[#elsewhere.len() code cells not reproduced here] }
   ]
+  if elsewhere.len() > 0 {
+    text(size: 0.85em, fill: muted)[Output of #elsewhere.len() code #if elsewhere.len() == 1 [cell was] else [cells were] computed on another computer and read from the document's stored results; checks that use it were evaluated here.]
+  }
   if checks.len() + problems.len() > 0 {
     set text(size: 0.85em)
     table(

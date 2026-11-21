@@ -116,8 +116,8 @@ Today the engine memoizes a Python run by a key: a `DefaultHasher` hash of the s
 
 ## Action Items
 
-1. [ ] `cruncha-store`: `results/` schema (lazy), `put_results` (blobs first), `results_for(cell_ids)`, `clear_results`, format 5, prune step; tests including a crash between the blob writes and the row.
-2. [ ] Stable input hash in the engine (canonical `Plain` JSON, env label, format version), replacing `DefaultHasher`; tests that it is stable and order-independent where it should be.
-3. [ ] App: look up before queuing a Python job; write finished runs in the background; past versions and reports read stored results; the "not run on this computer" label; Clear stored results.
+1. [x] `cruncha-store`: `results/` schema (lazy), `put_results` (blobs first), `results_for(cell_ids)`, `clear_results`, format 5, prune step; tests including a crash between the blob writes and the row.
+2. [x] Stable input hash in the engine (canonical `Plain` JSON, env label, format version), replacing `DefaultHasher`; tests that it is stable and order-independent where it should be.
+3. [x] App: look up before queuing a Python job; write finished runs in the background; past versions and reports read stored results; the "not run on this computer" label; Clear stored results.
 4. [ ] Report: print stored Python results for past versions and snapshots, with their provenance.
-5. [ ] Update CLAUDE.md, design 02 §5.2 (columns) and `skills/cruncha-code-cells`.
+5. [x] Update CLAUDE.md, design 02 §5.2 (columns) and `skills/cruncha-code-cells`.

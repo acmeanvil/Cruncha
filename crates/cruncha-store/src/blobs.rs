@@ -8,7 +8,8 @@
 //!
 //! Blobs are immutable. One is written (temp file, then rename) *before* the Delta commit that
 //! references it, so a crash leaves at most an unreferenced blob. Only [`crate::Store::prune`]
-//! deletes blobs, and only those no remaining `doc/` or `pins/` data file references.
+//! deletes blobs, and only those no remaining `doc/`, `pins/` or `results/` data file
+//! references. Stored results (ADR-0018) keep their large outputs here too.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -213,6 +214,16 @@ impl Blobs {
     /// Bytes of blobs on disk.
     pub fn size_bytes(&self) -> Result<u64> {
         dir_size(&self.dir)
+    }
+
+    /// Bytes on disk of the blobs named by `hashes` (missing ones count 0).
+    pub fn size_of(&self, hashes: &HashSet<String>) -> u64 {
+        hashes
+            .iter()
+            .filter(|h| valid_hash(h))
+            .filter_map(|h| std::fs::metadata(self.path(h)).ok())
+            .map(|m| m.len())
+            .sum()
     }
 }
 

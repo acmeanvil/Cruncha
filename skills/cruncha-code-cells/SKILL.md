@@ -44,7 +44,10 @@ plt.plot(x.magnitude, moment.magnitude)
 - A cell runs on its own when its inputs change, but only after it has been run once with its current source. **An edited cell waits for Run** (Shift+Enter or ▶ Run), so half-written code never executes.
 - A document runs Python only on a computer that trusts it. Documents opened from elsewhere ask first.
 - Cells run one at a time, in dependency order, in one worker process per document. A long cell can be stopped (■ Stop raises `KeyboardInterrupt`); code that ignores that gets the worker restarted, and every Python value is recomputed.
-- Past versions don't keep Python output yet.
+- **Finished runs are stored with the document** (ADR-0018), keyed by a hash of exactly what produced them: the cell's source, the values of everything it reads, and the Python environment (lockfile). A cell whose inputs nobody changed **doesn't run again** when the document is reopened; its stored output and values are used, and calcs read them as usual. Change a source or an input, or upgrade the environment, and the hash changes, so it runs again (when trusted and Python is set up).
+- Stored results are data, so they show even where nothing may run (Python not set up, document not trusted), and **past versions and snapshots show the Python output they had**. A cell with no stored result for its inputs shows "no stored result for this version" / NOT CALCULATED.
+- A stored result computed on another computer is labelled "computed on ‹host›, ‹date› · not run on this computer", in the app and in the report. Interrupted runs aren't stored; runs whose output is over 64 MB are shown that session only.
+- Stored results are a cache: they never add a document version, aren't counted in the history size, and can be dropped in Document settings → History → Clear stored results.
 
 **Rules**
 - Assign results to top-level names. Those are what other cells can read.
@@ -65,7 +68,7 @@ plt.plot(x.magnitude, moment.magnitude)
 
 Build quantities with Cruncha's registry so they combine with calc values: `from cruncha import ureg, Q_`, then `Q_(12, "kip")`. A quantity from another pint registry can't come back to a calc.
 
-**In the PDF report** a Python cell prints its source (unless Report settings turn that off), its figures, tables (first 50 rows), printed text, and the names it defines. A cell that hasn't run with its current source (Python not set up, not trusted, edited and not run) is printed as NOT CALCULATED, with the reason. Export waits up to two minutes for cells that are running.
+**In the PDF report** a Python cell prints its source (unless Report settings turn that off), its figures, tables (first 50 rows), printed text, and the names it defines. A cell that hasn't run with its current source and has no stored result for its inputs (Python not set up, not trusted, edited and not run) is printed as NOT CALCULATED, with the reason. Output from a stored result computed on another computer prints with that note, and the summary counts such cells. Export waits up to two minutes for cells that are running.
 
 **Output:** every matplotlib figure the cell left open (as an image; figures are closed afterwards), then the value of the last expression (Polars frames as a table of the first 50 rows, other values as their `repr`), then what it printed. Output is shown as data, never as HTML, so `_repr_html_` isn't used. Calling Python functions from calc cells is planned, not available yet.
 

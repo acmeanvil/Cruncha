@@ -10,7 +10,7 @@ vi.mock("../api", () => ({ api: { previewCalc: async () => ({ tex: "", error: nu
 
 const { docFromCells } = await import("./cells");
 const { editorPlugins } = await import("./plugins");
-const { CodeView } = await import("./codeView");
+const { CodeView, storedLabel } = await import("./codeView");
 const { Results } = await import("./results");
 
 const cell: Cell = {
@@ -88,4 +88,11 @@ test("Shift+Enter in a Python cell runs it", () => {
   view.focus();
   view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
   expect(onKey).toHaveBeenCalledWith("PY");
+});
+
+test("the stored results label says when a result wasn't reproduced on this computer", () => {
+    const l = storedLabel({ by: "user:pat@office-mac", atUs: Date.UTC(2026, 10, 1) * 1000, env: "env-1", elsewhere: true });
+    expect(l.text).toMatch(/^computed on office-mac, .* · not run on this computer$/);
+    expect(l.title).toContain("pat");
+    expect(storedLabel({ by: "user:me@here", atUs: 0, env: "", elsewhere: false }).text).toMatch(/^stored /);
 });

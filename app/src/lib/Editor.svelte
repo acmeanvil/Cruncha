@@ -559,6 +559,11 @@
   .editor :global(.code-state.running), .editor :global(.code-state.queued) { color: var(--accent); }
   .editor :global(.code-state.error) { color: var(--danger); }
   .editor :global(.code-state.edited), .editor :global(.code-state.untrusted), .editor :global(.code-state.no_python) { color: var(--warn); }
+  .editor :global(.code-stored) {
+    font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--sunken); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  .editor :global(.code-stored.elsewhere) { color: var(--warn); }
   .editor :global(.code-run) {
     margin-left: auto; font-size: 11.5px; padding: 1px 8px; border-radius: 4px; background: var(--panel);
   }
