@@ -74,6 +74,18 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - The user turns it on in the Agents dialog, which shows the `claude mcp add` command.
    - The crate doesn't depend on `cruncha-store`; the app implements its `Backend` trait.
 2. [ ] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills (unverified).
-3. [ ] Port `lg-acp` with the `mcpServers` and capability changes.
+3. [x] Port `lg-acp` with the `mcpServers` and capability changes (2026-11-20):
+   - `crates/cruncha-acp` keeps the MIT notice in `LICENSE-LOOKING-GLASS`.
+   - The client advertises no fs or terminal; there are no remote agents.
+   - Sessions get `cruncha` as an HTTP MCP server. Agents that don't support HTTP MCP get an explicit error (a stdio bridge is a follow-up).
+   - Tested against looking_glass's `lg-agent` in demo mode.
+   - The in-app **agent panel** follows looking_glass's session view:
+     - agent picker (Claude Code, Codex, Gemini CLI, Qwen Code through their `npx` adapters; looking_glass's agent when installed);
+     - streaming Markdown (markdown-it, no raw HTML) with cell IDs linked to the document;
+     - collapsible thinking, tool cards, plan;
+     - permission prompts, marked when a tool acts outside the document;
+     - the agent's model and mode menus, a usage pill;
+     - saved conversations per document.
+   - Each agent gets its own MCP server and token. It works in `agents/<doc id>/` in the app's data, which holds the skills (`.claude/skills/…`, `AGENTS.md`, `CLAUDE.md`).
 4. [ ] lg-agent: MCP client (check the license of an MCP crate such as `rmcp`), skills loader, per-session cancellation.
 5. [ ] Consider upstreaming MCP and skills support to looking_glass.

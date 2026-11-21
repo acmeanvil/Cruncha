@@ -54,10 +54,11 @@
   const masked = (s: string) => (showToken ? s : s.replace(server?.token ?? "\u0000", "•".repeat(12)));
 </script>
 
-<Modal title="Agents" {onclose}>
+<Modal title="Agents outside Cruncha" {onclose}>
   <p>
-    AI agents on this computer can read this document through Cruncha: its cells, the engine's results,
-    checks and history. They can't change it yet; proposed edits come next.
+    An agent you run yourself (in a terminal, an editor, …) can read this document through Cruncha: its cells,
+    the engine's results, checks and history. It can't change it yet; proposed edits come next. For an agent
+    inside Cruncha, use the Agent panel instead.
   </p>
   <label class="switch">
     <input type="checkbox" checked={server != null} disabled={busy} onchange={toggle} />

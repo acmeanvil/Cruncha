@@ -27,6 +27,7 @@
   import SnapshotDialog from "./lib/SnapshotDialog.svelte";
   import ReportSettingsDialog from "./lib/ReportSettingsDialog.svelte";
   import AgentsDialog from "./lib/AgentsDialog.svelte";
+  import AgentPanel from "./lib/AgentPanel.svelte";
   import { date, describeRetention } from "./lib/format";
   import type { SaveState } from "./lib/editor/sync";
   import type { OutlineItem } from "./lib/editor/outline";
@@ -42,8 +43,11 @@
   let loads = $state(0);
   let save = $state<SaveState>({ status: "saved", error: null });
   let modal = $state<"prefs" | "doc" | "snapshot" | "report" | "agents" | null>(null);
-  /** Agents on this computer may use the document (the MCP server is running). */
+  /** Agents outside Cruncha may use the document (the external MCP server is running). */
   let agentsOn = $state(false);
+  /** The agent panel is shown. */
+  let agentPanel = $state(false);
+
   /** An export in progress, or the last one's result. */
   let exporting = $state(false);
   let exported = $state<ExportView | null>(null);
@@ -51,6 +55,8 @@
   let editor = $state<ReturnType<typeof Editor> | undefined>();
   let outline = $state.raw<OutlineItem[]>([]);
   let variables = $state.raw<Variable[]>([]);
+  /** IDs of the document's cells, so an agent's mentions become links. */
+  const cellIds = $derived(new Set([...cells.map((c) => c.id), ...variables.map((v) => v.id)]));
   let sidebar = $state(true);
   let fileMenu = $state(false);
   let barH = $state(0);
@@ -296,8 +302,8 @@
       {/if}
     </div>
     {#if doc}
-      <button class:agents-on={agentsOn} onclick={() => (modal = "agents")} title="Let AI agents on this computer use this document">
-        {#if agentsOn}<span class="dot" aria-hidden="true"></span>{/if}Agents
+      <button class:agents-on={agentsOn || agentPanel} aria-pressed={agentPanel} onclick={() => (agentPanel = !agentPanel)} title="Work with an AI agent on this document">
+        {#if agentsOn}<span class="dot" aria-hidden="true" title="Agents outside Cruncha can use this document"></span>{/if}Agent
       </button>
       <button onclick={() => (modal = "doc")}>Document settings</button>
     {/if}
@@ -323,7 +329,7 @@
   {/if}
 
   {#if doc}
-    <div class="main" class:nosidebar={!sidebar}>
+    <div class="main" class:nosidebar={!sidebar} class:withagent={agentPanel}>
       {#if sidebar}
         <Sidebar
           {outline}
@@ -399,6 +405,14 @@
           />
         </div>
       </main>
+      {#if agentPanel}
+        <AgentPanel
+          {cellIds}
+          onjumpcell={(id) => editor?.jumpToCell(id)}
+          onclose={() => (agentPanel = false)}
+          onexternal={() => (modal = "agents")}
+        />
+      {/if}
     </div>
   {:else}
     <div class="welcome">
@@ -475,6 +489,8 @@
   .notice span:first-child { flex: 1; }
   .main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
   .main.nosidebar { grid-template-columns: 1fr; }
+  .main.withagent { grid-template-columns: 300px 1fr minmax(320px, 400px); }
+  .main.nosidebar.withagent { grid-template-columns: 1fr minmax(320px, 400px); }
   /* Layers: the document is its own stacking context, so its flyouts (block menu, z 5) stay
      under the sticky version bar (z 10); app menus (z 20) and dialogs (Modal, z 30) are above it. */
   main { overflow: auto; min-width: 0; background: var(--bg); isolation: isolate; }

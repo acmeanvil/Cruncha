@@ -19,6 +19,8 @@ cruncha-graph = { path = "../../crates/cruncha-graph" }
 cruncha-kernel-py = { path = "../../crates/cruncha-kernel-py" }
 cruncha-report = { path = "../../crates/cruncha-report" }
 cruncha-mcp = { path = "../../crates/cruncha-mcp" }
+cruncha-acp = { path = "../../crates/cruncha-acp" }
+futures = "0.3"
 sha2 = "0.10"
 base64 = "0.22"
 tauri = { version = "2", features = [] }

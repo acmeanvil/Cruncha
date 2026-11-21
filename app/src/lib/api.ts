@@ -57,6 +57,70 @@ export interface ReportSettings {
   options: ReportOptions;
 }
 
+/** An agent the panel can start (ACP; Claude Code, Codex, …). */
+export interface AgentDef {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  note: string;
+}
+
+export type ToolOutput =
+  | { Text: string }
+  | { Diff: { path: string; old_text: string | null; new_text: string } }
+  | { Terminal: string };
+
+export type AgentEntry =
+  | { type: "user"; text: string }
+  | { type: "agent"; text: string }
+  | { type: "thought"; text: string }
+  | { type: "tool"; id: string; title: string; kind: string; status: "pending" | "running" | "done" | "failed"; output: ToolOutput[] }
+  | { type: "notice"; text: string; error: boolean };
+
+export interface PermissionView {
+  id: number;
+  toolCallId: string;
+  title: string;
+  options: { id: string; label: string; kind: "allowOnce" | "allowAlways" | "rejectOnce" | "rejectAlways" }[];
+}
+
+export interface ConfigOption {
+  id: string;
+  name: string;
+  category: "Model" | "Mode" | "Other";
+  current: string;
+  choices: { value: string; name: string; description: string | null; group: string | null }[];
+}
+
+export interface PanelView {
+  agentId: string | null;
+  agentName: string | null;
+  agentVersion: string | null;
+  /** An agent process is running (starting, ready or busy). */
+  running: boolean;
+  ready: boolean;
+  busy: boolean;
+  entries: AgentEntry[];
+  plan: { content: string; status: "Pending" | "Active" | "Done" }[];
+  permissions: PermissionView[];
+  options: ConfigOption[];
+  used: number;
+  size: number;
+  totals: { model: string | null; input_tokens: number; output_tokens: number; cache_read_tokens: number; requests: number } | null;
+  conversationId: string | null;
+}
+
+export interface ConversationSummary {
+  id: string;
+  agent: string;
+  startedMs: number;
+  updatedMs: number;
+  title: string;
+  turns: number;
+  version: number;
+}
+
 /** The MCP server agents on this computer connect to (while allowed). */
 export interface AgentServerView {
   url: string;
@@ -287,6 +351,16 @@ export const api = {
   agentServerStatus: () => invoke<AgentServerView | null>("agent_server_status"),
   agentServerStart: () => invoke<AgentServerView>("agent_server_start"),
   agentServerStop: () => invoke<void>("agent_server_stop"),
+  agentCatalog: () => invoke<AgentDef[]>("agent_catalog"),
+  agentPanelView: () => invoke<PanelView>("agent_panel_view"),
+  agentStart: (agentId: string) => invoke<PanelView>("agent_start", { agentId }),
+  agentPrompt: (text: string) => invoke<PanelView>("agent_prompt", { text }),
+  agentCancel: () => invoke<PanelView>("agent_cancel"),
+  agentStop: () => invoke<PanelView>("agent_stop"),
+  agentSetOption: (id: string, value: string) => invoke<void>("agent_set_option", { id, value }),
+  agentPermission: (id: number, option: string | null) => invoke<PanelView>("agent_permission", { id, option }),
+  agentConversations: () => invoke<ConversationSummary[]>("agent_conversations"),
+  agentConversation: (id: string) => invoke<{ summary: ConversationSummary; entries: AgentEntry[] }>("agent_conversation", { id }),
   forgetRecent: (path: string) => invoke<void>("forget_recent", { path }),
   setDocumentRetention: (policy: Retention | null) =>
     invoke<DocInfo>("set_document_retention", { policy }),

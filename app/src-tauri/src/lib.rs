@@ -9,6 +9,7 @@
 //! Agents (ADR-0009): `agent_server_start` serves the open document to agents on this
 //! computer through `cruncha-mcp` (127.0.0.1, with a token), until `agent_server_stop`.
 
+mod agent_panel;
 mod agents;
 mod engine;
 mod python;
@@ -57,6 +58,126 @@ async fn agent_server_start(
     Ok(view)
 }
 
+/// The in-app agent panel for the open document.
+type PanelState = std::sync::Arc<Mutex<agent_panel::Panel>>;
+
+/// Cruncha's skills: `CRUNCHA_SKILLS_DIR`, the bundled resources, or the repository's `skills/`.
+fn skills_dir(app: &AppHandle) -> PathBuf {
+    if let Some(d) = std::env::var_os("CRUNCHA_SKILLS_DIR") {
+        return d.into();
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        let d = res.join("skills");
+        if d.join("cruncha-core").is_dir() {
+            return d;
+        }
+    }
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../skills"))
+}
+
+#[tauri::command]
+fn agent_catalog() -> Vec<agent_panel::AgentDef> {
+    agent_panel::catalog()
+}
+
+#[tauri::command]
+async fn agent_panel_view(p: State<'_, PanelState>) -> Result<agent_panel::PanelView> {
+    Ok(p.lock().await.view())
+}
+
+/// Start an agent on the open document, in the panel.
+#[tauri::command]
+async fn agent_start(
+    agent_id: String,
+    app: AppHandle,
+    s: State<'_, Shared>,
+    p: State<'_, PanelState>,
+) -> Result<agent_panel::PanelView> {
+    let agent = agent_panel::catalog()
+        .into_iter()
+        .find(|a| a.id == agent_id)
+        .ok_or_else(|| format!("unknown agent {agent_id}"))?;
+    let (doc_id, version) = {
+        let s = s.lock().await;
+        let info = s.info().await?;
+        (info.id, info.version)
+    };
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone()))
+        .await
+        .map_err(|e| format!("couldn't start the agent server: {e}"))?;
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let panel = p.inner().clone();
+    let (generation, events) = panel
+        .lock()
+        .await
+        .start(&agent, &doc_id, version, &data, &skills_dir(&app), server)?;
+    let handle = app.clone();
+    tauri::async_runtime::spawn(agent_panel::pump(panel.clone(), generation, events, move |view| {
+        let _ = handle.emit("agent-panel", view);
+    }));
+    Ok(panel.lock().await.view())
+}
+
+#[tauri::command]
+async fn agent_prompt(text: String, p: State<'_, PanelState>) -> Result<agent_panel::PanelView> {
+    let mut p = p.lock().await;
+    p.prompt(text)?;
+    Ok(p.view())
+}
+
+#[tauri::command]
+async fn agent_cancel(p: State<'_, PanelState>) -> Result<agent_panel::PanelView> {
+    let mut p = p.lock().await;
+    p.cancel();
+    Ok(p.view())
+}
+
+#[tauri::command]
+async fn agent_stop(p: State<'_, PanelState>) -> Result<agent_panel::PanelView> {
+    let mut p = p.lock().await;
+    p.stop();
+    Ok(p.view())
+}
+
+#[tauri::command]
+async fn agent_set_option(id: String, value: String, p: State<'_, PanelState>) -> Result<()> {
+    p.lock().await.set_option(id, value);
+    Ok(())
+}
+
+/// Answer a permission prompt with an option id, or `None` to cancel it.
+#[tauri::command]
+async fn agent_permission(
+    id: u64,
+    option: Option<String>,
+    p: State<'_, PanelState>,
+) -> Result<agent_panel::PanelView> {
+    let mut p = p.lock().await;
+    p.answer(id, option);
+    Ok(p.view())
+}
+
+#[tauri::command]
+async fn agent_conversations(
+    app: AppHandle,
+    s: State<'_, Shared>,
+) -> Result<Vec<agent_panel::ConversationSummary>> {
+    let doc_id = s.lock().await.info().await?.id;
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(agent_panel::conversations(&data, &doc_id))
+}
+
+#[tauri::command]
+async fn agent_conversation(
+    id: String,
+    app: AppHandle,
+    s: State<'_, Shared>,
+) -> Result<serde_json::Value> {
+    let doc_id = s.lock().await.info().await?.id;
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    agent_panel::conversation(&data, &doc_id, &id)
+}
+
 #[tauri::command]
 async fn agent_server_stop(a: State<'_, AgentServer>) -> Result<()> {
     if let Some(server) = a.0.lock().await.take() {
@@ -67,12 +188,16 @@ async fn agent_server_stop(a: State<'_, AgentServer>) -> Result<()> {
 type Result<T> = session::Result<T>;
 
 #[tauri::command]
-async fn open_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
+async fn open_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
+    // An agent works on one document: a different one stops it.
+    p.lock().await.stop();
     s.lock().await.open(&path).await
 }
 
 #[tauri::command]
-async fn create_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
+async fn create_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
+    // An agent works on one document: a different one stops it.
+    p.lock().await.stop();
     s.lock().await.create(&path).await
 }
 
@@ -106,12 +231,18 @@ async fn preview_calc(source: String, s: State<'_, Shared>) -> Result<CellResult
 }
 
 #[tauri::command]
-async fn create_sample_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
+async fn create_sample_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
+    // An agent works on one document: a different one stops it.
+    p.lock().await.stop();
     s.lock().await.create_sample(&path).await
 }
 
 #[tauri::command]
-async fn close_document(s: State<'_, Shared>) -> Result<Option<PruneView>> {
+async fn close_document(
+    s: State<'_, Shared>,
+    p: State<'_, PanelState>,
+) -> Result<Option<PruneView>> {
+    p.lock().await.stop();
     Ok(s.lock().await.close().await)
 }
 
@@ -342,6 +473,7 @@ pub fn run() {
             });
             app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
             app.manage(AgentServer::default());
+            app.manage::<PanelState>(Default::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -377,6 +509,16 @@ pub fn run() {
             agent_server_status,
             agent_server_start,
             agent_server_stop,
+            agent_catalog,
+            agent_panel_view,
+            agent_start,
+            agent_prompt,
+            agent_cancel,
+            agent_stop,
+            agent_set_option,
+            agent_permission,
+            agent_conversations,
+            agent_conversation,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Cruncha")
