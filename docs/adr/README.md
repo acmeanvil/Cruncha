@@ -21,6 +21,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0015](0015-reports-embedded-typst.md) | Reports are typeset by an embedded Typst, from the evaluated document | Proposed |
 | [0016](0016-agent-proposals-table.md) | Agent proposals live in a `proposals/` table, applied by a human's commit (supersedes design 02 D3) | Accepted |
 | [0017](0017-interactive-figures.md) | Interactive figures are JSON specs keyed by MIME type, drawn by sandboxed renderers (refines 0005) | Proposed |
+| [0018](0018-results-table.md) | Code-cell results are kept in a `results/` table, keyed by what produced them | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

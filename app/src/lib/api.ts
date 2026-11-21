@@ -473,6 +473,8 @@ export const api = {
     invoke<Prefs>("connection_add", { provider, name, baseUrl, key }),
   connectionSetKey: (id: string, key: string) => invoke<void>("connection_set_key", { id, key }),
   connectionRemove: (id: string) => invoke<Prefs>("connection_remove", { id }),
+  /** Start an agent briefly to list its models; they are remembered in the prefs returned. */
+  agentModels: (agentId: string) => invoke<Prefs>("agent_models", { agentId }),
   documentSettings: () => invoke<DocumentSettings>("document_settings"),
   setDocumentSettings: (settings: DocumentSettings) => invoke<CommitView>("set_document_settings", { settings }),
   setDocumentRetention: (policy: Retention | null) =>

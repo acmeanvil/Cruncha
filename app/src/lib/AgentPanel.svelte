@@ -13,6 +13,7 @@
     NO_AGENT_SETTINGS,
     type AgentDef,
     type ConfigOption,
+    type KnownModel,
     type AgentEntry,
     type ConversationSummary,
     type PanelView,
@@ -34,6 +35,38 @@
     /** Open Settings at a section (`agents`, `external`). */
     onsettings: (section: "agents" | "external") => void;
   } = $props();
+
+  /** Models each agent offered (from Settings), and the one to start with. */
+  let known = $state<Record<string, KnownModel[]>>({});
+  let startModel = $state("");
+  let loadingModels = $state(false);
+
+  async function refreshKnown() {
+    const prefs = await api.getPrefs().catch(() => null);
+    const agents = prefs?.agents ?? NO_AGENT_SETTINGS;
+    known = Object.fromEntries(Object.entries(agents.agents).map(([id, p]) => [id, p.knownModels ?? []]));
+    startModel = agents.agents[choice]?.model ?? "";
+  }
+
+  async function loadModels() {
+    loadingModels = true;
+    await act(async () => {
+      await api.agentModels(choice);
+      await refreshKnown();
+    });
+    loadingModels = false;
+  }
+
+  /** Remember the model picked for this agent (the same setting as in Settings). */
+  async function pickModel(model: string) {
+    startModel = model;
+    await act(async () => {
+      const prefs = await api.getPrefs();
+      const agents = prefs.agents ?? NO_AGENT_SETTINGS;
+      const pref = { ...NO_AGENT_PREF, ...agents.agents[choice], model: model || null };
+      await api.setPrefs({ ...prefs, agents: { ...agents, agents: { ...agents.agents, [choice]: pref } } });
+    });
+  }
 
   /** The model to select once the agent that just started offers its menus (Settings → Agents). */
   let pendingModel: { agent: string; model: string } | null = null;
@@ -67,6 +100,7 @@
   let view = $state<PanelView | null>(null);
   let catalog = $state<AgentDef[]>([]);
   let choice = $state("claude");
+  const choiceModels = $derived(known[choice] ?? []);
   let prompt = $state("");
   let error = $state<string | null>(null);
   let scroller = $state<HTMLElement | null>(null);
@@ -94,6 +128,7 @@
           const pick = [preferred, saved].find((id) => id && catalog.some((a) => a.id === id));
           if (pick) choice = pick;
         }
+        await refreshKnown();
       } catch (e) {
         error = String(e);
       }
@@ -371,11 +406,30 @@
       {:else}
         <div class="start">
           <label for="agent-choice" class="small muted">Agent</label>
-          <select id="agent-choice" bind:value={choice}>
+          <select id="agent-choice" bind:value={choice} onchange={() => void refreshKnown()}>
             {#each catalog as a (a.id)}
               <option value={a.id}>{a.name}</option>
             {/each}
           </select>
+          <label for="agent-model" class="small muted">Model</label>
+          <div class="modelpick">
+            {#if choiceModels.length}
+              <select id="agent-model" value={startModel} onchange={(e) => void pickModel((e.currentTarget as HTMLSelectElement).value)}>
+                <option value="">The agent's default</option>
+                {#each choiceModels as m (m.value)}
+                  <option value={m.value}>{m.group ? `${m.group} · ` : ""}{m.name}</option>
+                {/each}
+                {#if startModel && !choiceModels.some((m) => m.value === startModel)}
+                  <option value={startModel}>{startModel}</option>
+                {/if}
+              </select>
+            {:else}
+              <span class="small muted">{startModel || "The agent's default"}</span>
+            {/if}
+            <button class="link small" disabled={loadingModels} onclick={() => void loadModels()}>
+              {loadingModels ? "Asking the agent…" : choiceModels.length ? "Refresh" : "Load models"}
+            </button>
+          </div>
           <button class="primary" onclick={start}>Start</button>
           <p class="small muted">
             {catalog.find((a) => a.id === choice)?.note ?? ""}. The adapters run with <code>npx</code> (Node.js).
@@ -442,7 +496,10 @@
   .prompt { border-top: 1px solid var(--border); padding: 8px 10px; }
   .prompt textarea { width: 100%; resize: vertical; font: inherit; min-height: 3.2em; }
   .row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-  .start { border-top: 1px solid var(--border); padding: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 6px 8px; align-items: center; }
+  .start { border-top: 1px solid var(--border); padding: 10px; display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
+  .start > .primary { grid-column: 2; justify-self: end; }
+  .modelpick { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .modelpick select { flex: 1; min-width: 0; }
   .start p { grid-column: 1 / -1; margin: 2px 0 0; }
   .reading { padding: 6px 10px; background: var(--sunken); border-bottom: 1px solid var(--border); }
   .past { flex: 1; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }

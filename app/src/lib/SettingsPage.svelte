@@ -134,6 +134,27 @@
   }
 
   const pref = $derived({ ...NO_AGENT_PREF, ...agents.agents[editing] });
+  /** Typing a model id instead of picking one. */
+  let typing = $state(false);
+  /** The agent whose models are being loaded. */
+  let loading = $state<string | null>(null);
+
+  async function loadModels(id: string) {
+    loading = id;
+    error = null;
+    clearTimeout(timer);
+    try {
+      if (timer) await api.setPrefs($state.snapshot(prefs)); // don't lose an unsaved change
+      const next = await api.agentModels(id);
+      prefs = next;
+      onsaved(next);
+      typing = false;
+    } catch (e) {
+      error = `Couldn't load the models: ${e}`;
+    } finally {
+      loading = null;
+    }
+  }
   const editingDef = $derived(catalog.find((a) => a.id === editing));
   const BUILTIN = "looking-glass";
   /** Connections this agent can run on (an adapter only takes its own provider's key). */
@@ -280,7 +301,7 @@
                 aria-label="Make {a.name} the default"
                 onclick={() => setAgents({ ...agents, defaultAgent: a.id })}
               ></button>
-              <button class="name" onclick={() => (editing = a.id)}>
+              <button class="name" onclick={() => ((editing = a.id), (typing = false))}>
                 <span>{a.name}</span>
                 <span class="small muted">{a.note}</span>
               </button>
@@ -315,38 +336,55 @@
               </div>
               <label for="agent-model">Model</label>
               <div>
-                {#if pref.knownModels.length}
-                  <select
-                    id="agent-model"
-                    value={pref.model ?? ""}
-                    onchange={(e) => setPref(editing, { model: (e.currentTarget as HTMLSelectElement).value || null })}
-                  >
-                    <option value="">The agent's default</option>
-                    {#each modelGroups as [group, models] (group)}
-                      {#if group}
-                        <optgroup label={group}>
+                <div class="model">
+                  {#if pref.knownModels.length && !typing}
+                    <select
+                      id="agent-model"
+                      value={pref.model ?? ""}
+                      onchange={(e) => {
+                        const v = (e.currentTarget as HTMLSelectElement).value;
+                        if (v === "\u0000other") typing = true;
+                        else setPref(editing, { model: v || null });
+                      }}
+                    >
+                      <option value="">The agent's default</option>
+                      {#each modelGroups as [group, models] (group)}
+                        {#if group}
+                          <optgroup label={group}>
+                            {#each models as m (m.value)}<option value={m.value}>{m.name}</option>{/each}
+                          </optgroup>
+                        {:else}
                           {#each models as m (m.value)}<option value={m.value}>{m.name}</option>{/each}
-                        </optgroup>
-                      {:else}
-                        {#each models as m (m.value)}<option value={m.value}>{m.name}</option>{/each}
+                        {/if}
+                      {/each}
+                      {#if pref.model && !pref.knownModels.some((m) => m.value === pref.model)}
+                        <option value={pref.model}>{pref.model}</option>
                       {/if}
-                    {/each}
-                    {#if pref.model && !pref.knownModels.some((m) => m.value === pref.model)}
-                      <option value={pref.model}>{pref.model}</option>
-                    {/if}
-                  </select>
-                {:else}
-                  <input
-                    id="agent-model"
-                    value={pref.model ?? ""}
-                    placeholder="The agent's default"
-                    onchange={(e) => setPref(editing, { model: (e.currentTarget as HTMLInputElement).value.trim() || null })}
-                  />
-                {/if}
+                      <option value={"\u0000other"}>Another model id…</option>
+                    </select>
+                  {:else}
+                    <input
+                      id="agent-model"
+                      value={pref.model ?? ""}
+                      placeholder="The agent's default, or a model id"
+                      onchange={(e) => {
+                        setPref(editing, { model: (e.currentTarget as HTMLInputElement).value.trim() || null });
+                        typing = false;
+                      }}
+                    />
+                  {/if}
+                  <button onclick={() => void loadModels(editing)} disabled={loading === editing}>
+                    {loading === editing ? "Asking the agent…" : pref.knownModels.length ? "Refresh" : "Load models"}
+                  </button>
+                </div>
                 <p class="hint">
-                  {pref.knownModels.length
-                    ? "Selected when a session starts; the panel's menu changes it for one session."
-                    : "Start this agent once in the Agent panel and its models appear here. Or type a model id."}
+                  {#if loading === editing}
+                    Starting {editingDef.name} briefly to ask which models it offers (the first time, npx may download it).
+                  {:else if pref.knownModels.length}
+                    {pref.knownModels.length} models. Selected when a session starts; the panel's menu changes it for one session.
+                  {:else}
+                    Load models starts the agent briefly and asks which models it offers (with the login or connection above).
+                  {/if}
                 </p>
               </div>
             </div>
@@ -549,6 +587,9 @@
   .fields { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; align-items: start; }
   .fields > label { padding-top: 5px; }
   .fields input:not([type="color"]), .fields select { width: 100%; max-width: 420px; }
+  .model { display: flex; gap: 8px; align-items: center; max-width: 560px; }
+  .model select, .model input { flex: 1; min-width: 0; }
+  .model button { flex: none; }
   .right { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
   th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 6px 10px; }

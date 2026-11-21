@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use cruncha_acp::{
-    AgentHandle, AgentSpec, Command, ConfigOption, Event, McpServerSpec, PermissionKind, PermissionReply, PlanItem,
+    AgentHandle, AgentSpec, Command, ConfigCategory, ConfigOption, Event, McpServerSpec, PermissionKind, PermissionReply, PlanItem,
     StopReason, ToolKind, ToolOutput, ToolStatus, UsageTotals,
 };
 use futures::StreamExt;
@@ -179,6 +179,51 @@ pub fn launch_def(mut def: AgentDef, settings: &AgentSettings) -> AgentDef {
         }
     }
     def
+}
+
+/// Start `def` briefly, without a document, and return the models its session offers (its
+/// `Model` config option), as looking_glass's "Load models" does. The agent is shut down
+/// afterwards. Errors if it exits, fails, or offers no model menu within `timeout`.
+pub async fn probe_models(def: &AgentDef, cwd: &Path, timeout: std::time::Duration) -> Result<Vec<KnownModel>, String> {
+    std::fs::create_dir_all(cwd).map_err(|e| e.to_string())?;
+    let (handle, mut events) = cruncha_acp::connect(AgentSpec {
+        name: def.name.clone(),
+        command: def.command.clone().into(),
+        args: def.args.clone(),
+        env: def.env.clone(),
+        cwd: cwd.to_owned(),
+        resume: None,
+        mcp_servers: vec![],
+    });
+    let wait = async {
+        let mut ready = false;
+        while let Some(ev) = events.next().await {
+            match ev {
+                Event::ConfigOptions(options) => {
+                    if let Some(m) = options.iter().find(|o| o.category == ConfigCategory::Model) {
+                        return Ok(m
+                            .choices
+                            .iter()
+                            .map(|c| KnownModel { value: c.value.clone(), name: c.name.clone(), group: c.group.clone() })
+                            .collect());
+                    }
+                }
+                Event::SessionReady { .. } => ready = true,
+                Event::Error(e) => return Err(e),
+                Event::Disconnected { reason } => {
+                    return Err(reason.unwrap_or_else(|| "the agent exited before offering its models".into()));
+                }
+                _ => {}
+            }
+        }
+        Err(if ready { "the agent offers no model menu".into() } else { "the agent exited".into() })
+    };
+    let out = match tokio::time::timeout(timeout, wait).await {
+        Ok(r) => r,
+        Err(_) => Err("the agent didn't offer its models in time (is it installed and signed in?)".into()),
+    };
+    drop(handle);
+    out
 }
 
 /// `lg-agent` on `PATH`, or in a looking_glass checkout next to this one.
@@ -668,6 +713,25 @@ pub async fn pump<F>(
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn models_are_probed_from_the_demo_agent() {
+        let Some(lg) = looking_glass_agent() else {
+            eprintln!("skipping: lg-agent isn't built");
+            return;
+        };
+        let def = AgentDef {
+            id: BUILTIN_ID.into(),
+            name: "lg".into(),
+            command: lg.display().to_string(),
+            args: vec![],
+            env: BTreeMap::new(),
+            note: String::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let models = probe_models(&def, dir.path(), std::time::Duration::from_secs(30)).await.unwrap();
+        assert!(!models.is_empty(), "the demo agent offers models");
+    }
 
     #[test]
     fn launch_settings_for_the_builtin_agent_and_adapters() {

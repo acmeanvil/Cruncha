@@ -422,6 +422,26 @@ async fn connection_remove(id: String, s: State<'_, Shared>) -> Result<Prefs> {
     Ok(s.prefs().clone())
 }
 
+/// Start an agent briefly to list its models, and remember them for Settings.
+#[tauri::command]
+async fn agent_models(agent_id: String, app: AppHandle, s: State<'_, Shared>) -> Result<Prefs> {
+    let def = agent_panel::catalog()
+        .into_iter()
+        .find(|a| a.id == agent_id)
+        .ok_or_else(|| format!("unknown agent {agent_id}"))?;
+    let settings = s.lock().await.prefs().agents.clone();
+    let def = tauri::async_runtime::spawn_blocking(move || agent_panel::launch_def(def, &settings))
+        .await
+        .map_err(|e| e.to_string())?;
+    let cwd = app.path().app_data_dir().map_err(|e| e.to_string())?.join("agents").join("probe");
+    let models = agent_panel::probe_models(&def, &cwd, std::time::Duration::from_secs(90)).await?;
+    let mut s = s.lock().await;
+    let mut prefs = s.prefs().clone();
+    prefs.agents.agents.entry(agent_id).or_default().known_models = models;
+    s.set_prefs(prefs)?;
+    Ok(s.prefs().clone())
+}
+
 #[tauri::command]
 async fn document_settings(s: State<'_, Shared>) -> Result<session::DocumentSettings> {
     s.lock().await.document_settings().await
@@ -666,6 +686,7 @@ pub fn run() {
             connection_remove,
             document_settings,
             set_document_settings,
+            agent_models,
             set_document_retention,
             retention_preview,
             prune_now,
