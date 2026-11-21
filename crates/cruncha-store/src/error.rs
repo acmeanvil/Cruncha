@@ -32,6 +32,10 @@ pub enum Error {
     RefExists(String),
     #[error("duplicate cell id in one commit: {0}")]
     DuplicateId(String),
+    #[error("no such proposal: {0}")]
+    NoSuchProposal(String),
+    #[error("proposal {id} is {status}, not open")]
+    ProposalDecided { id: String, status: &'static str },
     #[error("corrupt container: {0}")]
     Corrupt(String),
 }

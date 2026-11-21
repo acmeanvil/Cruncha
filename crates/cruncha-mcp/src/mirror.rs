@@ -12,7 +12,7 @@
 //! > ⇒ **M = w L^2 / 8 = 108 kip·ft**
 //! ````
 
-use crate::{CellView, DocSnapshot, ResultView};
+use crate::{CellView, DocSnapshot, ProposalInfo, ResultView};
 
 /// Which cells to render.
 #[derive(Debug, Clone, Default)]
@@ -124,6 +124,47 @@ pub fn result_lines(r: &ResultView) -> String {
         out.push_str(&format!("> ⚠ {w}\n"));
     }
     out
+}
+
+/// A proposal: status, changes and "if accepted" results, for `propose_edit` and `proposals`.
+pub fn proposal_text(p: &ProposalInfo) -> String {
+    let mut out = format!(
+        "## Proposal {} ({}{}) by {}, against version {}\n{}\n",
+        p.id,
+        p.status,
+        if p.stale { ", STALE: a cell changed since" } else { "" },
+        p.proposed_by,
+        p.base_version,
+        p.message
+    );
+    if let Some(v) = p.accepted_version {
+        out.push_str(&format!("Accepted in version {v}.\n"));
+    }
+    if let Some(n) = &p.decision_note {
+        out.push_str(&format!("Reviewer's note: {n}\n"));
+    }
+    out.push_str(&format!("Changes: {}\n", p.changes.join("; ")));
+    if !p.effects.is_empty() {
+        out.push_str("If accepted:\n");
+        for e in &p.effects {
+            let line = |r: &Option<ResultView>, none: &str| match r {
+                None => format!("> {none}\n"),
+                Some(r) => {
+                    let l = result_lines(r);
+                    if l.is_empty() { "> (no result)\n".into() } else { l }
+                }
+            };
+            out.push_str(&format!("- {} ({})\n  now:\n", e.id, e.kind));
+            out.push_str(&indent(&line(&e.before, "(new cell)")));
+            out.push_str("  if accepted:\n");
+            out.push_str(&indent(&line(&e.after, "(deleted)")));
+        }
+    }
+    out
+}
+
+fn indent(s: &str) -> String {
+    s.lines().map(|l| format!("  {l}\n")).collect()
 }
 
 /// A prose cell (a ProseMirror paragraph or heading as JSON) as Markdown.

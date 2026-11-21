@@ -37,6 +37,7 @@
     onoutline,
     onvariables,
     onerror,
+    onproposal,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -48,6 +49,8 @@
     onoutline?: (items: OutlineItem[]) => void;
     onvariables?: (vars: Variable[]) => void;
     onerror?: (message: string) => void;
+    /** A proposal marker was clicked. */
+    onproposal?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -156,6 +159,66 @@
     },
   });
 
+  /** Open proposals in the document (ADR-0016): cells they change (id → label) and cells they
+   *  add after a cell (`null`: at the start). Decorations only, never document content. */
+  type Marks = { touched: Map<string, string>; inserts: { id: string; after: string | null; label: string }[] };
+  let marks: Marks = { touched: new Map(), inserts: [] };
+
+  export function setProposalMarks(m: Marks) {
+    marks = m;
+    view?.dispatch(view.state.tr.setMeta("proposalMarks", true));
+  }
+
+  function insertWidget(label: string) {
+    return () => {
+      const el = document.createElement("button");
+      el.className = "proposed-insert";
+      el.contentEditable = "false";
+      el.textContent = `＋ ${label}`;
+      el.title = "Open the Proposals tab to review it";
+      el.onclick = () => onproposal?.();
+      return el;
+    };
+  }
+
+  const proposalMarks = new Plugin({
+    props: {
+      decorations(state) {
+        if (!marks.touched.size && !marks.inserts.length) return null;
+        const d = state.doc;
+        // An insert after another proposed cell shows with that one's anchor.
+        const byId = new Map(marks.inserts.map((i) => [i.id, i]));
+        const anchor = (after: string | null): string | null => {
+          const seen = new Set<string>();
+          while (after && byId.has(after) && !seen.has(after)) {
+            seen.add(after);
+            after = byId.get(after)!.after;
+          }
+          return after;
+        };
+        const decos: Decoration[] = [];
+        const placed = new Set<string>();
+        d.forEach((n, pos) => {
+          const label = marks.touched.get(n.attrs.id);
+          if (label) decos.push(Decoration.node(pos, pos + n.nodeSize, { class: "proposed", "data-proposal": label }));
+          marks.inserts.forEach((ins, i) => {
+            if (anchor(ins.after) === n.attrs.id) {
+              placed.add(ins.id);
+              decos.push(Decoration.widget(pos + n.nodeSize, insertWidget(ins.label), { side: i - 1000, key: ins.id }));
+            }
+          });
+        });
+        marks.inserts.forEach((ins, i) => {
+          if (placed.has(ins.id)) return;
+          // At the start, or (anchor gone) at the end.
+          const top = anchor(ins.after) === null;
+          decos.push(Decoration.widget(top ? 0 : d.content.size, insertWidget(ins.label), { side: i - 1000, key: ins.id }));
+        });
+        return DecorationSet.create(d, decos);
+      },
+    },
+  });
+
   function sourcesOf(cs: Cell[]) {
     return new Map(cs.map((c) => [c.id, c.source]));
   }
@@ -163,7 +226,7 @@
   function load() {
     const state = EditorState.create({
       doc: docFromCells(cells),
-      plugins: [...editorPlugins(() => void sync.flush(), (id) => void runPython([id])), placeholder],
+      plugins: [...editorPlugins(() => void sync.flush(), (id) => void runPython([id])), placeholder, proposalMarks],
     });
     sync.load(cells);
     store.set(results, sourcesOf(cells));
@@ -427,6 +490,18 @@
   .editor :global(:is(h1, h2, h3, h4, h5, h6)) { font-family: var(--sans); font-weight: 650; letter-spacing: -0.01em; line-height: 1.25; }
   .editor :global(math) { font-size: 1.08em; }
   .editor :global(.ProseMirror > *) { position: relative; }
+  /* Open proposals (ADR-0016): a bar beside changed cells, a button where cells would be added. */
+  .editor :global(.proposed) { box-shadow: -10px 0 0 -7px var(--accent); }
+  .editor :global(.proposed::after) {
+    content: attr(data-proposal); position: absolute; right: 0; top: -0.6em;
+    font: 11px var(--sans); color: var(--accent); background: var(--accent-bg);
+    border-radius: 8px; padding: 0 6px; pointer-events: none;
+  }
+  .editor :global(.proposed-insert) {
+    display: block; width: 100%; text-align: left; margin: 4px 0; padding: 4px 8px;
+    border: 1px dashed var(--accent); border-radius: 6px; background: var(--accent-bg);
+    color: var(--accent); font: 12.5px var(--sans); cursor: pointer;
+  }
   .editor :global(p) { margin: 0.35em 0; }
   /* The standard HTML heading scale, relative to the text size. */
   .editor :global(h1) { font-size: 2em; margin: 0.5em 0 0.3em; }

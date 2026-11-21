@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, ResultView, VersionInfo};
+use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -81,6 +81,36 @@ impl Backend for Fake {
             vec![]
         })
     }
+
+    async fn propose(&self, base_version: Option<u64>, message: String, edits: Vec<Edit>) -> Result<ProposalInfo, String> {
+        if base_version.is_some_and(|v| v < 4) {
+            return Err("cell L changed in version 3, after version 2 that you read; call read_doc again".into());
+        }
+        let Some(Edit::Modify { id, .. }) = edits.first() else { return Err("only modify in the fake".into()) };
+        Ok(ProposalInfo {
+            id: "P1".into(),
+            status: "open".into(),
+            proposed_by: "ai:test".into(),
+            message,
+            base_version: 4,
+            changes: vec![format!("modify {id}")],
+            effects: vec![Effect {
+                id: "M".into(),
+                kind: "calc".into(),
+                before: Some(ResultView { text: "M = w L^2 / 8 = 108 kip·ft".into(), ..Default::default() }),
+                after: Some(ResultView { text: "M = w L^2 / 8 = 75 kip·ft".into(), ..Default::default() }),
+            }],
+            ..Default::default()
+        })
+    }
+
+    async fn proposals(&self) -> Result<Vec<ProposalInfo>, String> {
+        Ok(vec![])
+    }
+
+    async fn withdraw(&self, id: String) -> Result<ProposalInfo, String> {
+        Err(format!("no open proposal {id} of yours"))
+    }
 }
 
 /// reqwest is built without a TLS provider (the server is plain HTTP on 127.0.0.1), but it
@@ -103,7 +133,7 @@ async fn tools_over_http() {
     let client = ().serve(transport).await.expect("MCP handshake");
     let tools = client.list_all_tools().await.unwrap();
     let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
-    for t in ["read_doc", "run", "explain", "check", "history"] {
+    for t in ["read_doc", "run", "explain", "check", "history", "propose_edit", "proposals", "withdraw"] {
         assert!(names.contains(&t.to_string()), "{names:?}");
     }
 
@@ -139,6 +169,18 @@ async fn tools_over_http() {
 
     let run = text(&call("run", serde_json::json!({"cell_ids": ["T", "zzz"]})).await);
     assert!(run.contains("CHECK FAILS") && run.contains("zzz: no such cell"), "{run}");
+
+    let p = text(&call("propose_edit", serde_json::json!({
+        "message": "shorter span", "base_version": 4,
+        "changes": [{"op": "modify", "id": "L", "source": "L = 20 ft"}]
+    })).await);
+    assert!(p.contains("Proposal P1 recorded") && p.contains("modify L"), "{p}");
+    assert!(p.contains("  now:\n  > ⇒ **M = w L^2 / 8 = 108 kip·ft**\n  if accepted:\n  > ⇒ **M = w L^2 / 8 = 75 kip·ft**"), "{p}");
+    let stale = call("propose_edit", serde_json::json!({
+        "message": "x", "base_version": 2, "changes": [{"op": "delete", "id": "L"}]
+    })).await;
+    assert_eq!(stale.is_error, Some(true));
+    assert!(text(&call("proposals", serde_json::json!({})).await).contains("No proposals"));
 
     let bad = call("explain", serde_json::json!({"cell_id": "nope"})).await;
     assert_eq!(bad.is_error, Some(true));

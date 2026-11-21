@@ -8,10 +8,13 @@
 //! Reports (spike S6): `export_report` typesets the latest version to PDF.
 //! Agents (ADR-0009): `agent_server_start` serves the open document to agents on this
 //! computer through `cruncha-mcp` (127.0.0.1, with a token), until `agent_server_stop`.
+//! Their proposals (ADR-0016) are listed by `proposals` and decided by `accept_proposal` /
+//! `reject_proposal`; the `proposals` event says a document's proposals changed.
 
 mod agent_panel;
 mod agents;
 mod engine;
+mod proposals;
 mod python;
 mod report;
 mod session;
@@ -50,7 +53,7 @@ async fn agent_server_start(
     if let Some(server) = slot.as_ref() {
         return Ok(server.into());
     }
-    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone()))
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), "ai:external-agent".into()))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
     let view = (&server).into();
@@ -102,7 +105,7 @@ async fn agent_start(
         let info = s.info().await?;
         (info.id, info.version)
     };
-    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone()))
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), format!("ai:{}", agent.id)))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -453,6 +456,23 @@ fn open_path(path: PathBuf) -> Result<()> {
         .map_err(|e| format!("couldn't open {}: {e}", path.display()))
 }
 
+/// The open document's proposals (ADR-0016), newest first, with "if accepted" results.
+#[tauri::command]
+async fn proposals(s: State<'_, Shared>) -> Result<Vec<proposals::ProposalView>> {
+    s.lock().await.proposals().await
+}
+
+/// Accept a proposal: one commit by the user. `force` accepts a stale one anyway.
+#[tauri::command]
+async fn accept_proposal(id: String, force: bool, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.accept_proposal(&id, force).await
+}
+
+#[tauri::command]
+async fn reject_proposal(id: String, note: String, s: State<'_, Shared>) -> Result<proposals::ProposalView> {
+    s.lock().await.reject_proposal(&id, &note).await
+}
+
 #[tauri::command]
 async fn prune_now(s: State<'_, Shared>) -> Result<Option<PruneView>> {
     s.lock().await.prune_now().await
@@ -470,6 +490,10 @@ pub fn run() {
             let handle = app.handle().clone();
             session.on_results(move |ev| {
                 let _ = handle.emit("results", ev);
+            });
+            let handle = app.handle().clone();
+            session.on_proposals(move |doc_id| {
+                let _ = handle.emit("proposals", doc_id);
             });
             app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
             app.manage(AgentServer::default());
@@ -496,6 +520,9 @@ pub fn run() {
             set_document_retention,
             retention_preview,
             prune_now,
+            proposals,
+            accept_proposal,
+            reject_proposal,
             python_status,
             setup_python,
             trust_document,

@@ -6,9 +6,10 @@
 //! this crate turns it into MCP tools ([`tools::CrunchaTools`]) and serves them over
 //! Streamable HTTP on 127.0.0.1 with a bearer token ([`http::serve`]).
 //!
-//! The tools follow `skills/cruncha-core`. This first phase has the read tools:
-//! `read_doc`, `explain`, `check`, `history`, and `run` (which returns the engine's current
-//! results). `propose_edit` comes with proposals (a later phase).
+//! The tools follow `skills/cruncha-core`: the read tools `read_doc`, `explain`, `check`,
+//! `history` and `run` (the engine's current results), and `propose_edit`, `proposals` and
+//! `withdraw` (ADR-0016). Agents never write the document: a proposal waits for a human to
+//! accept or reject it in the app.
 //!
 //! The engine computes every number: tools return the engine's results verbatim, never a
 //! value worked out here.
@@ -20,7 +21,8 @@ pub mod tools;
 use std::collections::HashMap;
 use std::future::Future;
 
-use serde::Serialize;
+use rmcp::schemars;
+use serde::{Deserialize, Serialize};
 
 /// One cell, as agents see it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -93,6 +95,67 @@ pub struct CellChange {
     pub after: Option<String>,
 }
 
+/// One change an agent proposes (`propose_edit`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "lowercase")]
+pub enum Edit {
+    /// A new cell after the cell `after` (omit `after` for the start of the document). To add
+    /// several cells in a row, give each later one `after` = the id the reply gave the one
+    /// before it, or list them in reverse order with the same `after`.
+    Insert {
+        #[serde(default)]
+        after: Option<String>,
+        /// `calc`, `python` or `prose`.
+        kind: String,
+        /// A calc statement, Python code, or one paragraph of prose (`## Title` for a heading).
+        source: String,
+        /// For calcs: what the defined quantity is (one line).
+        #[serde(default)]
+        description: Option<String>,
+    },
+    /// New source and/or description for an existing cell.
+    Modify {
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    /// Remove a cell.
+    Delete { id: String },
+}
+
+/// A cell whose result a proposal changes: before (now) and after (if accepted).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Effect {
+    pub id: String,
+    pub kind: String,
+    /// `None`: a new cell.
+    pub before: Option<ResultView>,
+    /// `None`: the cell is deleted.
+    pub after: Option<ResultView>,
+}
+
+/// A proposal, as the agent sees it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ProposalInfo {
+    pub id: String,
+    /// `open`, `accepted`, `rejected`, `withdrawn`.
+    pub status: String,
+    pub proposed_by: String,
+    pub message: String,
+    pub base_version: u64,
+    /// The cells it touches, as `op id` (`insert 01J…`, `modify 01J…`).
+    pub changes: Vec<String>,
+    /// Some cell changed since the proposal was made.
+    pub stale: bool,
+    /// The reviewer's note on a decision (a rejection's reason).
+    pub decision_note: Option<String>,
+    pub accepted_version: Option<u64>,
+    /// "If accepted" results (open proposals).
+    pub effects: Vec<Effect>,
+}
+
 /// What the app provides. Every method acts on the document open in the app; an error
 /// (such as "no document is open") is returned to the agent as the tool's error.
 pub trait Backend: Clone + Send + Sync + 'static {
@@ -101,4 +164,16 @@ pub trait Backend: Clone + Send + Sync + 'static {
     fn snapshot(&self, wait: bool) -> impl Future<Output = Result<DocSnapshot, String>> + Send;
     fn history(&self) -> impl Future<Output = Result<Vec<VersionInfo>, String>> + Send;
     fn diff(&self, from: u64, to: u64) -> impl Future<Output = Result<Vec<CellChange>, String>> + Send;
+    /// Record a proposal by this server's agent against the latest version. `base_version`
+    /// is the version the agent read; cells changed after it are refused.
+    fn propose(
+        &self,
+        base_version: Option<u64>,
+        message: String,
+        edits: Vec<Edit>,
+    ) -> impl Future<Output = Result<ProposalInfo, String>> + Send;
+    /// The document's open proposals and this agent's decided ones (newest last).
+    fn proposals(&self) -> impl Future<Output = Result<Vec<ProposalInfo>, String>> + Send;
+    /// Withdraw one of this agent's open proposals.
+    fn withdraw(&self, id: String) -> impl Future<Output = Result<ProposalInfo, String>> + Send;
 }

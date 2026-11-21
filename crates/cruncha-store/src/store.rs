@@ -9,7 +9,9 @@
 //! ├── refs/          Delta table: named versions (append-only)
 //! ├── pins/          Delta table: copies of named versions whose history was pruned (ADR-0011;
 //! │                  created by the first prune that needs it)
-//! └── blobs/         large cell sources, zstd-compressed, named by SHA-256 (ADR-0013)
+//! ├── blobs/         large cell sources, zstd-compressed, named by SHA-256 (ADR-0013)
+//! └── proposals/     Delta table: agents' proposed changes and their decisions (ADR-0016;
+//!                    created by the first proposal)
 //! ```
 //!
 //! Every [`Store::commit`] is one atomic Delta transaction, so there is no "save": a crash
@@ -27,7 +29,7 @@
 //! History is kept forever unless the document has a retention policy (ADR-0011), and even then
 //! only [`Store::prune`] deletes anything, only after new edits, and never by the calendar.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -46,13 +48,16 @@ use url::Url;
 use crate::blobs::{self, Blobs};
 use crate::cell::{Cell, CellDiff, Change};
 use crate::error::{Error, Result};
+use crate::proposals::{self, Proposal, ProposalStatus, ProposedChange};
 use crate::retention::{self, LogEntry, Retention};
 use crate::schema::{self, Ref, SOURCE_HASH_COLUMN};
 
 pub const FORMAT: &str = "cruncha-container";
 /// 1: `doc/` is one row per cell, updated by MERGE. 2: `doc/` is a revision log (ADR-0010).
 /// 3: large sources live in `blobs/`, referenced by `source_hash` (ADR-0013).
-pub const FORMAT_VERSION: u32 = 3;
+/// 4: agents' proposals may live in `proposals/` (ADR-0016); an older Cruncha would ignore
+/// them, so it must refuse the container.
+pub const FORMAT_VERSION: u32 = 4;
 /// Squash the revision log after this many commits (spike S3b: 50 balances commit latency,
 /// read latency and growth).
 pub const DEFAULT_SQUASH_EVERY: u64 = 50;
@@ -70,6 +75,8 @@ pub const META_AT: &str = "cruncha.at";
 pub const META_PRUNED_BEFORE: &str = "cruncha.prunedBefore";
 /// Bytes of new blobs the commit's rows reference (counted toward the size limit, ADR-0011).
 pub const META_BLOB_BYTES: &str = "cruncha.blobBytes";
+/// On the commit that accepted a proposal: its id (ADR-0016).
+pub const META_PROPOSAL: &str = "cruncha.proposal";
 
 /// Table properties for every container table.
 ///
@@ -142,6 +149,8 @@ pub struct PruneReport {
     pub log_files_deleted: usize,
     /// Blobs no remaining version or pin references.
     pub blobs_deleted: usize,
+    /// Decided proposals older than the cutoff (ADR-0016).
+    pub proposals_deleted: usize,
 }
 
 /// What [`Store::prune`] would do under a policy, without deleting anything.
@@ -177,6 +186,8 @@ pub struct Store {
     refs: DeltaTable,
     /// `pins/`, once a prune has created it.
     pins: Option<DeltaTable>,
+    /// `proposals/`, once an agent has proposed something.
+    proposals: Option<DeltaTable>,
     /// Added to the clock for Cruncha's own timestamps. Tests use it to simulate time passing.
     clock_offset_us: i64,
     /// Out-of-line sources.
@@ -355,6 +366,7 @@ impl Store {
             doc,
             refs,
             pins: None,
+            proposals: None,
             clock_offset_us: 0,
             blob_threshold: blobs::DEFAULT_BLOB_THRESHOLD,
             since_squash: 0,
@@ -387,6 +399,12 @@ impl Store {
         } else {
             None
         };
+        let proposals_dir = root.join("proposals");
+        let proposals = if proposals_dir.join("_delta_log").is_dir() {
+            Some(deltalake::open_table(dir_url(&proposals_dir)?).await?)
+        } else {
+            None
+        };
         // Every append adds one data file and a squash leaves at most one, so the live file
         // count recovers the squash counter across sessions.
         let since_squash = live_files(&doc)?.saturating_sub(1);
@@ -398,6 +416,7 @@ impl Store {
             doc,
             refs,
             pins,
+            proposals,
             clock_offset_us: 0,
             since_squash,
             squash_every: DEFAULT_SQUASH_EVERY,
@@ -406,6 +425,7 @@ impl Store {
         if store.manifest.format_version < FORMAT_VERSION {
             store.migrate().await?;
         }
+        store.recover_accepted().await?;
         Ok(store)
     }
 
@@ -992,6 +1012,22 @@ impl Store {
         .map_err(|e| Error::Corrupt(format!("blob scan: {e}")))??;
         let (blobs_deleted, _) = self.blobs.retain(&keep).await?;
 
+        // 6b. Decided proposals older than the cutoff go too (ADR-0016); those accepted into a
+        //     pinned version stay with the pin.
+        let cutoff_us = entries
+            .iter()
+            .find(|e| e.version == cutoff)
+            .map(|e| e.at_ms * 1000)
+            .unwrap_or(i64::MIN);
+        let keep_upto = self
+            .refs()
+            .await?
+            .iter()
+            .filter(|r| r.doc_version < cutoff)
+            .map(|r| r.doc_version)
+            .max();
+        let proposals_deleted = self.prune_proposals(cutoff_us, keep_upto, actor).await?;
+
         // 7. The marker commit, so history shows where it now starts.
         let date = entries
             .iter()
@@ -1010,6 +1046,7 @@ impl Store {
             data_files_deleted: metrics.files_deleted.len(),
             log_files_deleted,
             blobs_deleted,
+            proposals_deleted,
         }))
     }
 
@@ -1068,6 +1105,283 @@ impl Store {
             files_after: live_files(&self.doc)?,
             checkpointed_version: self.version(),
         })
+    }
+}
+
+impl Store {
+    // ---- Proposals (ADR-0016) ----
+
+    /// The revision (`rev`) of every current cell: what a proposal's `base_rev` is checked
+    /// against. Rows written before format 2 count as revision 0.
+    pub async fn cell_revs(&self) -> Result<HashMap<String, u64>> {
+        use deltalake::arrow::array::{Array, Int64Array, StringArray};
+        let current = schema::reduce_log(&scan(&self.doc).await?)?;
+        let ids = current
+            .column_by_name("id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or_else(|| Error::Corrupt("doc table has no id column".into()))?;
+        let revs = current
+            .column_by_name(schema::REV_COLUMN)
+            .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            .ok_or_else(|| Error::Corrupt("doc table has no rev column".into()))?;
+        Ok((0..current.num_rows())
+            .map(|i| {
+                let rev = if revs.is_valid(i) { revs.value(i).max(0) as u64 } else { 0 };
+                (ids.value(i).to_owned(), rev)
+            })
+            .collect())
+    }
+
+    async fn proposal_rows(&self) -> Result<Vec<proposals::Row>> {
+        match &self.proposals {
+            None => Ok(Vec::new()),
+            Some(t) => proposals::batches_to_rows(&scan(t).await?),
+        }
+    }
+
+    /// Every proposal the document has (open and decided), oldest first.
+    pub async fn proposals(&self) -> Result<Vec<Proposal>> {
+        proposals::fold(self.proposal_rows().await?)
+    }
+
+    /// One proposal.
+    pub async fn proposal(&self, id: &str) -> Result<Proposal> {
+        self.proposals()
+            .await?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| Error::NoSuchProposal(id.to_owned()))
+    }
+
+    async fn append_proposal_rows(&mut self, rows: &[proposals::Row], message: &str) -> Result<()> {
+        let actor = rows.first().map(|r| r.actor.clone()).unwrap_or_default();
+        let table = match &self.proposals {
+            Some(t) => t.clone(),
+            None => {
+                let dir = self.root.join("proposals");
+                if dir.join("_delta_log").is_dir() {
+                    deltalake::open_table(dir_url(&dir)?).await?
+                } else {
+                    create_table(&dir, "proposals", &proposals::PROPOSALS_SCHEMA, &actor).await?
+                }
+            }
+        };
+        let table = table
+            .write([proposals::rows_to_batch(rows)?])
+            .with_save_mode(SaveMode::Append)
+            .with_commit_properties(commit_props(
+                CommitKind::Edit,
+                &actor,
+                message,
+                self.now_us(),
+                &[],
+            ))
+            .await?;
+        self.proposals = Some(table);
+        Ok(())
+    }
+
+    /// Record a proposal against the current version. The document itself is unchanged: the
+    /// changes are applied only when a human accepts ([`Store::accept`]). Validation (that
+    /// the cells exist, names and cycles) is the caller's.
+    pub async fn propose(
+        &mut self,
+        changes: Vec<ProposedChange>,
+        message: &str,
+        actor: &str,
+    ) -> Result<Proposal> {
+        let id = ulid::Ulid::generate().to_string();
+        let row = proposals::Row {
+            proposal_id: id.clone(),
+            seq: 0,
+            status: ProposalStatus::Open,
+            actor: actor.to_owned(),
+            message: Some(message.to_owned()),
+            base_version: Some(self.version()),
+            changes: Some(serde_json::to_string(&changes)?),
+            at_us: self.now_us(),
+            accepted_version: None,
+        };
+        self.append_proposal_rows(&[row], &format!("propose {id}")).await?;
+        self.proposal(&id).await
+    }
+
+    /// Decide an open proposal without applying it: `Rejected` (by a human) or `Withdrawn`
+    /// (by its agent). `note` is the reason, if any.
+    pub async fn decide(
+        &mut self,
+        id: &str,
+        status: ProposalStatus,
+        actor: &str,
+        note: &str,
+    ) -> Result<Proposal> {
+        if !matches!(status, ProposalStatus::Rejected | ProposalStatus::Withdrawn) {
+            return Err(Error::Corrupt(format!(
+                "decide takes rejected or withdrawn, not {}",
+                status.as_str()
+            )));
+        }
+        let p = self.open_proposal(id).await?;
+        let row = proposals::Row {
+            proposal_id: id.to_owned(),
+            seq: p.seq + 1,
+            status,
+            actor: actor.to_owned(),
+            message: (!note.trim().is_empty()).then(|| note.trim().to_owned()),
+            base_version: None,
+            changes: None,
+            at_us: self.now_us(),
+            accepted_version: None,
+        };
+        self.append_proposal_rows(&[row], &format!("{} {id}", status.as_str()))
+            .await?;
+        self.proposal(id).await
+    }
+
+    async fn open_proposal(&self, id: &str) -> Result<Proposal> {
+        let p = self.proposal(id).await?;
+        if p.status != ProposalStatus::Open {
+            return Err(Error::ProposalDecided {
+                id: id.to_owned(),
+                status: p.status.as_str(),
+            });
+        }
+        Ok(p)
+    }
+
+    /// Accept an open proposal: commit `changes` (the proposal made concrete by the caller:
+    /// order keys, names, provenance `ai:accepted`) as the human `actor`, carrying
+    /// `cruncha.proposal`, then record the decision. Returns the new version.
+    ///
+    /// If the process dies between the two writes, [`Store::open`] finds the commit and
+    /// records the missing decision.
+    pub async fn accept(&mut self, id: &str, changes: &[Change], actor: &str, message: &str) -> Result<u64> {
+        let version = self.commit_for_proposal(id, changes, actor, message).await?;
+        let p = self.proposal(id).await?;
+        self.record_accepted(&p, version, actor, self.now_us()).await?;
+        Ok(version)
+    }
+
+    /// The first half of [`Store::accept`]: the commit alone. Public for crash tests.
+    #[doc(hidden)]
+    pub async fn commit_for_proposal(
+        &mut self,
+        id: &str,
+        changes: &[Change],
+        actor: &str,
+        message: &str,
+    ) -> Result<u64> {
+        self.open_proposal(id).await?;
+        self.commit_with(
+            changes,
+            actor,
+            message,
+            CommitKind::Edit,
+            Some((META_PROPOSAL, json!(id))),
+        )
+        .await
+    }
+
+    async fn record_accepted(&mut self, p: &Proposal, version: u64, actor: &str, at_us: i64) -> Result<()> {
+        let row = proposals::Row {
+            proposal_id: p.id.clone(),
+            seq: p.seq + 1,
+            status: ProposalStatus::Accepted,
+            actor: actor.to_owned(),
+            message: None,
+            base_version: None,
+            changes: None,
+            at_us,
+            accepted_version: Some(version),
+        };
+        self.append_proposal_rows(&[row], &format!("accepted {} in version {version}", p.id))
+            .await
+    }
+
+    /// Finish accepts interrupted between their commit and their decision row: any commit
+    /// carrying `cruncha.proposal` of a proposal still open. Idempotent.
+    async fn recover_accepted(&mut self) -> Result<()> {
+        let open: Vec<Proposal> = self
+            .proposals()
+            .await?
+            .into_iter()
+            .filter(|p| p.status == ProposalStatus::Open)
+            .collect();
+        let Some(from) = open.iter().map(|p| p.base_version).min() else {
+            return Ok(());
+        };
+        let from = from.max(self.earliest_version());
+        let entries = retention::read_log(&self.root.join("doc"), from, self.version()).await?;
+        for e in entries {
+            let Some(id) = e.info.get(META_PROPOSAL).and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(p) = open.iter().find(|p| p.id == id) {
+                let actor = e.info.get(META_ACTOR).and_then(Value::as_str).unwrap_or("system").to_owned();
+                let at = e.info.get(META_AT).and_then(Value::as_i64).unwrap_or(e.at_ms * 1000);
+                self.record_accepted(p, e.version, &actor, at).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Prune step for `proposals/`: drop decided proposals decided before `cutoff_us`, except
+    /// accepted ones that went into a pinned version (`accepted_version <= keep_upto`). Open
+    /// proposals always stay. Returns how many were dropped.
+    async fn prune_proposals(&mut self, cutoff_us: i64, keep_upto: Option<u64>, actor: &str) -> Result<usize> {
+        let Some(table) = self.proposals.clone() else {
+            return Ok(0);
+        };
+        let rows = self.proposal_rows().await?;
+        let drop: HashSet<String> = proposals::fold(rows.clone())?
+            .into_iter()
+            .filter(|p| {
+                p.status != ProposalStatus::Open
+                    && p.decided_at_us.is_some_and(|t| t < cutoff_us)
+                    && !(p.status == ProposalStatus::Accepted
+                        && keep_upto.is_some_and(|k| p.accepted_version.is_some_and(|v| v <= k)))
+            })
+            .map(|p| p.id)
+            .collect();
+        let mut table = table;
+        if !drop.is_empty() {
+            let keep: Vec<proposals::Row> =
+                rows.into_iter().filter(|r| !drop.contains(&r.proposal_id)).collect();
+            table = table
+                .write([proposals::rows_to_batch(&keep)?])
+                .with_save_mode(SaveMode::Overwrite)
+                .with_commit_properties(commit_props(
+                    CommitKind::Maintenance,
+                    actor,
+                    "prune decided proposals",
+                    self.now_us(),
+                    &[],
+                ))
+                .await?;
+        }
+        // The table's rows are its history (each status change is a row), so its older
+        // versions aren't needed: remove every replaced file and the log before the latest
+        // version. Run every time, so an interrupted prune is finished.
+        let latest = table.version().unwrap_or(0);
+        checkpoints::create_checkpoint(&table, None).await?;
+        let now_ms = chrono::Utc::now().timestamp_millis() + 1000;
+        let (table, _) = table
+            .vacuum()
+            .with_mode(VacuumMode::Lite)
+            .with_retention_period(chrono::Duration::zero())
+            .with_enforce_retention_duration(false)
+            .with_clock(Arc::new(FixedClock(now_ms)))
+            .with_commit_properties(commit_props(
+                CommitKind::Maintenance,
+                actor,
+                "vacuum pruned proposals",
+                self.now_us(),
+                &[],
+            ))
+            .await?;
+        checkpoints::cleanup_expired_logs_for(latest, table.log_store().as_ref(), now_ms, None).await?;
+        self.proposals = Some(table);
+        Ok(drop.len())
     }
 }
 

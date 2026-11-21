@@ -30,7 +30,7 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
 
 ## Decision
 
-1. **`cruncha-mcp`** is the *only* way agents touch a document. It is an MCP server inside the engine process and exposes the tools in `skills/cruncha-core`: `read_doc`, `run`, `propose_edit`, `explain`, `check`, `history` and `query_data`. Edits become `ai:proposed` rows (ADR-0003), and agents never write the container directly.
+1. **`cruncha-mcp`** is the *only* way agents touch a document. It is an MCP server inside the engine process and exposes the tools in `skills/cruncha-core`: `read_doc`, `run`, `propose_edit`, `explain`, `check`, `history` and `query_data`. Edits become proposals in the `proposals/` table, applied only by a human's commit (ADR-0016), and agents never write the container directly.
 2. **Port `lg-acp`** into Cruncha's Rust backend (as `cruncha-acp`, keeping the MIT notice), and extend it:
    - pass `cruncha-mcp` in `mcpServers` on `session/new` and `session/load`;
    - **don't advertise `fs.write_text_file` or `terminal`** to agents working on a document;

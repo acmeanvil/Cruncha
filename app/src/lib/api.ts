@@ -245,6 +245,8 @@ export interface CellResult {
   pending?: boolean;
   /** Python cells: run state and output. */
   python?: PyView | null;
+  /** `@test` calcs that evaluated: whether the check holds. */
+  check?: boolean | null;
 }
 
 export type PyState =
@@ -318,6 +320,49 @@ export interface At {
   ref?: string | null;
 }
 
+export type ProposalStatus = "open" | "accepted" | "rejected" | "withdrawn";
+
+/** One change of an agent's proposal (ADR-0016). Sources are the cells' own (prose: ProseMirror JSON). */
+export interface ProposalChange {
+  op: "insert" | "modify" | "delete";
+  id: string;
+  kind: string;
+  /** Inserts: the cell it goes after. */
+  after: string | null;
+  /** The cell's latest source (modify, delete). */
+  before: string | null;
+  /** The proposed source (insert, modify). */
+  source: string | null;
+  descriptionBefore: string | null;
+  description: string | null;
+  /** The cell changed since the agent read it. */
+  stale: boolean;
+}
+
+/** A result the proposal would change: now and if accepted. */
+export interface ProposalEffect {
+  id: string;
+  kind: string;
+  before: CellResult | null;
+  after: CellResult | null;
+}
+
+export interface ProposalView {
+  id: string;
+  status: ProposalStatus;
+  proposedBy: string;
+  message: string;
+  baseVersion: number;
+  createdAtMs: number;
+  decidedBy: string | null;
+  decidedAtMs: number | null;
+  decisionNote: string | null;
+  acceptedVersion: number | null;
+  stale: boolean;
+  changes: ProposalChange[];
+  effects: ProposalEffect[];
+}
+
 export const api = {
   openDocument: (path: string) => invoke<DocInfo>("open_document", { path }),
   createDocument: (path: string) => invoke<DocInfo>("create_document", { path }),
@@ -366,4 +411,8 @@ export const api = {
     invoke<DocInfo>("set_document_retention", { policy }),
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),
   pruneNow: () => invoke<PruneResult | null>("prune_now"),
+  /** The open document's proposals, newest first (open ones with "if accepted" results). */
+  proposals: () => invoke<ProposalView[]>("proposals"),
+  acceptProposal: (id: string, force: boolean) => invoke<CommitView>("accept_proposal", { id, force }),
+  rejectProposal: (id: string, note: string) => invoke<ProposalView>("reject_proposal", { id, note }),
 };

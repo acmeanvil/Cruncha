@@ -19,7 +19,7 @@ History is never rewritten:
 
 - `history(cell_id?, since?)`: the version list, or the versions that touched one cell.
 - `history(diff: {from, to})`: per-cell changes (added, removed, modified), with source and result diffs. `from` and `to` can be version numbers or tag names.
-- `propose_edit(restore: version | snapshot)`: proposes a rollback as a normal proposal, which the user accepts. Restoring adds a new version with the old content (message "restore to version *v*" or "restore to “*name*”").
+- *(Planned, not available yet)* `propose_edit(restore: version | snapshot)`: proposes a rollback as a normal proposal, which the user accepts. For now, tell the user which version or snapshot to restore from the History tab. Restoring adds a new version with the old content (message "restore to version *v*" or "restore to “*name*”").
 - Agents don't take snapshots: a snapshot asserts that a human considers the version good. Suggest one when a check is complete instead.
 
 ## Answering "what changed?"

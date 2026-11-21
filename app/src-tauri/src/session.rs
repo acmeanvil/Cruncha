@@ -18,6 +18,7 @@ use cruncha_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{CellResult, Engine};
+use crate::proposals::{self, ProposalView};
 use crate::report::{self, DocFacts, ReportSettings, ReportStyle};
 use crate::python::{Notify, Python};
 
@@ -252,6 +253,8 @@ pub struct Session {
     worker_dir: PathBuf,
     /// Receives results computed in the background.
     on_results: Option<Arc<dyn Fn(ResultsEvent) + Send + Sync>>,
+    /// Told (with the document id) when proposals change, also when an agent made them.
+    on_proposals: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Session {
@@ -269,6 +272,7 @@ impl Session {
             python_base: std::env::temp_dir().join("cruncha-no-python"),
             worker_dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python")),
             on_results: None,
+            on_proposals: None,
         }
     }
 
@@ -280,6 +284,16 @@ impl Session {
     }
 
     /// Receive results that are computed in the background (after Python cells run).
+    pub fn on_proposals(&mut self, f: impl Fn(String) + Send + Sync + 'static) {
+        self.on_proposals = Some(Arc::new(f));
+    }
+
+    fn proposals_changed(&self) {
+        if let (Some(f), Some(doc)) = (&self.on_proposals, &self.doc) {
+            f(doc.store.manifest().id.clone());
+        }
+    }
+
     pub fn on_results(&mut self, f: impl Fn(ResultsEvent) + Send + Sync + 'static) {
         self.on_results = Some(Arc::new(f));
     }
@@ -579,40 +593,15 @@ impl Session {
     /// A calc cell's `defines` and `reads` are recomputed from its source, so the stored names
     /// are always the evaluator's.
     pub async fn commit(&mut self, changes: Vec<ChangeView>, message: &str) -> Result<CommitView> {
-        // Python sources are scanned by the worker first, so their stored names are its.
-        let python: Vec<Cell> = changes
-            .iter()
-            .filter_map(|c| match c {
-                ChangeView::Upsert { cell } if cell.kind == CellKind::Python => Some(cell.clone()),
-                _ => None,
+        let changes: Vec<Change> = changes
+            .into_iter()
+            .map(|c| match c {
+                ChangeView::Upsert { cell } => Change::Upsert(cell),
+                ChangeView::Delete { id } => Change::Delete(id),
             })
             .collect();
-        self.scan_python(&python).await?;
+        let changes = self.with_names(changes).await?;
         let doc = self.doc_mut()?;
-        let changes: Vec<Change> = {
-            let mut engine = doc.engine.lock().unwrap();
-            changes
-                .into_iter()
-                .map(|c| match c {
-                    ChangeView::Upsert { mut cell } => {
-                        match cell.kind {
-                            CellKind::Calc => {
-                                (cell.defines, cell.reads) = engine.names(&cell.source)
-                            }
-                            CellKind::Python => {
-                                if let Some(n) = engine.py_names(&cell.source) {
-                                    (cell.defines, cell.reads) =
-                                        (n.defines.clone(), n.reads.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                        Change::Upsert(cell)
-                    }
-                    ChangeView::Delete { id } => Change::Delete(id),
-                })
-                .collect()
-        };
         if !changes.is_empty() {
             let message = if message.trim().is_empty() {
                 "edit"
@@ -630,6 +619,201 @@ impl Session {
             info: self.info().await?,
             results,
         })
+    }
+
+    /// Set the stored names of the cells in `changes`: a calc's from its prepared statement,
+    /// a Python cell's from the worker's scan (when Python is set up).
+    async fn with_names(&mut self, changes: Vec<Change>) -> Result<Vec<Change>> {
+        let python: Vec<Cell> = changes
+            .iter()
+            .filter_map(|c| match c {
+                Change::Upsert(cell) if cell.kind == CellKind::Python => Some(cell.clone()),
+                _ => None,
+            })
+            .collect();
+        self.scan_python(&python).await?;
+        let mut engine = self.doc()?.engine.lock().unwrap();
+        Ok(changes
+            .into_iter()
+            .map(|c| match c {
+                Change::Upsert(mut cell) => {
+                    match cell.kind {
+                        CellKind::Calc => (cell.defines, cell.reads) = engine.names(&cell.source),
+                        CellKind::Python => {
+                            if let Some(n) = engine.py_names(&cell.source) {
+                                (cell.defines, cell.reads) = (n.defines.clone(), n.reads.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                    Change::Upsert(cell)
+                }
+                d => d,
+            })
+            .collect())
+    }
+
+    // ---- Proposals (ADR-0016) ----
+
+    /// Every proposal of the open document, newest first. Open ones carry their "if accepted"
+    /// results, evaluated on a scratch copy of the latest version.
+    pub async fn proposals(&mut self) -> Result<Vec<ProposalView>> {
+        let list = self.doc()?.store.proposals().await.map_err(err)?;
+        let cells = self.cells(None).await?;
+        let revs = self.doc()?.store.cell_revs().await.map_err(err)?;
+        let before = self.latest_results().await?;
+        let mut out = Vec::with_capacity(list.len());
+        for p in list.iter().rev() {
+            let after = if p.status == cruncha_store::ProposalStatus::Open {
+                Some(self.what_if(&cells, p).await?)
+            } else {
+                None
+            };
+            out.push(proposals::view(p, &cells, &revs, &before, after.as_ref()));
+        }
+        Ok(out)
+    }
+
+    /// The results of the latest version with `p` applied (nothing is committed).
+    async fn what_if(
+        &mut self,
+        cells: &[Cell],
+        p: &cruncha_store::Proposal,
+    ) -> Result<HashMap<String, CellResult>> {
+        let provenance = cruncha_store::Provenance::AiProposed { session: proposals::session_of(&p.proposed_by) };
+        let (applied, _) = proposals::apply(cells, p, &provenance);
+        self.scan_python(&applied).await?;
+        Ok(self.doc()?.engine.lock().unwrap().what_if(&applied))
+    }
+
+    /// Record an agent's proposal against the latest version. Refused if a cell it touches
+    /// changed after `base_version`, or if it would leave a duplicate name or a cycle.
+    pub async fn propose(
+        &mut self,
+        actor: &str,
+        base_version: Option<u64>,
+        message: &str,
+        edits: Vec<cruncha_mcp::Edit>,
+    ) -> Result<ProposalView> {
+        if message.trim().is_empty() {
+            return Err("a proposal needs a message saying what it does and why".into());
+        }
+        let cells = self.cells(None).await?;
+        let revs = self.doc()?.store.cell_revs().await.map_err(err)?;
+        let changes = proposals::to_changes(edits, &cells, &revs, base_version)?;
+        // Names and cycles are checked on the combined document.
+        let draft = cruncha_store::Proposal {
+            id: String::new(),
+            status: cruncha_store::ProposalStatus::Open,
+            proposed_by: actor.to_owned(),
+            message: message.to_owned(),
+            base_version: self.doc()?.store.version(),
+            changes: changes.clone(),
+            created_at_us: 0,
+            decided_by: None,
+            decided_at_us: None,
+            decision_note: None,
+            accepted_version: None,
+            seq: 0,
+        };
+        let provenance = cruncha_store::Provenance::AiProposed { session: proposals::session_of(actor) };
+        let (applied, _) = proposals::apply(&cells, &draft, &provenance);
+        self.scan_python(&applied).await?;
+        {
+            let mut e = self.doc()?.engine.lock().unwrap();
+            let now = e.graph(&cells);
+            let then = e.graph(&applied);
+            let mut problems = Vec::new();
+            for c in &applied {
+                for issue in then.issues(&c.id) {
+                    let structural = matches!(
+                        issue,
+                        cruncha_graph::Issue::DuplicateDefinition { .. } | cruncha_graph::Issue::Cycle { .. }
+                    );
+                    if structural && !now.issues(&c.id).contains(issue) {
+                        problems.push(format!("{}: {issue}", c.id));
+                    }
+                }
+            }
+            if !problems.is_empty() {
+                return Err(format!("the proposal would break the document: {}", problems.join("; ")));
+            }
+        }
+        let p = self
+            .doc_mut()?
+            .store
+            .propose(changes, message.trim(), actor)
+            .await
+            .map_err(err)?;
+        self.proposals_changed();
+        self.proposals()
+            .await?
+            .into_iter()
+            .find(|v| v.id == p.id)
+            .ok_or_else(|| "the proposal vanished".into())
+    }
+
+    /// Accept an open proposal: one commit by this user, with the proposal's cells marked
+    /// `ai:accepted`. A stale proposal (a cell changed since) needs `force`, which replaces
+    /// the current source. Changed Python cells still wait for Run (ADR-0005).
+    pub async fn accept_proposal(&mut self, id: &str, force: bool) -> Result<CommitView> {
+        let actor = local_actor();
+        let p = self.doc()?.store.proposal(id).await.map_err(err)?;
+        if p.status != cruncha_store::ProposalStatus::Open {
+            return Err(format!("this proposal is already {}", p.status.as_str()));
+        }
+        let cells = self.cells(None).await?;
+        let revs = self.doc()?.store.cell_revs().await.map_err(err)?;
+        let stale = proposals::stale_ids(&p, &cells, &revs);
+        if !stale.is_empty() && !force {
+            return Err(format!(
+                "cells changed since the agent proposed this: {}; review and accept anyway, or reject it",
+                stale.join(", ")
+            ));
+        }
+        let provenance = cruncha_store::Provenance::AiAccepted {
+            session: proposals::session_of(&p.proposed_by),
+            by: actor.clone(),
+        };
+        let (_, changes) = proposals::apply(&cells, &p, &provenance);
+        let changes = self.with_names(changes).await?;
+        let message = format!("accept proposal: {}", p.message.lines().next().unwrap_or_default());
+        let doc = self.doc_mut()?;
+        doc.store.accept(id, &changes, &actor, &message).await.map_err(err)?;
+        doc.edited = true;
+        self.proposals_changed();
+        let results = self.results(&At::default()).await?;
+        Ok(CommitView { info: self.info().await?, results })
+    }
+
+    /// Reject an open proposal, with an optional note the agent can read.
+    pub async fn reject_proposal(&mut self, id: &str, note: &str) -> Result<ProposalView> {
+        self.decide(id, cruncha_store::ProposalStatus::Rejected, &local_actor(), note).await
+    }
+
+    /// Withdraw one of `actor`'s own open proposals.
+    pub async fn withdraw_proposal(&mut self, actor: &str, id: &str) -> Result<ProposalView> {
+        let p = self.doc()?.store.proposal(id).await.map_err(err)?;
+        if p.proposed_by != actor {
+            return Err(format!("proposal {id} isn't yours to withdraw"));
+        }
+        self.decide(id, cruncha_store::ProposalStatus::Withdrawn, actor, "").await
+    }
+
+    async fn decide(
+        &mut self,
+        id: &str,
+        status: cruncha_store::ProposalStatus,
+        actor: &str,
+        note: &str,
+    ) -> Result<ProposalView> {
+        self.doc_mut()?.store.decide(id, status, actor, note).await.map_err(err)?;
+        self.proposals_changed();
+        self.proposals()
+            .await?
+            .into_iter()
+            .find(|v| v.id == id)
+            .ok_or_else(|| "the proposal vanished".into())
     }
 
     /// Take a snapshot: name the latest version as a known-good point (a store tag; it
@@ -1124,6 +1308,106 @@ mod tests {
         })
         .await;
         session.close().await;
+    }
+
+    #[tokio::test]
+    async fn agent_proposals_preview_accept_reject_and_go_stale() {
+        use cruncha_mcp::Edit;
+        use cruncha_store::{ProposalStatus, Provenance};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let v0 = session.info().await.unwrap().version;
+        let m_before = session.results(&At::default()).await.unwrap()["M"].text.clone();
+
+        // A proposal changes nothing, but shows what would change.
+        let p = session
+            .propose(
+                "ai:claude",
+                Some(v0),
+                "Use a 20 ft span",
+                vec![
+                    Edit::Modify { id: "L".into(), source: Some("L = 20 ft".into()), description: None },
+                    Edit::Insert {
+                        after: Some("M".into()),
+                        kind: "calc".into(),
+                        source: "M_half = M / 2 = ?? kip·ft".into(),
+                        description: Some("Half the moment".into()),
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(session.info().await.unwrap().version, v0, "proposing commits nothing");
+        assert_eq!(p.status, ProposalStatus::Open);
+        assert!(!p.stale);
+        let m = p.effects.iter().find(|e| e.id == "M").expect("M changes");
+        assert_eq!(m.before.as_ref().unwrap().text, m_before);
+        assert_ne!(m.after.as_ref().unwrap().text, m_before);
+        let new_id = p.changes[1].id.clone();
+        let half = p.effects.iter().find(|e| e.id == new_id).expect("the new cell's result");
+        assert!(half.before.is_none());
+        assert!(half.after.as_ref().unwrap().error.is_none(), "{:?}", half.after);
+        // The document's own results are untouched by the preview.
+        assert_eq!(session.results(&At::default()).await.unwrap()["M"].text, m_before);
+
+        // Accepting is one commit by the user, carrying the agent as provenance.
+        let view = session.accept_proposal(&p.id, false).await.unwrap();
+        assert_eq!(view.info.version, v0 + 1);
+        assert_ne!(view.results["M"].text, m_before);
+        let cells = session.cells(None).await.unwrap();
+        let l = cells.iter().find(|c| c.id == "L").unwrap();
+        assert_eq!(l.source, "L = 20 ft");
+        assert!(matches!(&l.provenance, Provenance::AiAccepted { session, .. } if session == "claude"));
+        let new = cells.iter().find(|c| c.id == new_id).unwrap();
+        assert_eq!(new.defines, vec!["M_half".to_string()], "names computed on accept");
+        assert_eq!(new.attrs["description"], "Half the moment");
+        let m_pos = cells.iter().position(|c| c.id == "M").unwrap();
+        assert_eq!(cells[m_pos + 1].id, new_id, "inserted right after M");
+        let h = session.history().await.unwrap();
+        assert!(h[0].message.starts_with("accept proposal: Use a 20 ft span"), "{:?}", h[0]);
+
+        // Duplicate names are refused at propose time.
+        let dup = session
+            .propose("ai:claude", None, "dup", vec![Edit::Insert {
+                after: None,
+                kind: "calc".into(),
+                source: "L = 30 ft".into(),
+                description: None,
+            }])
+            .await
+            .unwrap_err();
+        assert!(dup.contains("would break"), "{dup}");
+        // A cell changed after the version the agent read is refused.
+        let old = session
+            .propose("ai:claude", Some(v0), "old", vec![Edit::Delete { id: "L".into() }])
+            .await
+            .unwrap_err();
+        assert!(old.contains("call read_doc again"), "{old}");
+
+        // A proposal goes stale when its cell is edited, and needs force.
+        let v1 = session.info().await.unwrap().version;
+        let p2 = session
+            .propose("ai:claude", Some(v1), "span 22", vec![Edit::Modify {
+                id: "L".into(),
+                source: Some("L = 22 ft".into()),
+                description: None,
+            }])
+            .await
+            .unwrap();
+        let mut l = session.cells(None).await.unwrap().into_iter().find(|c| c.id == "L").unwrap();
+        l.source = "L = 21 ft".into();
+        session.commit(vec![ChangeView::Upsert { cell: l }], "edit").await.unwrap();
+        let list = session.proposals().await.unwrap();
+        assert!(list.iter().find(|x| x.id == p2.id).unwrap().stale);
+        assert!(session.accept_proposal(&p2.id, false).await.unwrap_err().contains("changed since"));
+        // Rejecting records the note; withdrawing someone else's is refused.
+        assert!(session.withdraw_proposal("ai:other", &p2.id).await.is_err());
+        let r = session.reject_proposal(&p2.id, "keep 21 ft").await.unwrap();
+        assert_eq!(r.status, ProposalStatus::Rejected);
+        assert_eq!(r.decision_note.as_deref(), Some("keep 21 ft"));
+        assert!(r.effects.is_empty());
     }
 
     #[tokio::test]

@@ -14,6 +14,7 @@
     type DocInfo,
     type ExportView,
     type Prefs,
+    type ProposalView,
     type PythonStatus,
     type ResultsEvent,
     type Selection,
@@ -22,7 +23,7 @@
   } from "./lib/api";
   import DocumentSettings from "./lib/DocumentSettings.svelte";
   import Editor from "./lib/Editor.svelte";
-  import Sidebar from "./lib/Sidebar.svelte";
+  import Sidebar, { type SidebarTab } from "./lib/Sidebar.svelte";
   import Preferences from "./lib/Preferences.svelte";
   import SnapshotDialog from "./lib/SnapshotDialog.svelte";
   import ReportSettingsDialog from "./lib/ReportSettingsDialog.svelte";
@@ -58,6 +59,57 @@
   /** IDs of the document's cells, so an agent's mentions become links. */
   const cellIds = $derived(new Set([...cells.map((c) => c.id), ...variables.map((v) => v.id)]));
   let sidebar = $state(true);
+  let sidebarTab = $state<SidebarTab>("outline");
+  /** Agents' proposals for the open document (ADR-0016), newest first. */
+  let proposals = $state.raw<ProposalView[]>([]);
+  let proposalTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function refreshProposals() {
+    clearTimeout(proposalTimer);
+    proposals = doc ? await api.proposals().catch(() => []) : [];
+  }
+
+  /** After an edit: open proposals may have gone stale and their "if accepted" results moved. */
+  function proposalsSoon() {
+    if (!proposals.some((p) => p.status === "open")) return;
+    clearTimeout(proposalTimer);
+    proposalTimer = setTimeout(() => void refreshProposals(), 800);
+  }
+
+  const acceptProposal = (id: string, force: boolean) =>
+    attempt(async () => {
+      await flush();
+      const v = await api.acceptProposal(id, force);
+      await committed(v);
+      await show({ kind: "latest" });
+      await refreshProposals();
+    });
+
+  const rejectProposal = (id: string, note: string) =>
+    attempt(async () => {
+      await api.rejectProposal(id, note);
+      await refreshProposals();
+    });
+
+  function showProposals() {
+    sidebar = true;
+    sidebarTab = "proposals";
+  }
+
+  // Markers in the document for open proposals (latest version only).
+  $effect(() => {
+    const open = selected.kind === "latest" ? proposals.filter((p) => p.status === "open") : [];
+    const touched = new Map<string, string>();
+    const inserts: { id: string; after: string | null; label: string }[] = [];
+    for (const p of open) {
+      const who = p.proposedBy.replace(/^ai:/, "");
+      for (const c of p.changes) {
+        if (c.op === "insert") inserts.push({ id: c.id, after: c.after, label: `${who} proposes a new ${c.kind} cell` });
+        else touched.set(c.id, c.op === "delete" ? `${who} proposes deleting this` : `${who} proposes a change`);
+      }
+    }
+    editor?.setProposalMarks({ touched, inserts });
+  });
   let fileMenu = $state(false);
   let barH = $state(0);
   let python = $state<PythonStatus | null>(null);
@@ -131,6 +183,7 @@
     history = info ? await api.history() : [];
     if (info) await show({ kind: "latest" });
     await refreshPython();
+    await refreshProposals();
     prefs = await api.getPrefs(); // the recent list changed
   }
 
@@ -164,11 +217,15 @@
       if (!doc || ev.docId !== doc.id || selected.kind !== "latest" || ev.version < doc.version) return;
       editor?.applyResults(ev.results);
     });
+    const unProposals = listen<string>("proposals", (e) => {
+      if (doc && e.payload === doc.id) void refreshProposals();
+    });
     const unSetup = listen<SetupProgress>("python-setup", (e) => (setup = SETUP_LABEL[e.payload.step]));
     return () => {
       void unlisten.then((f) => f());
       void unResults.then((f) => f());
       void unSetup.then((f) => f());
+      void unProposals.then((f) => f());
     };
   });
 
@@ -197,6 +254,7 @@
     doc = v.info;
     history = await api.history();
     if (!python?.hasPython) await refreshPython();
+    proposalsSoon();
   }
 
   /** Typeset the latest version to a PDF (pending edits are saved first). */
@@ -345,6 +403,10 @@
           onjumpcell={(id) => editor?.jumpToCell(id)}
           ondescribe={(id, d) => editor?.setDescription(id, d)}
           onsnapshot={() => (modal = "snapshot")}
+          {proposals}
+          onaccept={acceptProposal}
+          onreject={rejectProposal}
+          bind:tab={sidebarTab}
         />
       {/if}
       <main style="--bar-h: {barH}px; --text-size: {sizes.text}px; --calc-size: {sizes.calc}px; --code-size: {sizes.code}px">
@@ -402,6 +464,7 @@
             onoutline={(o) => (outline = o)}
             onvariables={(v) => (variables = v)}
             onerror={(m) => (error = m)}
+            onproposal={showProposals}
           />
         </div>
       </main>

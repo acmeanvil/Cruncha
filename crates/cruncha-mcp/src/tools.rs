@@ -12,7 +12,7 @@ use rmcp::{ErrorData, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 
 use crate::mirror::{self, Range};
-use crate::{Backend, DocSnapshot};
+use crate::{Backend, DocSnapshot, Edit};
 
 const INSTRUCTIONS: &str = "Tools for the Cruncha calculation document open in the app. \
 The engine computes every number: quote results from these tools with their cell IDs and \
@@ -44,6 +44,23 @@ pub struct HistoryRequest {
     pub cell_id: Option<String>,
     /// Also list what changed from this version to the latest.
     pub since: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProposeRequest {
+    /// What the change does and why, for the engineer who reviews it (one or two sentences).
+    pub message: String,
+    /// The changes, applied in order as one unit: the reviewer accepts or rejects all of them.
+    pub changes: Vec<Edit>,
+    /// The document version you read (from read_doc's header). A cell changed after it is
+    /// refused, so you re-read instead of overwriting someone's edit.
+    pub base_version: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WithdrawRequest {
+    /// The proposal to withdraw (one of yours that is still open).
+    pub proposal_id: String,
 }
 
 /// The tool server for one app; cheap to clone (one per MCP session).
@@ -290,6 +307,40 @@ impl<B: Backend> CrunchaTools<B> {
             }
         }
         ok(out)
+    }
+
+    #[tool(description = "Propose a change to the document: insert, modify or delete cells, as one \
+        unit a human accepts or rejects in the app. Nothing changes until they accept. The reply \
+        has the proposal id, the new cells' ids, and every result the change would alter \
+        (\"if accepted\"), computed by the engine. One coherent proposal per logical change.")]
+    async fn propose_edit(&self, Parameters(req): Parameters<ProposeRequest>) -> Result<CallToolResult, ErrorData> {
+        match self.backend.propose(req.base_version, req.message, req.changes).await {
+            Ok(p) => ok(format!(
+                "Proposal {} recorded; it waits for the engineer to accept or reject it in Cruncha. \
+                 Don't describe it as applied.\n\n{}",
+                p.id,
+                mirror::proposal_text(&p)
+            )),
+            Err(e) => fail(e),
+        }
+    }
+
+    #[tool(description = "The document's open proposals (from any agent) and your decided ones, \
+        with status, the reviewer's note on rejections, and \"if accepted\" results.")]
+    async fn proposals(&self) -> Result<CallToolResult, ErrorData> {
+        match self.backend.proposals().await {
+            Ok(list) if list.is_empty() => ok("No proposals.".into()),
+            Ok(list) => ok(list.iter().map(mirror::proposal_text).collect::<Vec<_>>().join("\n")),
+            Err(e) => fail(e),
+        }
+    }
+
+    #[tool(description = "Withdraw one of your open proposals (for example to replace it with a better one).")]
+    async fn withdraw(&self, Parameters(req): Parameters<WithdrawRequest>) -> Result<CallToolResult, ErrorData> {
+        match self.backend.withdraw(req.proposal_id).await {
+            Ok(p) => ok(format!("Proposal {} withdrawn.", p.id)),
+            Err(e) => fail(e),
+        }
     }
 }
 

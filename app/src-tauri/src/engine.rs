@@ -234,6 +234,7 @@ pub struct PyJob {
 }
 
 /// The outcome of a Python cell's last run.
+#[derive(Clone)]
 struct PyOutcome {
     key: u64,
     source: String,
@@ -455,14 +456,13 @@ impl Engine {
 
     /// Evaluate the document: calcs run, Python cells come from their last outcome, and the
     /// Python cells that are due are returned as jobs (in dependency order).
-    pub fn evaluate(&mut self, cells: &[Cell]) -> Run {
-        self.evaluated = 0;
+    /// The dependency graph of `cells`: calcs from their prepared statements, Python cells
+    /// from the worker's scan, other cells from their stored names.
+    pub fn graph(&mut self, cells: &[Cell]) -> Graph {
         // Graph nodes: calcs from their prepared statements, Python cells from the worker's
         // scan (when there is one), other cells from their stored names.
         let mut nodes = Vec::with_capacity(cells.len());
-        let mut kind_of: HashMap<&str, CellKind> = HashMap::new();
         for c in cells {
-            kind_of.insert(c.id.as_str(), c.kind);
             let (defines, reads) = match c.kind {
                 CellKind::Calc => self.names(&c.source),
                 CellKind::Python => match self.py_names.get(&c.source) {
@@ -487,8 +487,30 @@ impl Engine {
                 }
             }
         }
-        let graph = Graph::new(nodes);
+        Graph::new(nodes)
+    }
+
+    /// Evaluate `cells` as if they were the document (a proposal applied), without touching
+    /// the memoized state the document's own results come from. Python cells aren't run:
+    /// changed ones show as not calculated, unchanged ones keep their last outcome.
+    pub fn what_if(&mut self, cells: &[Cell]) -> HashMap<String, CellResult> {
+        let memo = std::mem::take(&mut self.memo);
+        let vars = self.vars.clone();
+        let py_memo = self.py_memo.clone();
+        let evaluated = self.evaluated;
+        let results = self.evaluate(cells).results;
+        self.memo = memo;
+        self.vars = vars;
+        self.py_memo = py_memo;
+        self.evaluated = evaluated;
+        results
+    }
+
+    pub fn evaluate(&mut self, cells: &[Cell]) -> Run {
+        self.evaluated = 0;
+        let graph = self.graph(cells);
         let cell_of: HashMap<&str, &Cell> = cells.iter().map(|c| (c.id.as_str(), c)).collect();
+        let kind_of: HashMap<&str, CellKind> = cells.iter().map(|c| (c.id.as_str(), c.kind)).collect();
 
         let mut vars = Vars::new();
         let mut out = HashMap::new();

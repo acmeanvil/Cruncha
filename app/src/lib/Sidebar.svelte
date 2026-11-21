@@ -1,10 +1,15 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The left rail: the document outline and its history. -->
+<!-- The left rail: the document outline, variables, agents' proposals and history. -->
+<script lang="ts" module>
+  export type SidebarTab = "outline" | "variables" | "proposals" | "history";
+</script>
+
 <script lang="ts">
-  import type { RefView, Selection, VersionView } from "./api";
+  import type { ProposalView, RefView, Selection, VersionView } from "./api";
   import type { OutlineItem } from "./editor/outline";
   import type { Variable } from "./editor/variables";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import ProposalsPanel from "./ProposalsPanel.svelte";
   import VariableBrowser from "./VariableBrowser.svelte";
 
   let {
@@ -21,6 +26,10 @@
     onjumpcell,
     ondescribe,
     onsnapshot,
+    proposals,
+    onaccept,
+    onreject,
+    tab = $bindable("outline"),
   }: {
     outline: OutlineItem[];
     variables: Variable[];
@@ -35,9 +44,13 @@
     onjumpcell: (id: string) => void;
     ondescribe: (id: string, description: string) => void;
     onsnapshot: () => void;
+    proposals: ProposalView[];
+    onaccept: (id: string, force: boolean) => Promise<void>;
+    onreject: (id: string, note: string) => Promise<void>;
+    tab?: SidebarTab;
   } = $props();
 
-  let tab = $state<"outline" | "variables" | "history">("outline");
+  const openProposals = $derived(proposals.filter((p) => p.status === "open").length);
   const edits = $derived(history.filter((v) => v.kind !== "maintenance").length);
 </script>
 
@@ -48,6 +61,9 @@
     </button>
     <button role="tab" aria-selected={tab === "variables"} class:on={tab === "variables"} onclick={() => (tab = "variables")}>
       Variables <span class="count">{variables.length}</span>
+    </button>
+    <button role="tab" aria-selected={tab === "proposals"} class:on={tab === "proposals"} onclick={() => (tab = "proposals")}>
+      Proposals {#if openProposals}<span class="count due">{openProposals}</span>{/if}
     </button>
     <button role="tab" aria-selected={tab === "history"} class:on={tab === "history"} onclick={() => (tab = "history")}>
       History <span class="count">{edits}</span>
@@ -71,6 +87,8 @@
       {/if}
     {:else if tab === "variables"}
       <VariableBrowser {variables} {editable} onjump={onjumpcell} {ondescribe} />
+    {:else if tab === "proposals"}
+      <ProposalsPanel {proposals} {editable} {onaccept} {onreject} {onjumpcell} />
     {:else}
       <HistoryPanel {history} {refs} {latest} {earliest} {selected} {onselect} {onsnapshot} />
     {/if}
@@ -82,9 +100,9 @@
     display: grid; grid-template-rows: auto 1fr; min-height: 0;
     border-right: 1px solid var(--border); background: var(--panel);
   }
-  .tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--border); }
+  .tabs { display: flex; gap: 0; overflow-x: auto; padding: 8px 10px 0; border-bottom: 1px solid var(--border); }
   .tabs button {
-    border: none; background: none; border-radius: 6px 6px 0 0; padding: 6px 10px;
+    border: none; background: none; border-radius: 6px 6px 0 0; padding: 6px 8px;
     color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
   .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
@@ -92,6 +110,7 @@
     font-size: 11px; background: var(--sunken); border-radius: 8px; padding: 0 6px; margin-left: 2px;
     font-weight: normal;
   }
+  .count.due { background: var(--accent); color: #fff; }
   .body { overflow: auto; min-height: 0; }
   nav { padding: 8px 6px; display: grid; }
   .item {

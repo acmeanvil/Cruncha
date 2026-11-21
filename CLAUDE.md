@@ -20,9 +20,10 @@ crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/store.rs             Store: create/open/lock, commit (append + squash), time travel, history, diff, tag, restore (to a version or a snapshot), compact, prune
   src/retention.rs         Retention policy, `_delta_log` commit reader, cutoff computation (ADR-0011)
   src/blobs.rs             content-addressed, zstd-compressed `blobs/` for large cell sources (ADR-0013)
+  src/proposals.rs         agents' proposals (ADR-0016): `proposals/` schema, ProposedChange, Proposal folding
   examples/store_bench.rs  spike S3 benchmark
   examples/store_variants.rs  spike S3b: merge vs append-only vs bucketed layouts
-  tests/                   integration tests (tempdir containers): store, retention, blobs, crash
+  tests/                   integration tests (tempdir containers): store, retention, blobs, proposals, crash
 crates/cruncha-lang/       Hurmet lexer + parser port (spike S1; MIT notice in LICENSE-HURMET): parse_tex, parse_calc
   tests/golden.rs          Hurmet's golden TeX/RPN tests (tests/fixtures/*.json); keep green when adding an AST
   src/lib.rs `hurmet`      helpers shared with cruncha-eval (doc-hidden, not a stable API)
@@ -39,7 +40,7 @@ crates/cruncha-report/     reports (spike S6, ADR-0015): model.rs (Report, block
                            tex.rs (the engine's TeX -> Typst math; unknown commands are errors), templates/calc-package.typ (cover, summary, calcs, provenance),
                            tests/tex_corpus.rs (every golden TeX string compiles), examples/report_demo.rs
 crates/cruncha-mcp/        the MCP server agents use (ADR-0009): lib.rs (Backend trait + view types; no cruncha-store dependency), mirror.rs (text mirror),
-                           tools.rs (read_doc, run, explain, check, history; rmcp), http.rs (Streamable HTTP on 127.0.0.1, bearer token, Host/Origin checks)
+                           tools.rs (read_doc, run, explain, check, history, propose_edit, proposals, withdraw; rmcp), http.rs (Streamable HTTP on 127.0.0.1, bearer token, Host/Origin checks)
 crates/cruncha-acp/        ACP client for the agent panel, ported from looking_glass's lg-acp (MIT notice in LICENSE-LOOKING-GLASS): no fs/terminal, sessions get MCP servers;
                            tests/demo_agent.rs runs looking_glass's lg-agent demo when it is built (CRUNCHA_TEST_ACP_AGENT)
 crates/cruncha-units/      units and numbers (spike S2b; MIT notice in LICENSE-HURMET)
@@ -64,10 +65,11 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src/lib/Editor.svelte    the document editor; src/lib/editor/: schema (one top-level block per cell), cells <-> blocks,
                            cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
                            outline.ts and variables.ts (sidebar models)
-  src/lib/*.svelte         Sidebar (Outline, Variables, History tabs), VariableBrowser, HistoryPanel (snapshots), SnapshotDialog,
+  src/lib/*.svelte         Sidebar (Outline, Variables, Proposals, History tabs), ProposalsPanel, VariableBrowser, HistoryPanel (snapshots), SnapshotDialog,
                            RetentionControl, Preferences, DocumentSettings, …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
+                           src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/report.rs the latest version as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
                            src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from the "Agents outside Cruncha" dialog,
                            src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent)
@@ -134,11 +136,12 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - A calc cell's `defines` and `reads` are always recomputed by the backend (`cruncha_eval::prepare`) when it is committed; the editor's values are ignored. A Python cell's come from the worker's scan when Python is set up. Other kinds keep what they were given.
 - Python runs only in documents this computer trusts (`Prefs.trusted`: created here or confirmed by the user), and an edited Python cell runs only on an explicit Run; after that it re-runs when its inputs change. Never run a document's code at open without trust. Worker output is shown as data (text, PNG, table rows), never as HTML.
 - A calc's description is `attrs.description` (a string) on its cell, not part of its source; the UI shows it beside the result and in the variable browser. "Snapshots" in the UI are store tags (refs): unique names, kept through pruning, restorable from their pin (`Store::restore_ref`).
-- Agents touch a document only through `cruncha-mcp`, served by the app (the single writer). The server is off until the user allows it, binds 127.0.0.1 only, needs a fresh bearer token, and refuses browser origins. Tools return the engine's results verbatim; edits will be `ai:proposed` proposals, never direct writes.
+- Agents touch a document only through `cruncha-mcp`, served by the app (the single writer). The server is off until the user allows it, binds 127.0.0.1 only, needs a fresh bearer token, and refuses browser origins. Tools return the engine's results verbatim; edits are proposals, never direct writes.
+- Proposals (ADR-0016, container format 4) live in the append-only `proposals/` table (created by the first one), never in `doc/`: one row per state change, folded by `proposal_id` and highest `seq`. Accepting is one human commit (`Store::accept`) carrying `cruncha.proposal`, then an `accepted` row; `Store::open` finishes an accept interrupted between the two. Each modify/delete records the cell's `base_rev`; a changed cell makes the proposal stale, accepted only with `force`. "If accepted" results come from `Engine::what_if` on a scratch copy (no commit, the document's memo untouched). Prune drops decided proposals older than the cutoff, except those accepted into a pinned version.
 - A report never evaluates: cells without a usable result print as NOT CALCULATED (with the reason), never as a pass. `@test` pass/fail comes from `Outcome::check`, not from display text. The report's title block and options are the `meta` cell's `attrs.report` (the editor doesn't show that cell). Same version → byte-identical PDF.
 - Results do not live in `doc/`. They go in a separate `results/` table (planned).
 - Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).
-- Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind`, `cruncha.at` (µs; Cruncha's clock), `cruncha.restoredFrom`, `cruncha.prunedBefore` and `cruncha.blobBytes` (new blob bytes, counted by the size limit) (see `store.rs`).
+- Commit metadata keys are `cruncha.actor`, `cruncha.message`, `cruncha.kind`, `cruncha.at` (µs; Cruncha's clock), `cruncha.restoredFrom`, `cruncha.prunedBefore`, `cruncha.proposal` (the accepted proposal's id) and `cruncha.blobBytes` (new blob bytes, counted by the size limit) (see `store.rs`).
 
 ## Decisions and docs as we go
 

@@ -492,7 +492,7 @@ async fn format_1_container_migrates_with_history() {
     make_v1_container(&path, &[vec![a.clone()], vec![a2.clone(), b.clone()]]).await;
 
     let mut store = Store::open(&path).await.unwrap();
-    assert_eq!(store.manifest().format_version, 3);
+    assert_eq!(store.manifest().format_version, cruncha_store::FORMAT_VERSION);
     // v1 history is still readable: v1 = [a], v2 = [a2, b]; v3 = the migration.
     assert_eq!(sources(&store.cells_at(1).await.unwrap()), vec!["x = 1"]);
     assert_eq!(

@@ -183,11 +183,13 @@ const AGENTS_MD: &str = "\
 You are helping with an engineering calculation document open in the Cruncha app.
 
 - The document is reached **only** through the `cruncha` MCP tools: `read_doc`, `explain`, `check`,
-  `history`, `run`. Start with `read_doc`. There are no document files to read or edit here.
+  `history`, `run`, `propose_edit`, `proposals`, `withdraw`. Start with `read_doc`. There are no
+  document files to read or edit here.
 - The engine computes every number. Quote results from the tools with their cell IDs; never compute
   values yourself or present an estimate as a result.
-- You can't change the document yet (proposals come later). Describe a change in words and let the
-  user make it.
+- To change the document, use `propose_edit`: the user accepts or rejects it in the app, and
+  nothing changes until they accept. Never write the change into your reply for the user to paste,
+  and never say a proposal was applied.
 - Plots are matplotlib figures in a Python cell; Cruncha shows them as images in the cell's output
   and in the report. Python cells only get the packages in `cruncha-code-cells` (no Plotly or other
   HTML/JavaScript output). Don't install packages.

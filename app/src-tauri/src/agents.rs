@@ -11,18 +11,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, ResultView, VersionInfo};
+use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
 use cruncha_store::{CellDiff, CellKind};
 use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::engine::{CellResult, OutputView};
 use crate::report::iso_utc;
+use crate::proposals::ProposalView;
 use crate::session::Session;
 
-/// The session, as the MCP tools see it.
+/// The session, as the MCP tools of one agent see it: the shared session and the agent's
+/// actor (`ai:<agent>`), recorded on its proposals.
 #[derive(Clone)]
-pub struct AppBackend(pub Arc<Mutex<Session>>);
+pub struct AppBackend(pub Arc<Mutex<Session>>, pub String);
 
 /// The value part of a result line (`M = w L^2 / 8 = 108 kip·ft` → `108 kip·ft`).
 fn value_of(text: &str) -> String {
@@ -80,6 +82,30 @@ fn result_view(r: &CellResult) -> ResultView {
                 o
             })
             .unwrap_or_default(),
+    }
+}
+
+fn proposal_info(p: ProposalView) -> ProposalInfo {
+    ProposalInfo {
+        id: p.id,
+        status: p.status.as_str().into(),
+        proposed_by: p.proposed_by,
+        message: p.message,
+        base_version: p.base_version,
+        changes: p.changes.iter().map(|c| format!("{} {}", c.op, c.id)).collect(),
+        stale: p.stale,
+        decision_note: p.decision_note,
+        accepted_version: p.accepted_version,
+        effects: p
+            .effects
+            .iter()
+            .map(|e| Effect {
+                id: e.id.clone(),
+                kind: e.kind.clone(),
+                before: e.before.as_ref().map(result_view),
+                after: e.after.as_ref().map(result_view),
+            })
+            .collect(),
     }
 }
 
@@ -177,6 +203,35 @@ impl Backend for AppBackend {
             })
             .collect())
     }
+
+    async fn propose(&self, base_version: Option<u64>, message: String, edits: Vec<Edit>) -> Result<ProposalInfo, String> {
+        let mut s = self.0.lock().await;
+        if !s.is_open() {
+            return Err("no document is open in Cruncha".into());
+        }
+        s.propose(&self.1, base_version, &message, edits).await.map(proposal_info)
+    }
+
+    async fn proposals(&self) -> Result<Vec<ProposalInfo>, String> {
+        let mut s = self.0.lock().await;
+        if !s.is_open() {
+            return Err("no document is open in Cruncha".into());
+        }
+        let mut list: Vec<ProposalInfo> = s
+            .proposals()
+            .await?
+            .into_iter()
+            .filter(|p| p.status == cruncha_store::ProposalStatus::Open || p.proposed_by == self.1)
+            .map(proposal_info)
+            .collect();
+        list.reverse(); // oldest first, newest last
+        Ok(list)
+    }
+
+    async fn withdraw(&self, id: String) -> Result<ProposalInfo, String> {
+        let mut s = self.0.lock().await;
+        s.withdraw_proposal(&self.1, &id).await.map(proposal_info)
+    }
 }
 
 /// What the Agents dialog shows while the server runs.
@@ -220,7 +275,7 @@ mod tests {
         let path = dir.path().join("beam.cruncha");
         let mut session = Session::new(None);
         session.create_sample(&path).await.unwrap();
-        let backend = AppBackend(Arc::new(Mutex::new(session)));
+        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into());
         let doc = backend.snapshot(false).await.unwrap();
         let m = doc.cells.iter().find(|c| c.defines.contains(&"M".to_string())).expect("the sample defines M");
         assert_eq!(doc.results[&m.id].values[0].0, "M");

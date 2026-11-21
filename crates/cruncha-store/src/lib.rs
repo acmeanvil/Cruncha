@@ -8,6 +8,7 @@
 mod blobs;
 mod cell;
 mod error;
+mod proposals;
 mod retention;
 #[doc(hidden)] // Exposed for spikes and benchmarks; not a stable API.
 pub mod schema;
@@ -16,9 +17,10 @@ mod store;
 pub use blobs::DEFAULT_BLOB_THRESHOLD;
 pub use cell::{Cell, CellDiff, CellKind, Change, Provenance};
 pub use error::{Error, Result};
+pub use proposals::{Proposal, ProposalStatus, ProposedCell, ProposedChange};
 pub use retention::{DEFAULT_FLOOR, MIN_FLOOR, Retention};
 pub use schema::Ref;
 pub use store::{
-    CommitKind, CompactStats, FORMAT, FORMAT_VERSION, Manifest, PruneReport, RetentionPreview, Store,
+    CommitKind, CompactStats, FORMAT, FORMAT_VERSION, META_PROPOSAL, Manifest, PruneReport, RetentionPreview, Store,
     VersionInfo, diff_cells,
 };
