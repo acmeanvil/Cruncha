@@ -20,6 +20,63 @@ export interface Prefs {
   textSizes?: TextSizes;
   /** The office's report style. */
   reportStyle?: ReportStyle;
+  /** Agents: default, per-agent model and connection, provider accounts (keys are in the Keychain). */
+  agents?: AgentSettings;
+  /** Ids of documents trusted to run Python (kept by the backend), and where each was last opened. */
+  trusted?: string[];
+  trustedPaths?: Record<string, string>;
+}
+
+export interface KnownModel {
+  value: string;
+  name: string;
+  group: string | null;
+}
+
+export interface AgentPref {
+  model: string | null;
+  connection: string | null;
+  knownModels: KnownModel[];
+}
+
+/** A provider account. Its key is in the Keychain, never in the app's files or here. */
+export interface Connection {
+  id: string;
+  provider: string;
+  name: string;
+  baseUrl: string;
+}
+
+export interface AgentSettings {
+  defaultAgent: string | null;
+  agents: Record<string, AgentPref>;
+  connections: Connection[];
+}
+
+export const NO_AGENT_SETTINGS: AgentSettings = { defaultAgent: null, agents: {}, connections: [] };
+export const NO_AGENT_PREF: AgentPref = { model: null, connection: null, knownModels: [] };
+
+export interface ProviderView {
+  id: string;
+  label: string;
+  /** The API key's environment variable; empty when no key is needed (local servers). */
+  keyVar: string;
+}
+
+export type KeySource = "environment" | "keychain" | "missing" | "notneeded";
+
+export interface PythonEnv {
+  available: boolean;
+  interpreter: string | null;
+  label: string;
+  base: string;
+}
+
+/** A document's own settings, kept in its meta cell (versioned). */
+export interface DocumentSettings {
+  report: ReportSettings;
+  /** This document's type sizes; null: the app's. */
+  textSizes: TextSizes | null;
 }
 
 /** The office's look for reports (Preferences; the same for every document here). */
@@ -407,6 +464,17 @@ export const api = {
   agentConversations: () => invoke<ConversationSummary[]>("agent_conversations"),
   agentConversation: (id: string) => invoke<{ summary: ConversationSummary; entries: AgentEntry[] }>("agent_conversation", { id }),
   forgetRecent: (path: string) => invoke<void>("forget_recent", { path }),
+  forgetTrusted: (id: string) => invoke<Prefs>("forget_trusted", { id }),
+  pythonEnv: () => invoke<PythonEnv>("python_env"),
+  providers: () => invoke<ProviderView[]>("providers"),
+  /** Where each connection's key comes from (reads the Keychain). */
+  connectionKeys: () => invoke<Record<string, KeySource>>("connection_keys"),
+  connectionAdd: (provider: string, name: string, baseUrl: string, key: string) =>
+    invoke<Prefs>("connection_add", { provider, name, baseUrl, key }),
+  connectionSetKey: (id: string, key: string) => invoke<void>("connection_set_key", { id, key }),
+  connectionRemove: (id: string) => invoke<Prefs>("connection_remove", { id }),
+  documentSettings: () => invoke<DocumentSettings>("document_settings"),
+  setDocumentSettings: (settings: DocumentSettings) => invoke<CommitView>("set_document_settings", { settings }),
   setDocumentRetention: (policy: Retention | null) =>
     invoke<DocInfo>("set_document_retention", { policy }),
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),

@@ -9,7 +9,10 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     api,
+    NO_AGENT_PREF,
+    NO_AGENT_SETTINGS,
     type AgentDef,
+    type ConfigOption,
     type AgentEntry,
     type ConversationSummary,
     type PanelView,
@@ -22,15 +25,44 @@
     cellIds,
     onjumpcell,
     onclose,
-    onexternal,
+    onsettings,
   }: {
     /** Cell IDs of the open document (mentions become links). */
     cellIds: Set<string>;
     onjumpcell: (id: string) => void;
     onclose: () => void;
-    /** Show how to connect an agent running outside Cruncha. */
-    onexternal: () => void;
+    /** Open Settings at a section (`agents`, `external`). */
+    onsettings: (section: "agents" | "external") => void;
   } = $props();
+
+  /** The model to select once the agent that just started offers its menus (Settings → Agents). */
+  let pendingModel: { agent: string; model: string } | null = null;
+
+  /** Apply the saved model, and remember the models the agent offers (for Settings). */
+  async function useModelPrefs(v: PanelView) {
+    const model = v.options.find((o: ConfigOption) => o.category === "Model");
+    if (!v.ready || !v.agentId || !model) return;
+    if (pendingModel?.agent === v.agentId) {
+      const want = pendingModel.model;
+      pendingModel = null;
+      if (want !== model.current && model.choices.some((c) => c.value === want)) {
+        await act(() => api.agentSetOption(model.id, want));
+      }
+    }
+    try {
+      const prefs = await api.getPrefs();
+      const agents = prefs.agents ?? NO_AGENT_SETTINGS;
+      const pref = agents.agents[v.agentId] ?? NO_AGENT_PREF;
+      const known = model.choices.map((c) => ({ value: c.value, name: c.name, group: c.group }));
+      if (JSON.stringify(known) === JSON.stringify(pref.knownModels)) return;
+      await api.setPrefs({
+        ...prefs,
+        agents: { ...agents, agents: { ...agents.agents, [v.agentId]: { ...pref, knownModels: known } } },
+      });
+    } catch {
+      // Remembering the menu is a convenience; the session works without it.
+    }
+  }
 
   let view = $state<PanelView | null>(null);
   let catalog = $state<AgentDef[]>([]);
@@ -54,10 +86,13 @@
         view = await api.agentPanelView();
         if (view.agentId) choice = view.agentId;
         else {
+          const preferred = (await api.getPrefs()).agents?.defaultAgent;
+          let saved: string | null = null;
           try {
-            const saved = localStorage.getItem("cruncha.agent");
-            if (saved && catalog.some((a) => a.id === saved)) choice = saved;
+            saved = localStorage.getItem("cruncha.agent");
           } catch {}
+          const pick = [preferred, saved].find((id) => id && catalog.some((a) => a.id === id));
+          if (pick) choice = pick;
         }
       } catch (e) {
         error = String(e);
@@ -65,6 +100,7 @@
       off = await listen<PanelView>("agent-panel", (e) => {
         view = e.payload;
         void follow();
+        void useModelPrefs(e.payload);
       });
       await follow();
     })();
@@ -95,8 +131,14 @@
       localStorage.setItem("cruncha.agent", choice);
     } catch {}
     reading = null;
+    // The built-in agent gets its model at launch; adapters get it from their menu.
+    const model = (await api.getPrefs().catch(() => null))?.agents?.agents[choice]?.model;
+    pendingModel = model && choice !== "looking-glass" ? { agent: choice, model } : null;
     const v = await act(() => api.agentStart(choice));
-    if (v) view = v;
+    if (v) {
+      view = v;
+      void useModelPrefs(v);
+    }
   }
 
   async function send() {
@@ -337,7 +379,8 @@
           <button class="primary" onclick={start}>Start</button>
           <p class="small muted">
             {catalog.find((a) => a.id === choice)?.note ?? ""}. The adapters run with <code>npx</code> (Node.js).
-            <button class="link" onclick={onexternal}>Use an agent outside Cruncha…</button>
+            <button class="link" onclick={() => onsettings("agents")}>Agent settings…</button> ·
+            <button class="link" onclick={() => onsettings("external")}>Use an agent outside Cruncha…</button>
           </p>
         </div>
       {/if}

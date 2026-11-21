@@ -57,7 +57,7 @@ Cruncha documents are engineering calculation packages: prose, calc cells, Pytho
 
 **Inside Cruncha:** the user opens the **Agent** panel and starts an agent (Claude Code, Codex, Gemini CLI, …). The `cruncha` tools are already connected. Your working folder only holds these instructions: don't create files or run commands there.
 
-**Outside Cruncha:** the user turns on access in **Agent → Use an agent outside Cruncha…**. That starts an MCP server over HTTP on 127.0.0.1, with a bearer token; the dialog shows the `claude mcp add …` command and a JSON block for other agents. It serves whichever document is open in the app. If a tool says no document is open, ask the user to open one.
+**Outside Cruncha:** the user turns on access in **Settings → Agents outside Cruncha**. That starts an MCP server over HTTP on 127.0.0.1, with a bearer token; the section shows the `claude mcp add …` command and a JSON block for other agents. It serves whichever document is open in the app. If a tool says no document is open, ask the user to open one.
 
 In `read_doc`'s mirror, each cell's fence carries its ID (```` ```calc {#01JC3… description="…"} ````), and the engine's result follows on a `> ⇒` line. A failing check is marked `✗ (CHECK FAILS)`. A cell that wasn't computed says `not calculated` and why.
 

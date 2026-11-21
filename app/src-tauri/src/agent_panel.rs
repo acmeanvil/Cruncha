@@ -56,15 +56,129 @@ pub fn catalog() -> Vec<AgentDef> {
     ];
     if let Some(lg) = looking_glass_agent() {
         list.push(AgentDef {
-            id: "looking-glass".into(),
+            id: BUILTIN_ID.into(),
             name: "looking_glass agent".into(),
             command: lg.display().to_string(),
             args: vec![],
             env: BTreeMap::new(),
-            note: "demo mode; providers are set up in looking_glass".into(),
+            note: "demo mode unless it has a connection in Settings; it can't use Cruncha's tools yet".into(),
         });
     }
     list
+}
+
+/// The built-in agent (looking_glass's `lg-agent`).
+pub const BUILTIN_ID: &str = "looking-glass";
+
+/// A model provider: `(id, label, API key variable)`. The ids are lg-agent's `--provider`
+/// names (ported from looking_glass's `settings.rs`); local servers need no key.
+pub const PROVIDERS: &[(&str, &str, &str)] = &[
+    ("anthropic", "Anthropic (Claude)", "ANTHROPIC_API_KEY"),
+    ("openai", "OpenAI", "OPENAI_API_KEY"),
+    ("google", "Google Gemini", "GEMINI_API_KEY"),
+    ("huggingface", "Hugging Face", "HF_TOKEN"),
+    ("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
+    ("qwen", "Qwen", "DASHSCOPE_API_KEY"),
+    ("nvidia", "NVIDIA", "NVIDIA_API_KEY"),
+    ("tinker", "Thinking Machines", "TINKER_API_KEY"),
+    ("ollama", "Ollama (local)", ""),
+    ("lmstudio", "LM Studio (local)", ""),
+    ("openai-compatible", "OpenAI-compatible server", ""),
+];
+
+pub fn provider_key_var(provider: &str) -> &'static str {
+    PROVIDERS.iter().find(|p| p.0 == provider).map(|p| p.2).unwrap_or("")
+}
+
+/// The providers whose key an agent can run on instead of its own login (`None`: any, for
+/// the built-in agent).
+pub fn compatible_providers(agent_id: &str) -> Option<&'static [&'static str]> {
+    match agent_id {
+        BUILTIN_ID => None,
+        "claude" => Some(&["anthropic"]),
+        "codex" => Some(&["openai"]),
+        "gemini" => Some(&["google"]),
+        _ => Some(&[]),
+    }
+}
+
+/// A model an agent offered last time (cached for the Settings page's model menu).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownModel {
+    pub value: String,
+    pub name: String,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+/// Per-agent preferences.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentPref {
+    /// The model to select when a session starts (`None`: the agent's default).
+    pub model: Option<String>,
+    /// Run on this connection's API key (or, for the built-in agent, its provider).
+    pub connection: Option<String>,
+    pub known_models: Vec<KnownModel>,
+}
+
+/// One provider account; its key is in the Keychain (`connection:<id>`), never here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub id: String,
+    pub provider: String,
+    pub name: String,
+    /// Overrides the provider's API URL (a proxy, or a local server's address).
+    #[serde(default)]
+    pub base_url: String,
+}
+
+impl Connection {
+    pub fn key_account(&self) -> String {
+        format!("connection:{}", self.id)
+    }
+}
+
+/// The agents part of the app's settings.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSettings {
+    /// Preselected in the Agent panel.
+    pub default_agent: Option<String>,
+    pub agents: BTreeMap<String, AgentPref>,
+    pub connections: Vec<Connection>,
+}
+
+/// `def` as it should be launched under `settings`: the built-in agent gets its provider,
+/// base URL and model as arguments; an agent set to run on a connection gets that
+/// provider's key in its environment. Keys are read from the Keychain here, at launch.
+pub fn launch_def(mut def: AgentDef, settings: &AgentSettings) -> AgentDef {
+    let pref = settings.agents.get(&def.id).cloned().unwrap_or_default();
+    let conn = pref
+        .connection
+        .as_ref()
+        .and_then(|id| settings.connections.iter().find(|c| &c.id == id));
+    if def.id == BUILTIN_ID
+        && let Some(c) = conn
+    {
+        def.args = vec!["--provider".into(), c.provider.clone()];
+        if !c.base_url.trim().is_empty() {
+            def.args.extend(["--base-url".into(), c.base_url.trim().to_owned()]);
+        }
+        if let Some(m) = pref.model.as_ref().filter(|m| !m.trim().is_empty()) {
+            def.args.extend(["--model".into(), m.trim().to_owned()]);
+        }
+    }
+    if let Some(c) = conn {
+        let var = provider_key_var(&c.provider);
+        let allowed = compatible_providers(&def.id).is_none_or(|p| p.contains(&c.provider.as_str()));
+        if allowed && let Some(key) = crate::secrets::resolve(var, &c.key_account()) {
+            def.env.insert(var.to_owned(), key);
+        }
+    }
+    def
 }
 
 /// `lg-agent` on `PATH`, or in a looking_glass checkout next to this one.
@@ -554,6 +668,42 @@ pub async fn pump<F>(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn launch_settings_for_the_builtin_agent_and_adapters() {
+        let builtin = AgentDef {
+            id: BUILTIN_ID.into(),
+            name: "lg".into(),
+            command: "lg-agent".into(),
+            args: vec![],
+            env: BTreeMap::new(),
+            note: String::new(),
+        };
+        let mut settings = AgentSettings::default();
+        // No connection: demo mode, unchanged.
+        assert!(launch_def(builtin.clone(), &settings).args.is_empty());
+        settings.connections.push(Connection {
+            id: "ollama".into(),
+            provider: "ollama".into(),
+            name: "Ollama".into(),
+            base_url: "http://localhost:11434/v1".into(),
+        });
+        settings.agents.insert(
+            BUILTIN_ID.into(),
+            AgentPref { model: Some("qwen3".into()), connection: Some("ollama".into()), known_models: vec![] },
+        );
+        let d = launch_def(builtin, &settings);
+        assert_eq!(d.args, ["--provider", "ollama", "--base-url", "http://localhost:11434/v1", "--model", "qwen3"]);
+        assert!(d.env.is_empty(), "a local server needs no key");
+        // An adapter only takes keys of its own provider.
+        assert_eq!(compatible_providers("claude"), Some(&["anthropic"][..]));
+        settings.agents.insert("claude".into(), AgentPref { connection: Some("ollama".into()), ..Default::default() });
+        let claude = catalog().into_iter().find(|a| a.id == "claude").unwrap();
+        let d = launch_def(claude.clone(), &settings);
+        assert_eq!(d.args, claude.args);
+        assert!(d.env.is_empty());
+    }
+
     use super::*;
     use cruncha_acp::ToolCallPatch;
 

@@ -17,6 +17,7 @@ mod engine;
 mod proposals;
 mod python;
 mod report;
+mod secrets;
 mod session;
 
 use std::path::PathBuf;
@@ -100,11 +101,16 @@ async fn agent_start(
         .into_iter()
         .find(|a| a.id == agent_id)
         .ok_or_else(|| format!("unknown agent {agent_id}"))?;
-    let (doc_id, version) = {
+    let (doc_id, version, settings) = {
         let s = s.lock().await;
         let info = s.info().await?;
-        (info.id, info.version)
+        (info.id, info.version, s.prefs().agents.clone())
     };
+    // The agent's settings: provider and model for the built-in agent, an API key from the
+    // Keychain for one set to run on a connection.
+    let agent = tauri::async_runtime::spawn_blocking(move || agent_panel::launch_def(agent, &settings))
+        .await
+        .map_err(|e| e.to_string())?;
     let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), format!("ai:{}", agent.id)))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
@@ -289,7 +295,141 @@ async fn set_prefs(mut prefs: Prefs, s: State<'_, Shared>) -> Result<()> {
     // The recent and trusted lists are the backend's; the front end's copy may be stale.
     prefs.recent = s.prefs().recent.clone();
     prefs.trusted = s.prefs().trusted.clone();
+    prefs.trusted_paths = s.prefs().trusted_paths.clone();
+    // Connections are changed only by their own commands (their keys live in the Keychain).
+    prefs.agents.connections = s.prefs().agents.connections.clone();
     s.set_prefs(prefs)
+}
+
+#[tauri::command]
+async fn forget_trusted(id: String, s: State<'_, Shared>) -> Result<Prefs> {
+    let mut s = s.lock().await;
+    s.forget_trusted(&id)?;
+    Ok(s.prefs().clone())
+}
+
+#[tauri::command]
+async fn python_env(s: State<'_, Shared>) -> Result<session::PythonEnv> {
+    Ok(s.lock().await.python_env())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderView {
+    id: &'static str,
+    label: &'static str,
+    /// The API key's environment variable (empty: no key needed).
+    key_var: &'static str,
+}
+
+#[tauri::command]
+fn providers() -> Vec<ProviderView> {
+    agent_panel::PROVIDERS
+        .iter()
+        .map(|&(id, label, key_var)| ProviderView { id, label, key_var })
+        .collect()
+}
+
+/// Where each connection's key comes from. Reads the Keychain (which may ask the user once).
+#[tauri::command]
+async fn connection_keys(s: State<'_, Shared>) -> Result<HashMap<String, secrets::KeySource>> {
+    let conns = s.lock().await.prefs().agents.connections.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        conns
+            .iter()
+            .map(|c| (c.id.clone(), secrets::source(agent_panel::provider_key_var(&c.provider), &c.key_account())))
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Add a provider account; its key (if given) goes to the Keychain, never to a file.
+#[tauri::command]
+async fn connection_add(
+    provider: String,
+    name: String,
+    base_url: String,
+    key: String,
+    s: State<'_, Shared>,
+) -> Result<Prefs> {
+    if !agent_panel::PROVIDERS.iter().any(|p| p.0 == provider) {
+        return Err(format!("unknown provider {provider}"));
+    }
+    let mut s = s.lock().await;
+    let mut prefs = s.prefs().clone();
+    let taken = |id: &str| prefs.agents.connections.iter().any(|c| c.id == id);
+    let mut id = provider.clone();
+    let mut n = 2;
+    while taken(&id) {
+        id = format!("{provider}-{n}");
+        n += 1;
+    }
+    let label = agent_panel::PROVIDERS.iter().find(|p| p.0 == provider).map(|p| p.1).unwrap_or_default();
+    let conn = agent_panel::Connection {
+        id,
+        provider,
+        name: if name.trim().is_empty() { label.to_owned() } else { name.trim().to_owned() },
+        base_url: base_url.trim().to_owned(),
+    };
+    if !key.trim().is_empty() {
+        let (account, key) = (conn.key_account(), key.clone());
+        tauri::async_runtime::spawn_blocking(move || secrets::set(&account, &key))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    prefs.agents.connections.push(conn);
+    s.set_prefs(prefs)?;
+    Ok(s.prefs().clone())
+}
+
+/// Replace a connection's key in the Keychain.
+#[tauri::command]
+async fn connection_set_key(id: String, key: String, s: State<'_, Shared>) -> Result<()> {
+    let conn = s
+        .lock()
+        .await
+        .prefs()
+        .agents
+        .connections
+        .iter()
+        .find(|c| c.id == id)
+        .cloned()
+        .ok_or_else(|| format!("no connection {id}"))?;
+    tauri::async_runtime::spawn_blocking(move || secrets::set(&conn.key_account(), &key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Remove a connection and its key; agents that used it go back to their own login.
+#[tauri::command]
+async fn connection_remove(id: String, s: State<'_, Shared>) -> Result<Prefs> {
+    let mut s = s.lock().await;
+    let mut prefs = s.prefs().clone();
+    let Some(conn) = prefs.agents.connections.iter().find(|c| c.id == id).cloned() else {
+        return Ok(prefs);
+    };
+    tauri::async_runtime::spawn_blocking(move || secrets::delete(&conn.key_account()))
+        .await
+        .map_err(|e| e.to_string())??;
+    prefs.agents.connections.retain(|c| c.id != id);
+    for p in prefs.agents.agents.values_mut() {
+        if p.connection.as_deref() == Some(id.as_str()) {
+            p.connection = None;
+        }
+    }
+    s.set_prefs(prefs)?;
+    Ok(s.prefs().clone())
+}
+
+#[tauri::command]
+async fn document_settings(s: State<'_, Shared>) -> Result<session::DocumentSettings> {
+    s.lock().await.document_settings().await
+}
+
+#[tauri::command]
+async fn set_document_settings(settings: session::DocumentSettings, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.set_document_settings(settings).await
 }
 
 #[tauri::command]
@@ -517,6 +657,15 @@ pub fn run() {
             get_prefs,
             set_prefs,
             forget_recent,
+            forget_trusted,
+            python_env,
+            providers,
+            connection_keys,
+            connection_add,
+            connection_set_key,
+            connection_remove,
+            document_settings,
+            set_document_settings,
             set_document_retention,
             retention_preview,
             prune_now,

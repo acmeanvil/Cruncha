@@ -19,15 +19,14 @@
     type ResultsEvent,
     type Selection,
     type SetupProgress,
+    type TextSizes,
     type VersionView,
   } from "./lib/api";
-  import DocumentSettings from "./lib/DocumentSettings.svelte";
+  import DocumentSettings, { type DocTab } from "./lib/DocumentSettings.svelte";
   import Editor from "./lib/Editor.svelte";
   import Sidebar, { type SidebarTab } from "./lib/Sidebar.svelte";
-  import Preferences from "./lib/Preferences.svelte";
+  import SettingsPage, { type SettingsSection } from "./lib/SettingsPage.svelte";
   import SnapshotDialog from "./lib/SnapshotDialog.svelte";
-  import ReportSettingsDialog from "./lib/ReportSettingsDialog.svelte";
-  import AgentsDialog from "./lib/AgentsDialog.svelte";
   import AgentPanel from "./lib/AgentPanel.svelte";
   import { date, describeRetention } from "./lib/format";
   import type { SaveState } from "./lib/editor/sync";
@@ -35,7 +34,17 @@
   import type { Variable } from "./lib/editor/variables";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
-  const sizes = $derived(prefs.textSizes ?? DEFAULT_TEXT_SIZES);
+  /** The open document's own type sizes (Document settings), if it sets them. */
+  let docSizes = $state<TextSizes | null>(null);
+  const sizes = $derived(docSizes ?? prefs.textSizes ?? DEFAULT_TEXT_SIZES);
+  /** The Settings page is open, at this section. */
+  let settingsPage = $state<SettingsSection | null>(null);
+  let docTab = $state<DocTab>("document");
+
+  function documentSettings(tab: DocTab) {
+    docTab = tab;
+    modal = "doc";
+  }
   let doc = $state<DocInfo | null>(null);
   let history = $state<VersionView[]>([]);
   let selected = $state<Selection>({ kind: "latest" });
@@ -43,7 +52,7 @@
   let results = $state.raw<Record<string, CellResult>>({});
   let loads = $state(0);
   let save = $state<SaveState>({ status: "saved", error: null });
-  let modal = $state<"prefs" | "doc" | "snapshot" | "report" | "agents" | null>(null);
+  let modal = $state<"doc" | "snapshot" | null>(null);
   /** Agents outside Cruncha may use the document (the external MCP server is running). */
   let agentsOn = $state(false);
   /** The agent panel is shown. */
@@ -181,6 +190,7 @@
   async function load(info: DocInfo | null) {
     doc = info;
     history = info ? await api.history() : [];
+    docSizes = info ? ((await api.documentSettings().catch(() => null))?.textSizes ?? null) : null;
     if (info) await show({ kind: "latest" });
     await refreshPython();
     await refreshProposals();
@@ -298,7 +308,7 @@
   const prefsSaved = (p: Prefs) =>
     attempt(async () => {
       prefs = p;
-      doc = await api.documentInfo();
+      if (doc) doc = await api.documentInfo();
     });
 
   const heading = $derived.by(() => {
@@ -319,7 +329,15 @@
   );
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && (fileMenu = false)} />
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape") fileMenu = false;
+    if (e.key === "," && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      settingsPage = settingsPage ?? "agents";
+    }
+  }}
+/>
 
 <div class="app">
   <header class="bar">
@@ -347,7 +365,7 @@
           {#if doc}
             <hr />
             <button role="menuitem" onclick={exportReport} disabled={exporting}>Export report (PDF)…</button>
-            <button role="menuitem" onclick={() => (modal = "report")}>Report settings…</button>
+            <button role="menuitem" onclick={() => documentSettings("report")}>Report settings…</button>
           {/if}
           {#if prefs.recent?.length}
             <hr />
@@ -363,9 +381,9 @@
       <button class:agents-on={agentsOn || agentPanel} aria-pressed={agentPanel} onclick={() => (agentPanel = !agentPanel)} title="Work with an AI agent on this document">
         {#if agentsOn}<span class="dot" aria-hidden="true" title="Agents outside Cruncha can use this document"></span>{/if}Agent
       </button>
-      <button onclick={() => (modal = "doc")}>Document settings</button>
+      <button onclick={() => documentSettings("document")}>Document settings</button>
     {/if}
-    <button class="icon" title="Preferences" aria-label="Preferences" onclick={() => (modal = "prefs")}>
+    <button class="icon" title="Settings (⌘,)" aria-label="Settings" onclick={() => (settingsPage = "agents")}>
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-linecap="round" /></svg>
     </button>
   </header>
@@ -473,7 +491,7 @@
           {cellIds}
           onjumpcell={(id) => editor?.jumpToCell(id)}
           onclose={() => (agentPanel = false)}
-          onexternal={() => (modal = "agents")}
+          onsettings={(section) => (settingsPage = section)}
         />
       {/if}
     </div>
@@ -502,16 +520,34 @@
   {/if}
 </div>
 
-{#if modal === "prefs"}
-  <Preferences {prefs} {doc} onclose={() => (modal = null)} onsaved={prefsSaved} />
-{:else if modal === "snapshot" && doc}
+{#if settingsPage}
+  <SettingsPage
+    {prefs}
+    {doc}
+    section={settingsPage}
+    onclose={() => (settingsPage = null)}
+    onsaved={prefsSaved}
+    onagentschange={(on) => (agentsOn = on)}
+  />
+{/if}
+{#if modal === "snapshot" && doc}
   <SnapshotDialog version={doc.version} taken={doc.refs.map((r) => r.name)} onclose={() => (modal = null)} onsave={takeSnapshot} />
-{:else if modal === "agents" && doc}
-  <AgentsDialog onclose={() => (modal = null)} onchange={(on) => (agentsOn = on)} />
-{:else if modal === "report" && doc}
-  <ReportSettingsDialog docName={doc.name} onclose={() => (modal = null)} onsaved={(v) => void committed(v)} />
 {:else if modal === "doc" && doc}
-  <DocumentSettings {doc} {prefs} onclose={() => (modal = null)} onchanged={(d) => void load(d)} />
+  <DocumentSettings
+    {doc}
+    {prefs}
+    tab={docTab}
+    onclose={() => (modal = null)}
+    onchanged={(d) => void load(d)}
+    oncommitted={(v, s) => {
+      docSizes = s.textSizes;
+      void committed(v);
+    }}
+    onsettings={() => {
+      modal = null;
+      settingsPage = "reports";
+    }}
+  />
 {/if}
 
 <style>

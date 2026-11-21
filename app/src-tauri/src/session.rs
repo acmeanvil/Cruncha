@@ -78,12 +78,40 @@ pub struct Prefs {
     /// Ids of documents trusted to run their Python cells (documents created here are).
     #[serde(default)]
     pub trusted: Vec<String>,
+    /// Where each trusted document was last opened (id → path), for the Settings page.
+    #[serde(default)]
+    pub trusted_paths: std::collections::BTreeMap<String, String>,
     /// Type sizes in the editor, in CSS pixels.
     #[serde(default)]
     pub text_sizes: TextSizes,
     /// The office's report style (company, logo, accent color, paper).
     #[serde(default)]
     pub report_style: ReportStyle,
+    /// Agents: the default one, per-agent models and connections, provider accounts.
+    #[serde(default)]
+    pub agents: crate::agent_panel::AgentSettings,
+}
+
+/// A document's own settings, kept in its meta cell (so they are versioned like any edit).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSettings {
+    /// The report's title block and contents.
+    pub report: ReportSettings,
+    /// Type sizes for this document (`None`: the app's).
+    pub text_sizes: Option<TextSizes>,
+}
+
+/// The Python environment, independent of any document.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PythonEnv {
+    pub available: bool,
+    pub interpreter: Option<String>,
+    /// The environment's name (it identifies the package lockfile).
+    pub label: String,
+    /// Where environments live.
+    pub base: String,
 }
 
 /// Type sizes in the editor, in CSS pixels. Headings scale with `text` (H1 2×, H2 1.5×, …).
@@ -331,6 +359,7 @@ impl Session {
     /// here (a new or sample document), so it is trusted to run its Python cells.
     async fn opened(&mut self, store: Store, edited: bool, created: bool) -> Result<DocInfo> {
         let path = store.root().display().to_string();
+        let path_shown = path.clone();
         let id = store.manifest().id.clone();
         let python = Python::new(&self.python_base, &self.worker_dir);
         let mut engine = Engine::new();
@@ -348,6 +377,9 @@ impl Session {
         prefs.recent.truncate(MAX_RECENT);
         if created && !prefs.trusted.contains(&id) {
             prefs.trusted.push(id.clone());
+        }
+        if prefs.trusted.contains(&id) {
+            prefs.trusted_paths.insert(id.clone(), path_shown.clone());
         }
         if let Err(e) = self.set_prefs(prefs) {
             eprintln!("cruncha: could not save preferences: {e}");
@@ -445,7 +477,8 @@ impl Session {
         let id = self.doc()?.store.manifest().id.clone();
         let mut prefs = self.prefs.clone();
         if !prefs.trusted.contains(&id) {
-            prefs.trusted.push(id);
+            prefs.trusted.push(id.clone());
+            prefs.trusted_paths.insert(id, self.doc()?.store.root().display().to_string());
             self.set_prefs(prefs)?;
         }
         let cells = self.cells(None).await?;
@@ -491,6 +524,20 @@ impl Session {
     }
 
     /// Forget a recent document (it was moved or deleted).
+    /// Stop trusting a document to run its Python cells (it asks again next time it opens).
+    pub fn forget_trusted(&mut self, id: &str) -> Result<()> {
+        let mut prefs = self.prefs.clone();
+        prefs.trusted.retain(|t| t != id);
+        prefs.trusted_paths.remove(id);
+        self.set_prefs(prefs)?;
+        if let Some(doc) = &self.doc
+            && doc.store.manifest().id == id
+        {
+            doc.engine.lock().unwrap().trusted = false;
+        }
+        Ok(())
+    }
+
     pub fn forget_recent(&mut self, path: &str) -> Result<()> {
         let mut prefs = self.prefs.clone();
         prefs.recent.retain(|p| p != path);
@@ -898,6 +945,29 @@ impl Session {
     /// Save the report settings into the meta cell (created if the document has none): one
     /// commit, so the title block has history like everything else.
     pub async fn set_report_settings(&mut self, settings: ReportSettings) -> Result<CommitView> {
+        let mut d = self.document_settings().await?;
+        d.report = settings;
+        self.set_document_settings(d).await
+    }
+
+    /// The document's own settings (from its meta cell).
+    pub async fn document_settings(&self) -> Result<DocumentSettings> {
+        let cells = self.cells(None).await?;
+        let text_sizes = cells
+            .iter()
+            .find(|c| c.kind == CellKind::Meta)
+            .and_then(|c| c.attrs.get("textSizes"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        Ok(DocumentSettings { report: report::settings_of(&cells), text_sizes })
+    }
+
+    /// Save the document's settings into its meta cell (created if it has none), as one
+    /// commit. Nothing is committed if they didn't change.
+    pub async fn set_document_settings(&mut self, settings: DocumentSettings) -> Result<CommitView> {
+        if settings == self.document_settings().await? {
+            let results = self.results(&At::default()).await?;
+            return Ok(CommitView { info: self.info().await?, results });
+        }
         let cells = self.cells(None).await?;
         let mut cell = match cells.into_iter().find(|c| c.kind == CellKind::Meta) {
             Some(c) => c,
@@ -906,9 +976,26 @@ impl Session {
         if !cell.attrs.is_object() {
             cell.attrs = serde_json::json!({});
         }
-        cell.attrs["report"] = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
-        self.commit(vec![ChangeView::Upsert { cell }], "edit report settings")
+        cell.attrs["report"] = serde_json::to_value(&settings.report).map_err(|e| e.to_string())?;
+        match &settings.text_sizes {
+            Some(t) => cell.attrs["textSizes"] = serde_json::to_value(t).map_err(|e| e.to_string())?,
+            None => {
+                cell.attrs.as_object_mut().map(|o| o.remove("textSizes"));
+            }
+        }
+        self.commit(vec![ChangeView::Upsert { cell }], "edit document settings")
             .await
+    }
+
+    /// The Python environment (whether it is set up), with no document needed.
+    pub fn python_env(&self) -> PythonEnv {
+        let interpreter = cruncha_kernel_py::env::ready(&self.python_base, crate::python::LOCK);
+        PythonEnv {
+            available: interpreter.is_some(),
+            interpreter: interpreter.map(|p| p.display().to_string()),
+            label: crate::python::env_label(&self.python_base),
+            base: self.python_base.display().to_string(),
+        }
     }
 
     /// Python cells of the latest version that are due to run or running. Evaluates only:
@@ -1408,6 +1495,28 @@ mod tests {
         assert_eq!(r.status, ProposalStatus::Rejected);
         assert_eq!(r.decision_note.as_deref(), Some("keep 21 ft"));
         assert!(r.effects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn document_settings_live_in_the_meta_cell() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(None);
+        session.create_sample(&dir.path().join("d.cruncha")).await.unwrap();
+        let mut d = session.document_settings().await.unwrap();
+        assert_eq!(d.text_sizes, None);
+        let v0 = session.info().await.unwrap().version;
+        // Unchanged settings commit nothing.
+        session.set_document_settings(d.clone()).await.unwrap();
+        assert_eq!(session.info().await.unwrap().version, v0);
+        d.text_sizes = Some(TextSizes { text: 17.0, calc: 16.0, code: 12.0 });
+        d.report.title.project = "Bridge".into();
+        session.set_document_settings(d.clone()).await.unwrap();
+        assert_eq!(session.info().await.unwrap().version, v0 + 1, "one commit for both");
+        assert_eq!(session.document_settings().await.unwrap(), d);
+        d.text_sizes = None;
+        session.set_document_settings(d.clone()).await.unwrap();
+        assert_eq!(session.document_settings().await.unwrap().text_sizes, None);
+        assert_eq!(session.report_settings().await.unwrap().title.project, "Bridge");
     }
 
     #[tokio::test]

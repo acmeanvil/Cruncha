@@ -1,13 +1,11 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Agents: let AI agents on this computer (Claude Code, Codex, Gemini CLI, …) use the open
+<!-- Settings → Agents outside Cruncha: let AI agents on this computer (Claude Code, Codex, Gemini CLI, …) use the open
      document through Cruncha's MCP server (ADR-0009). Off until the user turns it on; the
      server listens on 127.0.0.1 only, with a token that changes every time it starts. -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type AgentServerView } from "./api";
-  import Modal from "./Modal.svelte";
-
-  let { onclose, onchange }: { onclose: () => void; onchange: (running: boolean) => void } = $props();
+  let { onchange }: { onchange: (running: boolean) => void } = $props();
 
   let server = $state<AgentServerView | null>(null);
   let busy = $state(false);
@@ -54,11 +52,11 @@
   const masked = (s: string) => (showToken ? s : s.replace(server?.token ?? "\u0000", "•".repeat(12)));
 </script>
 
-<Modal title="Agents outside Cruncha" {onclose}>
-  <p>
-    An agent you run yourself (in a terminal, an editor, …) can read this document through Cruncha: its cells,
-    the engine's results, checks and history. It can't change it yet; proposed edits come next. For an agent
-    inside Cruncha, use the Agent panel instead.
+<div>
+  <p class="small muted">
+    An agent you run yourself (in a terminal, an editor, …) can use the open document through Cruncha: its cells,
+    the engine's results, checks and history, and it can propose changes for you to accept or reject. For an
+    agent inside Cruncha, use the Agent panel instead.
   </p>
   <label class="switch">
     <input type="checkbox" checked={server != null} disabled={busy} onchange={toggle} />
@@ -84,10 +82,7 @@
     </p>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
-  {#snippet footer()}
-    <button onclick={onclose}>Close</button>
-  {/snippet}
-</Modal>
+</div>
 
 <style>
   .switch { display: flex; gap: 8px; align-items: center; margin: 10px 0; font-weight: 600; }

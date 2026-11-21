@@ -66,13 +66,16 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
                            cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
                            outline.ts and variables.ts (sidebar models)
   src/lib/*.svelte         Sidebar (Outline, Variables, Proposals, History tabs), ProposalsPanel, VariableBrowser, HistoryPanel (snapshots), SnapshotDialog,
-                           RetentionControl, Preferences, DocumentSettings, …
+                           RetentionControl, SettingsPage (this computer: agents, connections, agents outside Cruncha, defaults, report style,
+                           Python, trusted documents; ⌘,), DocumentSettings (tabs: Document, Report, History; kept in the document), …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/report.rs the latest version as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
-                           src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from the "Agents outside Cruncha" dialog,
-                           src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent)
+                           src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from Settings → Agents outside Cruncha,
+                           src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent;
+                           AgentSettings and launch_def: default agent, per-agent model and connection, provider accounts),
+                           src/secrets.rs API keys in the Keychain (`keyring`, service "cruncha"; ported from looking_glass)
 docs/spikes/               spike write-ups with measured numbers
 docs/adr/  docs/design/  docs/research/
 skills/                    Agent Skills (SKILL.md) for AI agents working inside Cruncha documents
@@ -138,6 +141,8 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - A calc's description is `attrs.description` (a string) on its cell, not part of its source; the UI shows it beside the result and in the variable browser. "Snapshots" in the UI are store tags (refs): unique names, kept through pruning, restorable from their pin (`Store::restore_ref`).
 - Agents touch a document only through `cruncha-mcp`, served by the app (the single writer). The server is off until the user allows it, binds 127.0.0.1 only, needs a fresh bearer token, and refuses browser origins. Tools return the engine's results verbatim; edits are proposals, never direct writes.
 - Proposals (ADR-0016, container format 4) live in the append-only `proposals/` table (created by the first one), never in `doc/`: one row per state change, folded by `proposal_id` and highest `seq`. Accepting is one human commit (`Store::accept`) carrying `cruncha.proposal`, then an `accepted` row; `Store::open` finishes an accept interrupted between the two. Each modify/delete records the cell's `base_rev`; a changed cell makes the proposal stale, accepted only with `force`. "If accepted" results come from `Engine::what_if` on a scratch copy (no commit, the document's memo untouched). Prune drops decided proposals older than the cutoff, except those accepted into a pinned version.
+- API keys live only in the OS credential store (`secrets.rs`): never in `preferences.json`, never sent to the web UI, read only when an agent starts and passed in its environment. Prefs hold connections without keys.
+- A document's own settings (type sizes `attrs.textSizes`, report `attrs.report`) live in its meta cell and are versioned; app-wide settings (defaults, agents, report style) live in `preferences.json`.
 - A report never evaluates: cells without a usable result print as NOT CALCULATED (with the reason), never as a pass. `@test` pass/fail comes from `Outcome::check`, not from display text. The report's title block and options are the `meta` cell's `attrs.report` (the editor doesn't show that cell). Same version → byte-identical PDF.
 - Results do not live in `doc/`. They go in a separate `results/` table (planned).
 - Table properties include `delta.dataSkippingNumIndexedCols = 1` (statistics on `id` only; spike S3b).

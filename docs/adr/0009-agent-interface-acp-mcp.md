@@ -44,7 +44,8 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - tool cards rendered as **cell proposals**, with a source diff and a result diff;
    - Accept / Reject per proposal;
    - a plan panel, model and mode menus, a usage pill, and a history of conversations linked to document versions.
-6. **Interim:** until the panel exists, use looking_glass itself as the agent console, pointing Claude Code or lg-agent at `cruncha-mcp`.
+6. **Settings** (after looking_glass's Settings): the default agent, each agent's model and connection, and provider connections whose API keys live only in the OS credential store (the `keyring` crate, MIT/Apache-2.0, as looking_glass does). A key is read when an agent starts and passed in its environment, so Claude Code, Codex and Gemini can run on an API key instead of a login, and the built-in agent gets its provider, base URL and model.
+7. **Interim:** until the panel exists, use looking_glass itself as the agent console, pointing Claude Code or lg-agent at `cruncha-mcp`.
 
 ## Options Considered
 

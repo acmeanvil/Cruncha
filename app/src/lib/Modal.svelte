@@ -7,13 +7,14 @@
     onclose,
     children,
     footer,
-  }: { title: string; onclose: () => void; children: Snippet; footer?: Snippet } = $props();
+    width = 560,
+  }: { title: string; onclose: () => void; children: Snippet; footer?: Snippet; width?: number } = $props();
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
 
 <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="modal" role="dialog" aria-modal="true" aria-label={title}>
+  <div class="modal" role="dialog" aria-modal="true" aria-label={title} style="width: min({width}px, 100%)">
     <header>
       <h2>{title}</h2>
       <button class="close" aria-label="Close" onclick={onclose}>×</button>
