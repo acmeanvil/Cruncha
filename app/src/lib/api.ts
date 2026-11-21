@@ -461,7 +461,8 @@ export const api = {
   setPrefs: (prefs: Prefs) => invoke<void>("set_prefs", { prefs }),
   reportSettings: () => invoke<ReportSettings>("report_settings"),
   setReportSettings: (settings: ReportSettings) => invoke<CommitView>("set_report_settings", { settings }),
-  exportReport: (path: string) => invoke<ExportView>("export_report", { path }),
+  /** The latest version, or (with `at`) a past version or snapshot from its stored results. */
+  exportReport: (path: string, at?: At) => invoke<ExportView>("export_report", { path, at: at ?? null }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   agentServerStatus: () => invoke<AgentServerView | null>("agent_server_status"),
   agentServerStart: () => invoke<AgentServerView>("agent_server_start"),

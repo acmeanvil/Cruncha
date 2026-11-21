@@ -104,4 +104,4 @@ That points to a real typesetter fed with data, not a print of the screen. Conve
 2. [x] App: Export report (PDF), Report settings (title block in the meta cell), house style in Preferences.
 3. [ ] Bundle a report font (OFL) for machine-independent output.
 4. [ ] User templates (ADR-0014) and a report preview in the app.
-5. [ ] Print past versions and snapshots once results are stored (`results/` table).
+5. [x] Print past versions and snapshots once results are stored (`results/` table).

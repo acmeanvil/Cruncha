@@ -17,6 +17,7 @@
     type ProposalView,
     type PythonStatus,
     type ResultsEvent,
+    type At,
     type Selection,
     type SetupProgress,
     type TextSizes,
@@ -267,21 +268,27 @@
     proposalsSoon();
   }
 
-  /** Typeset the latest version to a PDF (pending edits are saved first). */
-  const exportReport = () =>
+  /** Typeset a version to a PDF: the latest (pending edits are saved first), or the past
+   *  version or snapshot on screen, from its stored results. */
+  const exportReport = (which: Selection = { kind: "latest" }) =>
     attempt(async () => {
       if (!doc) return;
-      await flush();
+      if (which.kind === "latest") await flush();
+      const base = doc.name.replace(/\.cruncha$/, "");
+      const suffix =
+        which.kind === "ref" ? ` - ${which.name}` : which.kind === "version" ? ` - v${which.version}` : "";
+      const at: At | undefined =
+        which.kind === "ref" ? { ref: which.name } : which.kind === "version" ? { version: which.version } : undefined;
       const path = await saveDialog({
-        title: "Export report",
-        defaultPath: doc.name.replace(/\.cruncha$/, "") + ".pdf",
+        title: which.kind === "latest" ? "Export report" : `Export report of ${suffix.slice(3)}`,
+        defaultPath: (base + suffix).replace(/[/\\:]/g, "-") + ".pdf",
         filters: [{ name: "PDF", extensions: ["pdf"] }],
       });
       if (!path) return;
       exported = null;
       exporting = true;
       try {
-        exported = await api.exportReport(path);
+        exported = await api.exportReport(path, at);
       } finally {
         exporting = false;
       }
@@ -364,7 +371,7 @@
           <button role="menuitem" onclick={createSample}>New sample document…</button>
           {#if doc}
             <hr />
-            <button role="menuitem" onclick={exportReport} disabled={exporting}>Export report (PDF)…</button>
+            <button role="menuitem" onclick={() => exportReport()} disabled={exporting}>Export report (PDF)…</button>
             <button role="menuitem" onclick={() => documentSettings("report")}>Report settings…</button>
           {/if}
           {#if prefs.recent?.length}
@@ -435,6 +442,10 @@
             <span class="spacer"></span>
             <button onclick={restoreShown} title="Adds a new version with this content; nothing is lost">
               Restore this {selected.kind === "ref" ? "snapshot" : "version"}
+            </button>
+            <button onclick={() => exportReport(selected)} disabled={exporting}
+              title="A PDF of this {selected.kind === 'ref' ? 'snapshot' : 'version'}, with the Python results stored for it; nothing runs">
+              Export report…
             </button>
             <button class="link" onclick={() => show({ kind: "latest" })}>Back to latest</button>
           {:else}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Reports (spike S6): the latest version and its results as a `cruncha_report::Report`.
+//! Reports (spike S6): a version (the latest, a past one or a snapshot) and its results as a
+//! `cruncha_report::Report`.
 //!
 //! The title block and report options live in the document's `meta` cell
 //! (`attrs.report`), so they are versioned with the content. The house style is the

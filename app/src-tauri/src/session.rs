@@ -1041,26 +1041,57 @@ impl Session {
     }
 
     /// The latest version as a report, with the figures and logo it refers to.
-    pub async fn report(&mut self) -> Result<(cruncha_report::Report, Vec<(String, Vec<u8>)>)> {
-        let cells = self.cells(None).await?;
-        let results = self.latest_results().await?;
+    /// The version or snapshot `at` as a report (ADR-0015, ADR-0018). A past version prints
+    /// its own cells, title block and options, the snapshots taken up to it, and its Python
+    /// cells' stored results; nothing runs for it. Same version, same results → same PDF.
+    pub async fn report_at(&mut self, at: &At) -> Result<(cruncha_report::Report, Vec<(String, Vec<u8>)>)> {
+        let cells = self.cells_at(at).await?;
+        let results = self.results(at).await?;
         let info = self.info().await?;
+        let version = match (&at.ref_name, at.version) {
+            (Some(name), _) => info
+                .refs
+                .iter()
+                .find(|r| &r.name == name)
+                .map(|r| r.version)
+                .ok_or_else(|| format!("no snapshot named {name}"))?,
+            (None, Some(v)) => v,
+            (None, None) => info.version,
+        };
+        // When that version was committed; a pinned snapshot's history may be pruned, so
+        // fall back to when it was taken.
         let committed_ms = self
             .history()
             .await?
-            .last()
+            .iter()
+            .find(|v| v.version == version)
             .map(|v| v.timestamp_ms)
+            .or_else(|| info.refs.iter().find(|r| r.version == version).map(|r| r.created_at_ms))
             .unwrap_or_default();
         let has_python = cells.iter().any(|c| c.kind == CellKind::Python);
+        // The environments the Python output came from: stored runs say theirs.
+        let mut envs: Vec<String> = results
+            .values()
+            .filter_map(|r| r.python.as_ref()?.stored.as_ref().map(|f| f.env.clone()))
+            .filter(|e| !e.is_empty())
+            .collect();
+        envs.sort();
+        envs.dedup();
         let python_env = has_python.then(|| {
-            crate::python::env_label(&self.python_base)
+            let here = crate::python::env_label(&self.python_base);
+            let live = version == info.version
+                && results.values().any(|r| r.python.as_ref().is_some_and(|p| p.stored.is_none() && p.ms.is_some()));
+            if live && !envs.contains(&here) {
+                envs.push(here.clone());
+            }
+            if envs.is_empty() { here } else { envs.join(", ") }
         });
         let facts = DocFacts {
             name: info.name,
             id: info.id,
-            version: info.version,
+            version,
             committed_ms,
-            refs: info.refs,
+            refs: info.refs.into_iter().filter(|r| r.version <= version).collect(),
             python_env,
         };
         Ok(report::build(&cells, &results, &facts, &self.prefs.report_style))
@@ -1314,6 +1345,7 @@ mod tests {
 
     #[tokio::test]
     async fn stored_python_results_survive_reopening_and_show_in_history() {
+        use cruncha_report::{Block, Status};
         let Some(base) = python_base() else {
             eprintln!("no Python environment; skipping");
             return;
@@ -1353,6 +1385,17 @@ mod tests {
             .unwrap();
         let past = session.results(&At { version: Some(version), ref_name: None }).await.unwrap();
         assert_eq!(past["PY"].python.as_ref().unwrap().state, crate::engine::PyState::Done);
+        // …and its report prints them, from the store, with nothing run.
+        let (report, files) = session.report_at(&At { version: Some(version), ref_name: None }).await.unwrap();
+        assert_eq!(report.provenance.version, version);
+        let code = report.blocks.iter().find_map(|b| match b {
+            Block::Code { status, outputs, provenance, .. } => Some((status, outputs, provenance)),
+            _ => None,
+        });
+        let (status, outputs, provenance) = code.expect("the Python cell is printed");
+        assert_eq!(*status, Status::Ok);
+        assert!(!outputs.is_empty() && !files.is_empty(), "its figure is printed");
+        assert!(provenance.is_none(), "computed on this computer");
 
         // Cleared: the past version has nothing to show.
         let before = session.info().await.unwrap().results_bytes;
@@ -1621,7 +1664,7 @@ mod tests {
         assert_eq!(session.info().await.unwrap().version, before + 1);
         assert_eq!(session.report_settings().await.unwrap(), settings);
 
-        let (report, files) = session.report().await.unwrap();
+        let (report, files) = session.report_at(&At::default()).await.unwrap();
         assert_eq!(report.title.project, "Riverside");
         assert!(!report.revisions.is_empty(), "the sample's snapshots are revisions");
         use cruncha_report::{Block, Status};
@@ -1657,6 +1700,18 @@ mod tests {
         }
         let a = cruncha_report::render(&stored, Vec::new()).unwrap();
         assert!(a.pdf.len() > pdf.pdf.len() / 2);
+
+        // A past version prints its own title block, and only the snapshots up to it.
+        session.snapshot("Rev Q", "").await.unwrap();
+        let (old, _) = session.report_at(&At { version: Some(before), ref_name: None }).await.unwrap();
+        assert_eq!(old.provenance.version, before);
+        assert_eq!(old.title.project, "", "the title block as it was");
+        assert!(!old.revisions.iter().any(|r| r.label == "Rev Q"), "Rev Q came later");
+        let (rev, _) = session.report_at(&At { version: None, ref_name: Some("Rev Q".into()) }).await.unwrap();
+        assert_eq!(rev.title.project, "Riverside");
+        assert_eq!(rev.provenance.snapshot.as_deref(), Some("Rev Q"));
+        let again = cruncha_report::render(&old, Vec::new()).unwrap();
+        assert_eq!(again.pdf, cruncha_report::render(&old, Vec::new()).unwrap().pdf, "same version, same PDF");
     }
 
     #[tokio::test]

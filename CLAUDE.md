@@ -73,7 +73,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/stored.rs stored results (ADR-0018): look up before running, flush finished runs, trim after a prune,
-                           src/report.rs the latest version as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
+                           src/report.rs a version (latest, past or snapshot) as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
                            src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from Settings → Agents outside Cruncha,
                            src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent;
                            AgentSettings and launch_def: default agent, per-agent model and connection, provider accounts),

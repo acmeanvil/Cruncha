@@ -5,7 +5,8 @@
 //!
 //! Events to the window: `results` (fresh results of the latest version, computed in the
 //! background, `session::ResultsEvent`) and `python-setup` (environment setup progress).
-//! Reports (spike S6): `export_report` typesets the latest version to PDF.
+//! Reports (spike S6): `export_report` typesets the latest version, a past version or a
+//! snapshot to PDF.
 //! Agents (ADR-0009): `agent_server_start` serves the open document to agents on this
 //! computer through `cruncha-mcp` (127.0.0.1, with a token), until `agent_server_stop`.
 //! Their proposals (ADR-0016) are listed by `proposals` and decided by `accept_proposal` /
@@ -556,25 +557,30 @@ struct ExportView {
     timed_out: bool,
 }
 
-/// Typeset the latest version to a PDF at `path`. Waits (up to two minutes) for Python cells
-/// that are due to run, so the report shows their results; whatever still isn't computed is
-/// printed as NOT CALCULATED.
+/// Typeset a version to a PDF at `path`: the latest (`at` absent), a past version or a
+/// snapshot. For the latest, waits (up to two minutes) for Python cells that are due to run,
+/// so the report shows their results; a past version uses its stored results and runs
+/// nothing. Whatever isn't computed is printed as NOT CALCULATED.
 #[tauri::command]
-async fn export_report(path: PathBuf, s: State<'_, Shared>) -> Result<ExportView> {
+async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> Result<ExportView> {
     let start = std::time::Instant::now();
     let mut timed_out = false;
-    loop {
-        // The session lock is taken per check, so the window stays usable while Python runs.
-        if !s.lock().await.python_busy().await? {
-            break;
+    let at = at.unwrap_or_default();
+    let latest = at.ref_name.is_none() && at.version.is_none();
+    if latest {
+        loop {
+            // The session lock is taken per check, so the window stays usable while Python runs.
+            if !s.lock().await.python_busy().await? {
+                break;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(120) {
+                timed_out = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        if start.elapsed() > std::time::Duration::from_secs(120) {
-            timed_out = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
-    let (report, files) = s.lock().await.report().await?;
+    let (report, files) = s.lock().await.report_at(&at).await?;
     let problems = report
         .blocks
         .iter()
