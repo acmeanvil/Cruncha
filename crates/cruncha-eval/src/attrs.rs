@@ -56,4 +56,6 @@ pub(crate) struct Attrs {
     pub md: Option<String>,
     /// Set by compile for a finished statement (no evaluation needed).
     pub is_static: bool,
+    /// For `@test` statements: whether the comparison held (Cruncha addition).
+    pub check: Option<bool>,
 }

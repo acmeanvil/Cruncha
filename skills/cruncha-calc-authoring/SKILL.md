@@ -45,7 +45,7 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 
 ## Descriptions
 
-- A calc can carry a short description of what it defines: `attrs.description` on the cell (a string, e.g. `"Span, centre to centre of bearings"`). It is shown beside the typeset result and in the Variables panel, and it is searchable there. A cell that defines several names shares one description.
+- A calc can carry a short description of what it defines: `attrs.description` on the cell (a string, e.g. `"Span, centre to centre of bearings"`). It is shown beside the typeset result, in the Variables panel (searchable), and in the right-hand column of the PDF report. A cell that defines several names shares one description.
 - It is not part of the statement, so it never changes the result. Keep it to one line and say what the quantity *is* (and where it comes from, if not obvious), not its value: `"Factored moment, LC3"`, not `"M = 412 kip·ft"`.
 - When you propose a calc, give every input and every key result a description. Keep the other `attrs` (such as `display`) as they were.
 
@@ -71,7 +71,8 @@ end
 ```
 
 - Functions are pure (they see only their parameters) and can be defined anywhere.
-- Assertions: `@test ϕM_n ≥ M_u`. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions.
+- Assertions: `@test ϕM_n ≥ M_u`. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions. The report's cover lists every `@test` with OK or NOT OK and the sheet it is on. A test that couldn't be evaluated (an error, or an input from Python that hasn't run) is listed as ERROR or NOT CALCULATED, never as OK.
+- Units in a test's comparison value are quoted: `@test V_u < 25 'kips'`.
 
 ## Checklist before proposing a calc
 

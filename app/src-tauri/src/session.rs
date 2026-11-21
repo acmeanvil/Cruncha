@@ -18,6 +18,7 @@ use cruncha_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{CellResult, Engine};
+use crate::report::{self, DocFacts, ReportSettings, ReportStyle};
 use crate::python::{Notify, Python};
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -79,6 +80,9 @@ pub struct Prefs {
     /// Type sizes in the editor, in CSS pixels.
     #[serde(default)]
     pub text_sizes: TextSizes,
+    /// The office's report style (company, logo, accent color, paper).
+    #[serde(default)]
+    pub report_style: ReportStyle,
 }
 
 /// Type sizes in the editor, in CSS pixels. Headings scale with `text` (H1 2×, H2 1.5×, …).
@@ -692,9 +696,70 @@ impl Session {
         Ok(self.doc()?.engine.lock().unwrap().preview(source))
     }
 
+    /// Cells that changed between two versions of the open document.
+    pub async fn diff(&self, from: u64, to: u64) -> Result<Vec<cruncha_store::CellDiff>> {
+        self.doc()?.store.diff(from, to).await.map_err(err)
+    }
+
     pub async fn history(&self) -> Result<Vec<VersionView>> {
         let h = self.doc()?.store.history().await.map_err(err)?;
         Ok(h.into_iter().map(Into::into).collect())
+    }
+
+    /// The document's report settings (title block and options), from its meta cell.
+    pub async fn report_settings(&self) -> Result<ReportSettings> {
+        Ok(report::settings_of(&self.cells(None).await?))
+    }
+
+    /// Save the report settings into the meta cell (created if the document has none): one
+    /// commit, so the title block has history like everything else.
+    pub async fn set_report_settings(&mut self, settings: ReportSettings) -> Result<CommitView> {
+        let cells = self.cells(None).await?;
+        let mut cell = match cells.into_iter().find(|c| c.kind == CellKind::Meta) {
+            Some(c) => c,
+            None => Cell::new(CellKind::Meta, "0", ""),
+        };
+        if !cell.attrs.is_object() {
+            cell.attrs = serde_json::json!({});
+        }
+        cell.attrs["report"] = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
+        self.commit(vec![ChangeView::Upsert { cell }], "edit report settings")
+            .await
+    }
+
+    /// Python cells of the latest version that are due to run or running. Evaluates only:
+    /// nothing is started.
+    pub async fn python_busy(&self) -> Result<bool> {
+        let cells = self.cells(None).await?;
+        let doc = self.doc()?;
+        let jobs = doc.engine.lock().unwrap().evaluate(&cells).jobs;
+        Ok(!jobs.is_empty() && doc.python.interpreter().is_some())
+    }
+
+    /// The latest version as a report, with the figures and logo it refers to.
+    pub async fn report(&mut self) -> Result<(cruncha_report::Report, Vec<(String, Vec<u8>)>)> {
+        let cells = self.cells(None).await?;
+        let results = self.latest_results().await?;
+        let info = self.info().await?;
+        let committed_ms = self
+            .history()
+            .await?
+            .last()
+            .map(|v| v.timestamp_ms)
+            .unwrap_or_default();
+        let has_python = cells.iter().any(|c| c.kind == CellKind::Python);
+        let python_env = has_python.then(|| {
+            crate::python::env_label(&self.python_base)
+        });
+        let facts = DocFacts {
+            name: info.name,
+            id: info.id,
+            version: info.version,
+            committed_ms,
+            refs: info.refs,
+            python_env,
+        };
+        Ok(report::build(&cells, &results, &facts, &self.prefs.report_style))
     }
 
     pub fn prefs(&self) -> &Prefs {
@@ -1059,6 +1124,50 @@ mod tests {
         })
         .await;
         session.close().await;
+    }
+
+    #[tokio::test]
+    async fn the_sample_document_as_a_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let mut settings = session.report_settings().await.unwrap();
+        assert_eq!(settings, ReportSettings::default());
+        settings.title.project = "Riverside".into();
+        settings.title.checked_by = "C. Checker".into();
+        let before = session.info().await.unwrap().version;
+        session.set_report_settings(settings.clone()).await.unwrap();
+        assert_eq!(session.info().await.unwrap().version, before + 1);
+        assert_eq!(session.report_settings().await.unwrap(), settings);
+
+        let (report, files) = session.report().await.unwrap();
+        assert_eq!(report.title.project, "Riverside");
+        assert!(!report.revisions.is_empty(), "the sample's snapshots are revisions");
+        use cruncha_report::{Block, Status};
+        let calcs: Vec<_> = report
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Calc { math, status, check, .. } => Some((math, status, check)),
+                _ => None,
+            })
+            .collect();
+        for b in &report.blocks {
+            if let Block::Calc { id, math, text, status, .. } = b {
+                assert!(!math.is_empty(), "calc {id} has no Typst math: {text} ({status:?})");
+            }
+        }
+        assert!(calcs.iter().any(|(_, s, c)| **c && **s == Status::Pass), "the check passes");
+        // Without Python set up, the Python cell (and the calc that reads it) aren't calculated.
+        assert!(report.blocks.iter().any(|b| matches!(b,
+            Block::Code { status: Status::NotCalculated { .. }, .. })));
+        assert!(!report.blocks.iter().any(|b| matches!(b, Block::Other { .. })), "the meta cell isn't printed");
+        assert_eq!(report.provenance.content_hash.len(), 64);
+
+        let pdf = cruncha_report::render(&report, files).unwrap();
+        assert!(pdf.pages >= 2);
+        assert!(pdf.pdf.starts_with(b"%PDF"));
     }
 
     #[tokio::test]

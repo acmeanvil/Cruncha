@@ -88,8 +88,12 @@ export function signature(c: CellContent): string {
 }
 
 /** Store cells (document order) as an editor document; an empty document gets one paragraph. */
+/** Is `c` a block in the editor? The `meta` cell (document settings: report title block,
+ *  options) is edited in dialogs, not shown in the document. */
+export const isBlock = (c: Cell) => c.parent_id == null && c.kind !== "meta";
+
 export function docFromCells(cells: Cell[]): Node {
-  const blocks = cells.filter((c) => c.parent_id == null).map(cellToNode);
+  const blocks = cells.filter(isBlock).map(cellToNode);
   if (blocks.length === 0) blocks.push(schema.nodes.paragraph.create());
   return schema.nodes.doc.create(null, blocks);
 }

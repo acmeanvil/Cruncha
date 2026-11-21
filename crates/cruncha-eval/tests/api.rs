@@ -154,3 +154,23 @@ fn values_are_send_and_sync() {
     assert_send_sync::<Options>();
     assert_send_sync::<cruncha_eval::Outcome>();
 }
+
+#[test]
+fn tests_say_whether_they_hold() {
+    let opts = Options { unit_aware: UnitAware::Always, ..Options::default() };
+    let mut lines = BEAM.to_vec();
+    lines.extend(["@test M < 150 'kip·ft'", "@test M > 150 'kip·ft'", "@test nope > 1", "x = M = ?"]);
+    let (_, outs) = run(&lines, &opts);
+    assert_eq!(outs[3].check, Some(true), "{}", outs[3].result);
+    assert_eq!(outs[4].check, Some(false), "{}", outs[4].result);
+    assert_eq!(outs[5].check, None, "an error is neither a pass nor a fail");
+    assert!(outs[5].error.is_some());
+    assert_eq!(outs[6].check, None, "not a test");
+}
+
+#[test]
+fn unevaluated_statements_still_have_tex() {
+    let stmt = prepare("ratio = M_max / M = ?", &Options::default()).unwrap();
+    println!("{}", stmt.template_tex());
+    assert!(stmt.template_tex().contains("\\dfrac{M_{max}}{M}") || stmt.template_tex().contains("dfrac"), "{}", stmt.template_tex());
+}

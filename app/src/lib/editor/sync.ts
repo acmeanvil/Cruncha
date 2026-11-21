@@ -4,7 +4,7 @@
 // §5.3: commit on submit or idle, never per keystroke).
 import type { Node } from "prosemirror-model";
 import { api, type Cell, type CellResult, type Change, type CommitView } from "../api";
-import { nodeToContent, signature, type CellContent } from "./cells";
+import { isBlock, nodeToContent, signature, type CellContent } from "./cells";
 
 export const IDLE_MS = 1500;
 
@@ -79,7 +79,7 @@ export class DocSync {
   /** Start from these committed cells (the editor shows exactly these). */
   load(cells: Cell[]) {
     clearTimeout(this.timer);
-    this.committed = new Map(cells.filter((c) => c.parent_id == null).map((c) => [c.id, c]));
+    this.committed = new Map(cells.filter(isBlock).map((c) => [c.id, c]));
     this.sigs = new Map([...this.committed.values()].map((c) => [c.id, signature(c)]));
     this.dirty = false;
     this.set({ status: "saved", error: null });

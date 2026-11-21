@@ -238,6 +238,14 @@ pub struct Statement {
     attrs: Arc<Attrs>,
 }
 
+impl Statement {
+    /// The statement as TeX before evaluation: the formula, with the result left as
+    /// Hurmet's placeholder. Reports use it for calcs that couldn't be evaluated.
+    pub fn template_tex(&self) -> &str {
+        &self.attrs.template
+    }
+}
+
 /// Why a statement could not be prepared.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -317,6 +325,9 @@ pub struct Outcome {
     pub result: String,
     /// The error message, if evaluation failed.
     pub error: Option<String>,
+    /// For a `@test` statement that evaluated: whether its comparison holds. Reports and
+    /// summaries use this rather than reading the display text.
+    pub check: Option<bool>,
 }
 
 pub(crate) fn ctx_for<'a>(opts: &'a Options, format_spec: &str) -> Ctx<'a> {
@@ -594,6 +605,7 @@ pub fn evaluate(stmt: &Statement, vars: &Vars, opts: &Options) -> Outcome {
         values: assigned_values(&a, opts),
         tex: a.tex.clone(),
         result: a.alt.clone(),
+        check: if a.error { None } else { a.check },
         error,
     }
 }

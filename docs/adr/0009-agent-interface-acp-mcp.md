@@ -68,7 +68,11 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
 
 ## Action Items
 
-1. [ ] `cruncha-mcp` with read-only tools first (`read_doc`, `history`), on top of `cruncha-store`.
+1. [x] `cruncha-mcp` with read-only tools first (2026-11-20):
+   - Tools: `read_doc` (the text mirror), `run` (current results, waiting for Python), `explain`, `check`, `history`.
+   - Built on `rmcp` 3.11 (Apache-2.0), Streamable HTTP, served by the app on 127.0.0.1 with a bearer token, behind a Host check and refusal of browser `Origin`s.
+   - The user turns it on in the Agents dialog, which shows the `claude mcp add` command.
+   - The crate doesn't depend on `cruncha-store`; the app implements its `Backend` trait.
 2. [ ] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills (unverified).
 3. [ ] Port `lg-acp` with the `mcpServers` and capability changes.
 4. [ ] lg-agent: MCP client (check the license of an MCP crate such as `rmcp`), skills loader, per-session cancellation.

@@ -5,9 +5,14 @@
 //!
 //! Events to the window: `results` (fresh results of the latest version, computed in the
 //! background, `session::ResultsEvent`) and `python-setup` (environment setup progress).
+//! Reports (spike S6): `export_report` typesets the latest version to PDF.
+//! Agents (ADR-0009): `agent_server_start` serves the open document to agents on this
+//! computer through `cruncha-mcp` (127.0.0.1, with a token), until `agent_server_stop`.
 
+mod agents;
 mod engine;
 mod python;
+mod report;
 mod session;
 
 use std::path::PathBuf;
@@ -23,7 +28,42 @@ use session::{
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::sync::Mutex;
 
-type Shared = Mutex<Session>;
+type Shared = std::sync::Arc<Mutex<Session>>;
+
+/// The MCP server for agents, while the user allows it.
+#[derive(Default)]
+struct AgentServer(Mutex<Option<cruncha_mcp::http::Server>>);
+
+#[tauri::command]
+async fn agent_server_status(a: State<'_, AgentServer>) -> Result<Option<agents::AgentServerView>> {
+    Ok(a.0.lock().await.as_ref().map(Into::into))
+}
+
+/// Allow agents on this computer to use the open document (read, results, checks, history).
+#[tauri::command]
+async fn agent_server_start(
+    s: State<'_, Shared>,
+    a: State<'_, AgentServer>,
+) -> Result<agents::AgentServerView> {
+    let mut slot = a.0.lock().await;
+    if let Some(server) = slot.as_ref() {
+        return Ok(server.into());
+    }
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone()))
+        .await
+        .map_err(|e| format!("couldn't start the agent server: {e}"))?;
+    let view = (&server).into();
+    *slot = Some(server);
+    Ok(view)
+}
+
+#[tauri::command]
+async fn agent_server_stop(a: State<'_, AgentServer>) -> Result<()> {
+    if let Some(server) = a.0.lock().await.take() {
+        server.stop();
+    }
+    Ok(())
+}
 type Result<T> = session::Result<T>;
 
 #[tauri::command]
@@ -195,6 +235,94 @@ fn worker_dir(app: &tauri::App) -> PathBuf {
 }
 
 #[tauri::command]
+async fn report_settings(s: State<'_, Shared>) -> Result<report::ReportSettings> {
+    s.lock().await.report_settings().await
+}
+
+#[tauri::command]
+async fn set_report_settings(
+    settings: report::ReportSettings,
+    s: State<'_, Shared>,
+) -> Result<CommitView> {
+    s.lock().await.set_report_settings(settings).await
+}
+
+/// What an export produced.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportView {
+    path: String,
+    pages: usize,
+    bytes: usize,
+    ms: f64,
+    /// Checks that fail, errors, and cells not calculated (the cover's summary).
+    problems: usize,
+    /// Python cells were still running when the wait ran out.
+    timed_out: bool,
+}
+
+/// Typeset the latest version to a PDF at `path`. Waits (up to two minutes) for Python cells
+/// that are due to run, so the report shows their results; whatever still isn't computed is
+/// printed as NOT CALCULATED.
+#[tauri::command]
+async fn export_report(path: PathBuf, s: State<'_, Shared>) -> Result<ExportView> {
+    let start = std::time::Instant::now();
+    let mut timed_out = false;
+    loop {
+        // The session lock is taken per check, so the window stays usable while Python runs.
+        if !s.lock().await.python_busy().await? {
+            break;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(120) {
+            timed_out = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let (report, files) = s.lock().await.report().await?;
+    let problems = report
+        .blocks
+        .iter()
+        .filter(|b| match b {
+            cruncha_report::Block::Calc { status, .. } | cruncha_report::Block::Code { status, .. } => {
+                !matches!(status, cruncha_report::Status::Ok | cruncha_report::Status::Pass)
+            }
+            _ => false,
+        })
+        .count();
+    let rendered = tokio::task::spawn_blocking(move || cruncha_report::render(&report, files))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, &rendered.pdf).map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
+    Ok(ExportView {
+        path: path.display().to_string(),
+        pages: rendered.pages,
+        bytes: rendered.pdf.len(),
+        ms: start.elapsed().as_secs_f64() * 1e3,
+        problems,
+        timed_out,
+    })
+}
+
+/// Open a file with the system's default application (the exported PDF).
+#[tauri::command]
+fn open_path(path: PathBuf) -> Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("couldn't open {}: {e}", path.display()))
+}
+
+#[tauri::command]
 async fn prune_now(s: State<'_, Shared>) -> Result<Option<PruneView>> {
     s.lock().await.prune_now().await
 }
@@ -203,6 +331,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Scan fonts for reports in the background, so the first export is quick.
+            std::thread::spawn(cruncha_report::warm_up);
             let prefs = app.path().app_config_dir()?.join("preferences.json");
             let python = app.path().app_data_dir()?.join("python");
             let mut session = Session::new(Some(prefs)).with_python(python, worker_dir(app));
@@ -210,7 +340,8 @@ pub fn run() {
             session.on_results(move |ev| {
                 let _ = handle.emit("results", ev);
             });
-            app.manage::<Shared>(Mutex::new(session));
+            app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
+            app.manage(AgentServer::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -239,6 +370,13 @@ pub fn run() {
             run_python,
             stop_python,
             restart_python,
+            report_settings,
+            set_report_settings,
+            export_report,
+            open_path,
+            agent_server_status,
+            agent_server_start,
+            agent_server_stop,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Cruncha")
@@ -247,7 +385,11 @@ pub fn run() {
                 // Release the document (and apply its retention policy if this session edited
                 // it) before the process ends.
                 let s = app.state::<Shared>();
+                let a = app.state::<AgentServer>();
                 tauri::async_runtime::block_on(async {
+                    if let Some(server) = a.0.lock().await.take() {
+                        server.stop();
+                    }
                     s.lock().await.close().await;
                 });
             }

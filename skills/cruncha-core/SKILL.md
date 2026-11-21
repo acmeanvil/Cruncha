@@ -28,6 +28,14 @@ Cruncha documents are engineering calculation packages: prose, calc cells, Pytho
 | `history(cell_id?, since?)` | Versions, actors and diffs (see the `cruncha-history` skill) |
 | `query_data(name, polars_or_sql)` | Read-only query on a data frame in the document |
 
+**Available now** (ADR-0009, phase 1): `read_doc(from?, limit?)`, `run(cell_ids?)`, `explain(cell_id)`, `check()`, and `history(cell_id?, since?)`.
+- `run` returns the engine's current results; the document recalculates by itself, and `run` waits for Python cells that are still running.
+- `propose_edit` and `query_data` aren't available yet. Until they are, describe a change in words and let the user make it.
+
+**Connecting:** the user turns on **Agents** in the Cruncha window. That starts an MCP server over HTTP on 127.0.0.1, with a bearer token; the dialog shows the `claude mcp add …` command and a JSON block for other agents. It serves whichever document is open in the app. If a tool says no document is open, ask the user to open one.
+
+In `read_doc`'s mirror, each cell's fence carries its ID (```` ```calc {#01JC3… description="…"} ````), and the engine's result follows on a `> ⇒` line. A failing check is marked `✗ (CHECK FAILS)`. A cell that wasn't computed says `not calculated` and why.
+
 ## Cell IDs and provenance
 
 - Every cell has a stable ID (a ULID such as `01JC3…`). Refer to cells by ID in tool calls and by name in prose ("the moment `M_u` in cell 01JC3…").

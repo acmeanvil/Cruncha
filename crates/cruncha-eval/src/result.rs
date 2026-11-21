@@ -554,6 +554,7 @@ pub(crate) fn format_result(
             .map(str::to_string);
         if result.dtype & dt::BOOLEAN != 0 && is_test && comparison.is_some() {
             let body = strip_test_prefix(&stmt.entry).to_string();
+            stmt.check = Some(test_value(result));
             if test_value(result) {
                 rd = tex(&body, ctx) + ",\\text{ ok }✓";
                 alt = format!("{body}, ok ✓");

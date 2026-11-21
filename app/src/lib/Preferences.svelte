@@ -1,8 +1,19 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Preferences: editor text sizes, and the app-wide default retention for documents (ADR-0011). -->
+<!-- Preferences: editor text sizes, the office's report style, and the app-wide default
+     retention for documents (ADR-0011). -->
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, DEFAULT_TEXT_SIZES, type DocInfo, type Prefs, type Preview, type TextSizes } from "./api";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import {
+    api,
+    DEFAULT_REPORT_STYLE,
+    DEFAULT_TEXT_SIZES,
+    type DocInfo,
+    type Prefs,
+    type Preview,
+    type ReportStyle,
+    type TextSizes,
+  } from "./api";
   import Modal from "./Modal.svelte";
   import PruneConfirm from "./PruneConfirm.svelte";
   import RetentionControl from "./RetentionControl.svelte";
@@ -28,6 +39,16 @@
     { key: "code", label: "Code", hint: "Python cells and their output" },
   ];
   const clamp = (n: number, d: number) => (Number.isFinite(n) ? Math.min(32, Math.max(9, n)) : d);
+  let style = $state<ReportStyle>({ ...DEFAULT_REPORT_STYLE, ...untrack(() => prefs.reportStyle) });
+
+  async function chooseLogo() {
+    const path = await openDialog({
+      title: "Logo for report headers",
+      filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "svg"] }],
+    });
+    if (typeof path === "string") style.logoPath = path;
+  }
+
   let confirm = $state<Preview | null>(null);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -49,7 +70,11 @@
         calc: clamp(sizes.calc, DEFAULT_TEXT_SIZES.calc),
         code: clamp(sizes.code, DEFAULT_TEXT_SIZES.code),
       };
-      const next = { ...$state.snapshot(prefs), defaultRetention: $state.snapshot(policy), textSizes };
+      const reportStyle = {
+        ...$state.snapshot(style),
+        accent: /^#[0-9a-f]{6}$/i.test(style.accent) ? style.accent : DEFAULT_REPORT_STYLE.accent,
+      };
+      const next = { ...$state.snapshot(prefs), defaultRetention: $state.snapshot(policy), textSizes, reportStyle };
       await api.setPrefs(next);
       onsaved(next);
       onclose();
@@ -71,6 +96,32 @@
     {/each}
   </div>
   <p class="small"><button class="link" onclick={() => (sizes = { ...DEFAULT_TEXT_SIZES })}>Reset to defaults</button></p>
+  <h3>Reports</h3>
+  <div class="sizes">
+    <label for="rs-company">Company</label>
+    <input id="rs-company" class="wide" bind:value={style.company} placeholder="Shown in the page header" />
+    <span></span>
+    <label for="rs-logo">Logo</label>
+    <span class="logo">
+      <button id="rs-logo" onclick={chooseLogo}>{style.logoPath ? "Change…" : "Choose…"}</button>
+      {#if style.logoPath}
+        <span class="small muted path" title={style.logoPath}>{style.logoPath.split(/[\\/]/).pop()}</span>
+        <button class="link" onclick={() => (style.logoPath = null)}>Remove</button>
+      {/if}
+    </span>
+    <span class="small muted">replaces the company name</span>
+    <label for="rs-accent">Accent</label>
+    <span><input id="rs-accent" type="color" bind:value={style.accent} /></span>
+    <span class="small muted">headings and rules</span>
+    <label for="rs-paper">Paper</label>
+    <span>
+      <select id="rs-paper" bind:value={style.paper}>
+        <option value="us-letter">US Letter</option>
+        <option value="a4">A4</option>
+      </select>
+    </span>
+    <span></span>
+  </div>
   <h3>History</h3>
   <p class="small muted">
     Every change is saved as a version. This is the default for documents that don't set their
@@ -97,6 +148,10 @@
   h3 + .sizes { margin-top: 8px; }
   .sizes { display: grid; grid-template-columns: auto auto 1fr; gap: 6px 12px; align-items: center; }
   .sizes input { width: 5em; }
+  .sizes input.wide { width: 16em; }
+  .sizes input[type="color"] { width: 3em; height: 1.8em; padding: 0 2px; }
+  .logo { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .path { max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   p + h3 { margin-top: 14px; }
   .error { color: var(--danger); }
 </style>

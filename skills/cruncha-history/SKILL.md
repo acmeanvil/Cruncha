@@ -8,7 +8,7 @@ description: Use a Cruncha document's version history, which is kept automatical
 Every change to a Cruncha document is an atomic, versioned commit (ADR-0003):
 - Versions are numbered `0, 1, 2…`.
 - Each records its **actor** (`user:<name>`, `ai:<session>`, `cli`), a message, a timestamp, and a kind (`edit`, `restore`, `maintenance`).
-- **Snapshots** (tags, or refs, in the store) name known-good versions between major changes, such as "Checked" or "Rev A, issued for review", with an optional note. Users take them from the History panel. Snapshot names are unique within a document. A snapshot is the natural baseline for "what changed since…?".
+- **Snapshots** (tags, or refs, in the store) name known-good versions between major changes, such as "Checked" or "Rev A, issued for review", with an optional note. Users take them from the History panel. Snapshot names are unique within a document. A snapshot is the natural baseline for "what changed since…?". Snapshots are also the **revisions** on a report's cover (name, date, note, who took it), oldest first, so short names like `A`, `B`, `IFC` read well there.
 
 History is never rewritten:
 - A rollback is a **new** version, so it can itself be undone.

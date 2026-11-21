@@ -12,6 +12,7 @@
     type CellResult,
     type CommitView,
     type DocInfo,
+    type ExportView,
     type Prefs,
     type PythonStatus,
     type ResultsEvent,
@@ -24,6 +25,8 @@
   import Sidebar from "./lib/Sidebar.svelte";
   import Preferences from "./lib/Preferences.svelte";
   import SnapshotDialog from "./lib/SnapshotDialog.svelte";
+  import ReportSettingsDialog from "./lib/ReportSettingsDialog.svelte";
+  import AgentsDialog from "./lib/AgentsDialog.svelte";
   import { date, describeRetention } from "./lib/format";
   import type { SaveState } from "./lib/editor/sync";
   import type { OutlineItem } from "./lib/editor/outline";
@@ -38,7 +41,12 @@
   let results = $state.raw<Record<string, CellResult>>({});
   let loads = $state(0);
   let save = $state<SaveState>({ status: "saved", error: null });
-  let modal = $state<"prefs" | "doc" | "snapshot" | null>(null);
+  let modal = $state<"prefs" | "doc" | "snapshot" | "report" | "agents" | null>(null);
+  /** Agents on this computer may use the document (the MCP server is running). */
+  let agentsOn = $state(false);
+  /** An export in progress, or the last one's result. */
+  let exporting = $state(false);
+  let exported = $state<ExportView | null>(null);
   let error = $state<string | null>(null);
   let editor = $state<ReturnType<typeof Editor> | undefined>();
   let outline = $state.raw<OutlineItem[]>([]);
@@ -185,6 +193,26 @@
     if (!python?.hasPython) await refreshPython();
   }
 
+  /** Typeset the latest version to a PDF (pending edits are saved first). */
+  const exportReport = () =>
+    attempt(async () => {
+      if (!doc) return;
+      await flush();
+      const path = await saveDialog({
+        title: "Export report",
+        defaultPath: doc.name.replace(/\.cruncha$/, "") + ".pdf",
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!path) return;
+      exported = null;
+      exporting = true;
+      try {
+        exported = await api.exportReport(path);
+      } finally {
+        exporting = false;
+      }
+    });
+
   /** Snapshot the latest version (pending edits are saved first, so they're included). */
   async function takeSnapshot(name: string, note: string) {
     await flush();
@@ -252,6 +280,11 @@
           <button role="menuitem" onclick={newDocument}>New document…</button>
           <button role="menuitem" onclick={openDocument}>Open…</button>
           <button role="menuitem" onclick={createSample}>New sample document…</button>
+          {#if doc}
+            <hr />
+            <button role="menuitem" onclick={exportReport} disabled={exporting}>Export report (PDF)…</button>
+            <button role="menuitem" onclick={() => (modal = "report")}>Report settings…</button>
+          {/if}
           {#if prefs.recent?.length}
             <hr />
             <span class="label small muted">Recent</span>
@@ -262,7 +295,12 @@
         </div>
       {/if}
     </div>
-    {#if doc}<button onclick={() => (modal = "doc")}>Document settings</button>{/if}
+    {#if doc}
+      <button class:agents-on={agentsOn} onclick={() => (modal = "agents")} title="Let AI agents on this computer use this document">
+        {#if agentsOn}<span class="dot" aria-hidden="true"></span>{/if}Agents
+      </button>
+      <button onclick={() => (modal = "doc")}>Document settings</button>
+    {/if}
     <button class="icon" title="Preferences" aria-label="Preferences" onclick={() => (modal = "prefs")}>
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-linecap="round" /></svg>
     </button>
@@ -271,6 +309,16 @@
   {#if error}
     <div class="error" role="alert">
       {error} <button class="link" onclick={() => (error = null)}>Dismiss</button>
+    </div>
+  {/if}
+  {#if exporting}
+    <div class="notice" role="status"><span class="spinner" aria-hidden="true"></span> Typesetting the report… (waiting for Python cells that are still running)</div>
+  {:else if exported}
+    {@const e = exported}
+    <div class="notice" role="status">
+      <span>Report saved: {e.pages} {e.pages === 1 ? "page" : "pages"}{#if e.problems} · <strong>{e.problems} {e.problems === 1 ? "cell needs" : "cells need"} attention</strong> (see its summary){/if}{#if e.timedOut} · Python was still running{/if}</span>
+      <button onclick={() => void attempt(() => api.openPath(e.path))}>Open</button>
+      <button class="link" onclick={() => (exported = null)}>Dismiss</button>
     </div>
   {/if}
 
@@ -381,6 +429,10 @@
   <Preferences {prefs} {doc} onclose={() => (modal = null)} onsaved={prefsSaved} />
 {:else if modal === "snapshot" && doc}
   <SnapshotDialog version={doc.version} taken={doc.refs.map((r) => r.name)} onclose={() => (modal = null)} onsave={takeSnapshot} />
+{:else if modal === "agents" && doc}
+  <AgentsDialog onclose={() => (modal = null)} onchange={(on) => (agentsOn = on)} />
+{:else if modal === "report" && doc}
+  <ReportSettingsDialog docName={doc.name} onclose={() => (modal = null)} onsaved={(v) => void committed(v)} />
 {:else if modal === "doc" && doc}
   <DocumentSettings {doc} {prefs} onclose={() => (modal = null)} onchanged={(d) => void load(d)} />
 {/if}
@@ -414,6 +466,13 @@
   .menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .menu .label { padding: 2px 10px; }
   .error { background: var(--danger-bg); color: var(--danger); padding: 6px 12px; }
+  .agents-on { border-color: var(--accent); color: var(--accent); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
+  .notice {
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 13.5px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .notice span:first-child { flex: 1; }
   .main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
   .main.nosidebar { grid-template-columns: 1fr; }
   /* Layers: the document is its own stacking context, so its flyouts (block menu, z 5) stay

@@ -1,0 +1,22 @@
+[package]
+name = "cruncha-mcp"
+description = "Cruncha's MCP server: the only way agents touch a document (ADR-0009)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rmcp = { version = "3.11", features = ["server", "macros", "transport-streamable-http-server"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["net", "rt", "macros", "sync", "time"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# The test client: rmcp's own, over plain HTTP (no TLS provider needed for 127.0.0.1).
+rmcp = { version = "3.11", features = ["client", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"] }
+reqwest = { version = "0.13", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

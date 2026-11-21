@@ -17,6 +17,9 @@ cruncha-store = { path = "../../crates/cruncha-store" }
 cruncha-eval = { path = "../../crates/cruncha-eval" }
 cruncha-graph = { path = "../../crates/cruncha-graph" }
 cruncha-kernel-py = { path = "../../crates/cruncha-kernel-py" }
+cruncha-report = { path = "../../crates/cruncha-report" }
+cruncha-mcp = { path = "../../crates/cruncha-mcp" }
+sha2 = "0.10"
 base64 = "0.22"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

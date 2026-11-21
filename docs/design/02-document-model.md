@@ -143,7 +143,11 @@ A calc's **description** (`attrs.description`, one line of text) says what the q
 ## 4. Rendering and reports
 
 - **Screen:** prose in ProseMirror, and math as MathML (Temml-style TeX to MathML, generated in Rust from the AST).
-- **Report:** the evaluated document goes to **Typst**, then to PDF. Typst handles deterministic pagination, header and footer, TOC, page numbers, and a provenance appendix. Templates for calc packages include a title block, sign-off and revision table.
+- **Report:** the evaluated document goes to **Typst**, then to PDF. Typst handles deterministic pagination, header and footer, TOC, page numbers, and a provenance appendix. Templates for calc packages include a title block, sign-off and revision table. As built (S6, ADR-0015):
+  - the title block lives in the `meta` cell;
+  - revisions are snapshots;
+  - the house style is in Preferences;
+  - results that weren't computed print as NOT CALCULATED.
 - **Export targets:** PDF, HTML, Markdown mirror (§5.4), DOCX (through Typst or Pandoc, later).
 
 ---
@@ -286,12 +290,12 @@ tests/conformance/   ported Hurmet golden tests + our own
 | S3 | **Delta store benchmark:** 2,000 small MERGE commits on local disk; time-travel latency; OPTIMIZE and checkpoint behavior; a Polars round trip of `data/*`; crash halfway through a commit | Does always-committed Delta hold up? This is the riskiest assumption. |
 | S4 | Python worker: an Arrow IPC round trip of a 1M-row Polars frame with units in metadata; AST dependency scan | Data-passing cost, and how reliable dependency detection is. **Done 2026-11-20** ([write-up](../spikes/S4-python-worker.md)): the frame round-trips in 0.13–0.22 s over pipes (shared memory deferred); the scan matches bytecode on 98.6 % of the stdlib. Python cells run in the app (`python.rs`, `crates/cruncha-kernel-py`). |
 | S5 | A Rust cell compiled to WASM with the prelude, measuring compile time and call overhead | Is the Rust-block UX acceptable? |
-| S6 | A Typst report from an evaluated doc with blue-echo rendering | Report quality |
+| S6 | A Typst report from an evaluated doc with blue-echo rendering | Report quality. **Done 2026-11-20** ([write-up](../spikes/S6-reports.md), ADR-0015): embedded Typst 0.15 with an in-memory `World`. The engine's TeX converts to Typst math (371/371 golden strings compile). A 4-page calc package renders in 0.3 s, and in 30 ms after an edit, byte-identical each time. Export report (PDF) is in the app (`crates/cruncha-report`). |
 
 | ID | Decision | Recommendation |
 | --- | --- | --- |
 | D1 | Name uniqueness vs. shadowing | Strict uniqueness now; section scopes later |
 | D2 | Inline calc syntax in the text mirror | Pick after S1. It must be ASCII-typeable and not clash with Markdown or Hurmet. |
-| D3 | AI proposals: pending rows vs. Delta branches | Pending rows |
+| D3 | AI proposals: pending rows vs. Delta branches | ~~Pending rows~~ Superseded by ADR-0016: a separate append-only `proposals/` table; accepting is a human's commit |
 | D4 | Python: out-of-process vs. embedded PyO3 | Out of process (worker). S4: the overhead doesn't hurt (0.1–0.2 ms per cell, 0.2 s for a 1M-row frame) |
 | D5 | Always unit-aware (break from Hurmet's `?`/`??` duality) | Yes; `??` is accepted on import and treated as `?` |

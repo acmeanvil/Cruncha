@@ -17,6 +17,9 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0011](0011-user-configurable-history-retention.md) | User-configurable history retention: saves, size and activity-relative limits; dormant documents are never pruned | Accepted |
 | [0012](0012-ui-framework-svelte.md) | UI framework for the app shell: Svelte 5 with Vite and TypeScript (resolves 0008 item 2) | Accepted |
 | [0013](0013-out-of-line-cell-content.md) | Large cell sources are stored out of line in content-addressed blobs (refines 0010, 0011; ground for deletion vectors) | Accepted |
+| 0014 | *Reserved:* calculation templates (to be written after S6 and the agent, results, Rust-cell and polish work) | — |
+| [0015](0015-reports-embedded-typst.md) | Reports are typeset by an embedded Typst, from the evaluated document | Proposed |
+| [0016](0016-agent-proposals-table.md) | Agent proposals live in a `proposals/` table, applied by a human's commit (supersedes design 02 D3) | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

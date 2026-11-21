@@ -61,3 +61,9 @@ test("arrays and other multi-line values are collapsible; scalars aren't", () =>
   expect(isTall({ ...base, tex: "\\begin{pmatrix}1 \\\\ 2\\end{pmatrix}" })).toBe(true);
   expect(isTall({ ...base, tex: null, summary: "ndarray float64 (51,)" })).toBe(false);
 });
+
+test("the meta cell (report settings) is not a block, so the editor never shows or deletes it", () => {
+  const doc = docFromCells([cell("META", "meta", "0", "", { report: { title: { project: "X" } } }), ...cells]);
+  expect(doc.childCount).toBe(cells.length);
+  doc.forEach((n) => expect(n.attrs.id).not.toBe("META"));
+});

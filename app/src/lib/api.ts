@@ -18,6 +18,64 @@ export interface Prefs {
   recent?: string[];
   /** Editor type sizes in CSS pixels (the backend fills in defaults). */
   textSizes?: TextSizes;
+  /** The office's report style. */
+  reportStyle?: ReportStyle;
+}
+
+/** The office's look for reports (Preferences; the same for every document here). */
+export interface ReportStyle {
+  company: string;
+  /** A PNG, JPEG or SVG file for the page header. */
+  logoPath: string | null;
+  /** `#RRGGBB` */
+  accent: string;
+  paper: "us-letter" | "a4";
+}
+
+export const DEFAULT_REPORT_STYLE: ReportStyle = { company: "", logoPath: null, accent: "#1f4e79", paper: "us-letter" };
+
+/** The cover page's title block (kept in the document, with history). */
+export interface TitleBlock {
+  title: string;
+  subject: string;
+  project: string;
+  projectNumber: string;
+  client: string;
+  preparedBy: string;
+  checkedBy: string;
+  approvedBy: string;
+}
+
+export interface ReportOptions {
+  showCode: boolean;
+  checkSummary: boolean;
+  tableOfContents: boolean;
+}
+
+export interface ReportSettings {
+  title: TitleBlock;
+  options: ReportOptions;
+}
+
+/** The MCP server agents on this computer connect to (while allowed). */
+export interface AgentServerView {
+  url: string;
+  token: string;
+  /** `claude mcp add …` */
+  claudeCommand: string;
+  /** An `mcpServers` JSON block for other agents. */
+  configJson: string;
+}
+
+export interface ExportView {
+  path: string;
+  pages: number;
+  bytes: number;
+  ms: number;
+  /** Failing checks, errors and cells not calculated. */
+  problems: number;
+  /** Python was still running when the wait ran out. */
+  timedOut: boolean;
 }
 
 /** Editor type sizes in CSS pixels. Headings scale with `text` (H1 2×, H2 1.5×, …). */
@@ -222,6 +280,13 @@ export const api = {
   history: () => invoke<VersionView[]>("history"),
   getPrefs: () => invoke<Prefs>("get_prefs"),
   setPrefs: (prefs: Prefs) => invoke<void>("set_prefs", { prefs }),
+  reportSettings: () => invoke<ReportSettings>("report_settings"),
+  setReportSettings: (settings: ReportSettings) => invoke<CommitView>("set_report_settings", { settings }),
+  exportReport: (path: string) => invoke<ExportView>("export_report", { path }),
+  openPath: (path: string) => invoke<void>("open_path", { path }),
+  agentServerStatus: () => invoke<AgentServerView | null>("agent_server_status"),
+  agentServerStart: () => invoke<AgentServerView>("agent_server_start"),
+  agentServerStop: () => invoke<void>("agent_server_stop"),
   forgetRecent: (path: string) => invoke<void>("forget_recent", { path }),
   setDocumentRetention: (policy: Retention | null) =>
     invoke<DocInfo>("set_document_retention", { policy }),

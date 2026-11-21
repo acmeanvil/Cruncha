@@ -48,6 +48,8 @@ pub struct CellResult {
     pub pending: bool,
     /// For Python cells: run state and output.
     pub python: Option<PyView>,
+    /// For `@test` calcs that evaluated: whether the check holds.
+    pub check: Option<bool>,
 }
 
 /// One variable's value, for the variable browser.
@@ -605,6 +607,7 @@ impl Engine {
             result.values = value_views(&outcome.values);
             result.tex = outcome.tex;
             result.text = outcome.result;
+            result.check = outcome.check;
             result.error = outcome.error.map(|e| clean_message(&e));
             out.insert(id.clone(), result);
         }
@@ -850,6 +853,7 @@ impl Engine {
             tex: o.tex,
             text: o.result,
             error: o.error.map(|e| clean_message(&e)),
+            check: o.check,
             values: value_views(&o.values),
             defines: stmt.defines,
             reads: stmt.reads,

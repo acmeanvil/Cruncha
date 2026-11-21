@@ -65,6 +65,8 @@ plt.plot(x.magnitude, moment.magnitude)
 
 Build quantities with Cruncha's registry so they combine with calc values: `from cruncha import ureg, Q_`, then `Q_(12, "kip")`. A quantity from another pint registry can't come back to a calc.
 
+**In the PDF report** a Python cell prints its source (unless Report settings turn that off), its figures, tables (first 50 rows), printed text, and the names it defines. A cell that hasn't run with its current source (Python not set up, not trusted, edited and not run) is printed as NOT CALCULATED, with the reason. Export waits up to two minutes for cells that are running.
+
 **Output:** every matplotlib figure the cell left open (as an image; figures are closed afterwards), then the value of the last expression (Polars frames as a table of the first 50 rows, other values as their `repr`), then what it printed. Output is shown as data, never as HTML, so `_repr_html_` isn't used. Calling Python functions from calc cells is planned, not available yet.
 
 ## Rust

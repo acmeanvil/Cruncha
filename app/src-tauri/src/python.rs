@@ -23,6 +23,14 @@ use crate::engine::{CellResult, Engine, PyNames};
 /// The packages Python cells get.
 pub const LOCK: &str = include_str!("../../../python/requirements.lock");
 
+/// The environment's name (`env-9a9710dddbc2`): it identifies the lockfile Python ran with.
+pub fn env_label(base: &std::path::Path) -> String {
+    env::env_dir(base, LOCK)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Called with fresh results of the latest version.
 pub type Notify = Arc<dyn Fn(HashMap<String, CellResult>) + Send + Sync>;
 
