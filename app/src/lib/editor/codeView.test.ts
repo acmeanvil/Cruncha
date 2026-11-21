@@ -91,8 +91,11 @@ test("Shift+Enter in a Python cell runs it", () => {
 });
 
 test("the stored results label says when a result wasn't reproduced on this computer", () => {
-    const l = storedLabel({ by: "user:pat@office-mac", atUs: Date.UTC(2026, 10, 1) * 1000, env: "env-1", elsewhere: true });
+    const l = storedLabel({ by: "user:pat@office-mac", atUs: Date.UTC(2026, 10, 1) * 1000, env: "env-1", elsewhere: true, otherEnv: false });
     expect(l.text).toMatch(/^computed on office-mac, .* · not run on this computer$/);
     expect(l.title).toContain("pat");
-    expect(storedLabel({ by: "user:me@here", atUs: 0, env: "", elsewhere: false }).text).toMatch(/^stored /);
+    expect(storedLabel({ by: "user:me@here", atUs: 0, env: "", elsewhere: false, otherEnv: false }).text).toMatch(/^stored /);
+  expect(storedLabel({ by: "user:me@here", atUs: 0, env: "env-old", elsewhere: false, otherEnv: true }).text).toMatch(
+    /with a different Python environment \(env-old\) · not run here$/,
+  );
 });

@@ -12,7 +12,7 @@ use std::sync::{Mutex, OnceLock};
 
 use cruncha_store::{Cell, Result, Store};
 
-use crate::engine::{Engine, Run};
+use crate::engine::{Engine, PyKey, Run};
 
 /// Lookups per evaluation: each round can unlock the next level of a Python → calc → Python
 /// chain (a calc's value is known only once the cell it reads has an outcome).
@@ -37,23 +37,34 @@ pub fn this_computer(actor: &str) -> String {
     format!("{actor}@{}", host())
 }
 
-/// Evaluate `cells`, using stored runs for every Python cell whose inputs match one. Nothing
-/// runs here; the returned jobs are the cells still due.
+/// Evaluate `cells`, using stored runs for every Python cell whose inputs match one: first by
+/// input hash (a current result), then by base hash (a result from another Python
+/// environment, shown only while the cell can't run here; ADR-0019). Nothing runs here; the
+/// returned jobs are the cells still due.
 pub async fn evaluate(store: &Store, engine: &Mutex<Engine>, cells: &[Cell]) -> Result<Run> {
-    let mut tried: HashSet<(String, String)> = HashSet::new();
+    let mut tried: HashSet<PyKey> = HashSet::new();
     let mut run = engine.lock().unwrap().evaluate(cells);
     for _ in 0..MAX_ROUNDS {
-        let want: HashSet<(String, String)> = run.missing.iter().filter(|k| !tried.contains(*k)).cloned().collect();
+        let want: Vec<PyKey> = run.missing.iter().filter(|k| !tried.contains(*k)).cloned().collect();
         if want.is_empty() {
             break;
         }
-        let found = store.results_for(&want).await?;
-        tried.extend(want);
-        if found.is_empty() {
+        tried.extend(want.iter().cloned());
+        let exact = store
+            .results_for(&want.iter().map(|k| (k.id.clone(), k.key.clone())).collect())
+            .await?;
+        let rest: HashSet<(String, String)> = want
+            .iter()
+            .filter(|k| !exact.contains_key(&(k.id.clone(), k.key.clone())))
+            .map(|k| (k.id.clone(), k.base.clone()))
+            .collect();
+        let foreign = if rest.is_empty() { Default::default() } else { store.results_by_base(&rest).await? };
+        if exact.is_empty() && foreign.is_empty() {
             break;
         }
         let mut e = engine.lock().unwrap();
-        e.use_stored(cells, found.into_values().collect());
+        e.use_stored(cells, exact.into_values().collect());
+        e.use_foreign(cells, foreign.into_values().collect());
         run = e.evaluate(cells);
     }
     Ok(run)
@@ -72,10 +83,10 @@ pub async fn flush(store: &mut Store, engine: &Mutex<Engine>, actor: &str) -> Re
     Ok(r.written)
 }
 
-/// The keys `cells` look up: their Python cells' input hashes.
-async fn keys_of(store: &Store, engine: &Engine, cells: &[Cell]) -> Result<HashSet<(String, String)>> {
+/// The keys `cells` look up: their Python cells' input and base hashes.
+async fn keys_of(store: &Store, engine: &Engine, cells: &[Cell]) -> Result<Vec<PyKey>> {
     let e = Mutex::new(engine.for_past());
-    Ok(evaluate(store, &e, cells).await?.keys.into_iter().collect())
+    Ok(evaluate(store, &e, cells).await?.keys.into_values().collect())
 }
 
 /// After a prune: keep the stored runs that what's left of the history can use, and drop the
@@ -87,11 +98,14 @@ pub async fn retain_after_prune(store: &mut Store, engine: &Mutex<Engine>, actor
         return Ok(0);
     }
     let past = engine.lock().unwrap().for_past();
-    let mut keep = keys_of(store, &past, &store.cells().await?).await?;
-    keep.extend(keys_of(store, &past, &store.cells_at(store.earliest_version()).await?).await?);
+    let mut used = keys_of(store, &past, &store.cells().await?).await?;
+    used.extend(keys_of(store, &past, &store.cells_at(store.earliest_version()).await?).await?);
     for r in store.refs().await? {
-        keep.extend(keys_of(store, &past, &store.cells_at_ref(&r.name).await?).await?);
+        used.extend(keys_of(store, &past, &store.cells_at_ref(&r.name).await?).await?);
     }
+    // Either hash keeps a run (ADR-0019).
+    let keep: HashSet<(String, String)> = used.iter().map(|k| (k.id.clone(), k.key.clone())).collect();
+    let keep_base: HashSet<(String, String)> = used.into_iter().map(|k| (k.id, k.base)).collect();
     let earliest = store.earliest_version();
     let recent: HashSet<(String, String)> = store
         .result_entries()
@@ -102,9 +116,11 @@ pub async fn retain_after_prune(store: &mut Store, engine: &Mutex<Engine>, actor
         .collect();
     store
         .retain_results(
-            |cell, hash| {
-                let k = (cell.to_owned(), hash.to_owned());
-                keep.contains(&k) || recent.contains(&k)
+            |e| {
+                let k = (e.cell_id.clone(), e.input_hash.clone());
+                keep.contains(&k)
+                    || recent.contains(&k)
+                    || e.base_hash.as_ref().is_some_and(|b| keep_base.contains(&(e.cell_id.clone(), b.clone())))
             },
             actor,
         )

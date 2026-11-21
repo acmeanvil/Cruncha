@@ -24,6 +24,9 @@ use crate::schema::conform;
 
 /// The column listing a row's blobs (space-separated hashes).
 pub(crate) const BLOBS_COLUMN: &str = "blobs";
+/// The environment-free hash (ADR-0019), added after the first release of the table:
+/// last, nullable, and added to older tables on open.
+pub(crate) const BASE_HASH_COLUMN: &str = "base_hash";
 /// Strings at least this long go to `blobs/`.
 pub(crate) const BLOB_STRING_BYTES: usize = 4 << 10;
 /// A `values` or `outputs` document still this long after its strings moved out goes whole.
@@ -64,6 +67,10 @@ pub struct RunRecord {
     pub cell_id: String,
     /// The engine's hash of what produced the run (hex SHA-256).
     pub input_hash: String,
+    /// The same without the Python environment (ADR-0019): finds this run from another
+    /// environment. `None` for runs stored before it existed.
+    #[serde(default)]
+    pub base_hash: Option<String>,
     pub status: RunStatus,
     /// Each defined name's value and summary (the engine's format).
     pub values: Value,
@@ -95,6 +102,7 @@ impl RunRecord {
 pub struct RunEntry {
     pub cell_id: String,
     pub input_hash: String,
+    pub base_hash: Option<String>,
     pub status: RunStatus,
     pub env: String,
     pub computed_at_us: i64,
@@ -129,6 +137,7 @@ pub static RESULTS_SCHEMA: LazyLock<SchemaRef> = LazyLock::new(|| {
         Field::new("computed_by", DataType::Utf8, false),
         Field::new("doc_version", DataType::Int64, false),
         Field::new(BLOBS_COLUMN, DataType::Utf8, true),
+        Field::new(BASE_HASH_COLUMN, DataType::Utf8, true),
     ]))
 });
 
@@ -267,6 +276,7 @@ pub(crate) fn rows_to_batch(rows: &[Row]) -> Result<RecordBatch> {
         s(&|r| Some(r.entry.computed_by.as_str())),
         i(&|r| r.entry.doc_version as i64),
         Arc::new(blobs.iter().map(|b| b.as_deref()).collect::<StringArray>()),
+        s(&|r| r.entry.base_hash.as_deref()),
     ];
     Ok(RecordBatch::try_new(RESULTS_SCHEMA.clone(), columns)?)
 }
@@ -295,12 +305,14 @@ pub(crate) fn batches_to_rows(batches: &[RecordBatch]) -> Result<Vec<Row>> {
         let by = col::<StringArray>(&b, "computed_by")?;
         let ver = col::<Int64Array>(&b, "doc_version")?;
         let blobs = col::<StringArray>(&b, BLOBS_COLUMN)?;
+        let base = col::<StringArray>(&b, BASE_HASH_COLUMN)?;
         let s = |a: &StringArray, i: usize| a.is_valid(i).then(|| a.value(i).to_owned());
         for i in 0..b.num_rows() {
             out.push(Row {
                 entry: RunEntry {
                     cell_id: cell.value(i).to_owned(),
                     input_hash: hash.value(i).to_owned(),
+                    base_hash: s(base, i),
                     status: RunStatus::parse(status.value(i))
                         .ok_or_else(|| Error::Corrupt(format!("unknown run status {}", status.value(i))))?,
                     env: env.value(i).to_owned(),

@@ -38,12 +38,18 @@ export function storedLabel(f: StoredFrom): { text: string; title: string } {
   const host = f.by.includes("@") ? f.by.slice(f.by.lastIndexOf("@") + 1) : "another computer";
   const who = f.by.replace(/^user:/, "").replace(/@.*$/, "");
   const date = new Date(f.atUs / 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  return f.elsewhere
-    ? {
-        text: `computed on ${host}, ${date} · not run on this computer`,
-        title: `Stored with the document by ${who} on ${host} (${f.env || "unknown environment"}). Its numbers weren't reproduced here.`,
-      }
-    : { text: `stored ${date}`, title: `From the document's stored results (${f.env || "unknown environment"}); it didn't need to run again.` };
+  const env = f.env || "unknown environment";
+  if (f.elsewhere || f.otherEnv) {
+    const where = f.elsewhere ? `computed on ${host}, ${date}` : `computed ${date}`;
+    const how = f.otherEnv ? ` with a different Python environment (${env})` : "";
+    return {
+      text: `${where}${how} · not run ${f.elsewhere ? "on this computer" : "here"}`,
+      title:
+        `Stored with the document by ${who} on ${host} (${env}). Its numbers weren't reproduced here.` +
+        (f.otherEnv ? " It runs again with this computer's environment once the document is trusted and the cell has been run." : ""),
+    };
+  }
+  return { text: `stored ${date}`, title: `From the document's stored results (${env}); it didn't need to run again.` };
 }
 
 function seconds(ms: number) {
@@ -129,7 +135,7 @@ export class CodeView implements NodeView {
       this.head.append(el("span", `code-state ${py.state}`, label));
       if (py.stored) {
         const l = storedLabel(py.stored);
-        const tag = el("span", `code-stored${py.stored.elsewhere ? " elsewhere" : ""}`, l.text);
+        const tag = el("span", `code-stored${py.stored.elsewhere || py.stored.otherEnv ? " elsewhere" : ""}`, l.text);
         tag.title = l.title;
         this.head.append(tag);
       }

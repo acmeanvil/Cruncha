@@ -143,6 +143,25 @@ fn formula_tex(source: &str) -> Option<String> {
     (!f.is_empty() && !f.contains('〖')).then(|| f.to_owned())
 }
 
+/// The report's note for output read from stored results that weren't reproduced here:
+/// computed on another computer (ADR-0018) or with another Python environment (ADR-0019).
+fn stored_note(f: &crate::engine::StoredFrom) -> Option<String> {
+    let date = &iso_utc(f.at_us / 1000)[..10];
+    let host = f.by.rsplit_once('@').map_or("another computer", |(_, h)| h);
+    match (f.elsewhere, f.other_env) {
+        (false, false) => None,
+        (true, false) => Some(format!("Computed on {host}, {date}; not run on this computer (stored result)")),
+        (false, true) => Some(format!(
+            "Computed {date} with a different Python environment ({}); not run with this one (stored result)",
+            f.env
+        )),
+        (true, true) => Some(format!(
+            "Computed on {host}, {date}, with a different Python environment ({}); not run on this computer (stored result)",
+            f.env
+        )),
+    }
+}
+
 /// Errors that mean "not computed" rather than "wrong": inputs from Python that aren't there.
 fn not_calculated(error: &str) -> bool {
     error.contains("comes from a Python cell")
@@ -275,13 +294,7 @@ pub fn build(
                     status: python_status(r),
                     outputs,
                     defines,
-                    provenance: r.python.as_ref().and_then(|p| p.stored.as_ref()).filter(|f| f.elsewhere).map(|f| {
-                        let host = f.by.rsplit_once('@').map_or("another computer", |(_, h)| h);
-                        format!(
-                            "Computed on {host}, {}; not run on this computer (stored result)",
-                            &iso_utc(f.at_us / 1000)[..10]
-                        )
-                    }),
+                    provenance: r.python.as_ref().and_then(|p| p.stored.as_ref()).and_then(stored_note),
                 });
             }
             k => blocks.push(Block::Other { kind: k.as_str().to_owned(), source: c.source.clone() }),

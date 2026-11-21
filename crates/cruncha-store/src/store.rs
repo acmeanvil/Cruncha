@@ -459,6 +459,15 @@ impl Store {
             store.migrate().await?;
         }
         store.recover_accepted().await?;
+        if let Some(t) = store.results.clone() {
+            // `base_hash` (ADR-0019) came after the table; older ones gain it, still format 5.
+            let field = deltalake::arrow::datatypes::Field::new(
+                results::BASE_HASH_COLUMN,
+                deltalake::arrow::datatypes::DataType::Utf8,
+                true,
+            );
+            store.results = Some(store.add_missing_columns(t, vec![field], "add base_hash to results").await?);
+        }
         store.result_blobs = store
             .result_rows()
             .await?
@@ -1465,6 +1474,7 @@ impl Store {
                 entry: RunEntry {
                     cell_id: r.cell_id,
                     input_hash: r.input_hash,
+                    base_hash: r.base_hash,
                     status: r.status,
                     env: r.env,
                     computed_at_us: r.computed_at_us,
@@ -1540,9 +1550,24 @@ impl Store {
     /// The stored runs for `keys` (`(cell_id, input_hash)`), newest per key. Keys with no
     /// stored run are absent.
     pub async fn results_for(&self, keys: &HashSet<(String, String)>) -> Result<HashMap<(String, String), RunRecord>> {
+        self.lookup_results(keys, |e| Some(e.input_hash.as_str())).await
+    }
+
+    /// The stored runs for `keys` (`(cell_id, base_hash)`, ADR-0019), newest per key: runs
+    /// with the same inputs from any Python environment.
+    pub async fn results_by_base(&self, keys: &HashSet<(String, String)>) -> Result<HashMap<(String, String), RunRecord>> {
+        self.lookup_results(keys, |e| e.base_hash.as_deref()).await
+    }
+
+    async fn lookup_results(
+        &self,
+        keys: &HashSet<(String, String)>,
+        hash_of: impl Fn(&RunEntry) -> Option<&str>,
+    ) -> Result<HashMap<(String, String), RunRecord>> {
         let mut newest: HashMap<(String, String), results::Row> = HashMap::new();
         for r in self.result_rows().await? {
-            let k = (r.entry.cell_id.clone(), r.entry.input_hash.clone());
+            let Some(h) = hash_of(&r.entry) else { continue };
+            let k = (r.entry.cell_id.clone(), h.to_owned());
             if !keys.contains(&k) {
                 continue;
             }
@@ -1570,6 +1595,7 @@ impl Store {
                     RunRecord {
                         cell_id: r.entry.cell_id,
                         input_hash: r.entry.input_hash,
+                        base_hash: r.entry.base_hash,
                         status: r.entry.status,
                         values,
                         outputs,
@@ -1587,12 +1613,12 @@ impl Store {
             .collect()
     }
 
-    /// Keep only the stored runs `keep` accepts (by cell id and input hash) and delete the
+    /// Keep only the stored runs `keep` accepts (by their entry: cell id, hashes, …) and delete the
     /// rest, with their files, log and unreferenced blobs. The caller decides what the
     /// retained versions and snapshots can still use (ADR-0018 §5); a `keep` that accepts
     /// nothing clears the table. Results are a cache, so their own history isn't kept.
     /// Returns how many runs were dropped. Safe to repeat after a crash.
-    pub async fn retain_results(&mut self, keep: impl Fn(&str, &str) -> bool, actor: &str) -> Result<usize> {
+    pub async fn retain_results(&mut self, keep: impl Fn(&RunEntry) -> bool, actor: &str) -> Result<usize> {
         let Some(table) = self.results.clone() else {
             return Ok(0);
         };
@@ -1600,7 +1626,7 @@ impl Store {
         let total = rows.len();
         let kept: Vec<results::Row> = rows
             .into_iter()
-            .filter(|r| keep(&r.entry.cell_id, &r.entry.input_hash))
+            .filter(|r| keep(&r.entry))
             .collect();
         let dropped = total - kept.len();
         let mut table = table;
@@ -1643,7 +1669,7 @@ impl Store {
 
     /// Drop every stored result ("Clear stored results").
     pub async fn clear_results(&mut self, actor: &str) -> Result<usize> {
-        self.retain_results(|_, _| false, actor).await
+        self.retain_results(|_| false, actor).await
     }
 }
 

@@ -29,6 +29,7 @@ fn run(cell: &str, hash: &str, at: i64, image: &str) -> RunRecord {
     RunRecord {
         cell_id: cell.into(),
         input_hash: hash.into(),
+        base_hash: Some(format!("base-{hash}")),
         status: RunStatus::Done,
         values: json!([{ "name": "x", "summary": "1", "plain": { "kind": "number", "value": "1" } }]),
         outputs: json!([{ "kind": "image", "mime": "image/png", "data": image, "width": 10, "height": 10 },
@@ -89,6 +90,24 @@ async fn runs_round_trip_without_adding_versions() {
 }
 
 #[tokio::test]
+async fn runs_are_found_by_their_environment_free_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = seeded(&dir).await;
+    let mut old = run("P", "h-env1", 10, "x");
+    old.base_hash = Some("b".into());
+    let mut legacy = run("Q", "h-q", 10, "x");
+    legacy.base_hash = None;
+    s.put_results(vec![old, legacy], "user:test").await.unwrap();
+    let got = s.results_by_base(&keys(&[("P", "b"), ("Q", "b")])).await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[&("P".into(), "b".into())].input_hash, "h-env1");
+    assert!(s.results_for(&keys(&[("P", "b")])).await.unwrap().is_empty(), "not an input hash");
+    drop(s);
+    let s = Store::open(path(&dir)).await.unwrap();
+    assert_eq!(s.results_by_base(&keys(&[("P", "b")])).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn the_newest_run_of_a_key_wins() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = seeded(&dir).await;
@@ -125,7 +144,7 @@ async fn retain_drops_runs_and_their_blobs() {
         .await
         .unwrap();
     assert_eq!(blob_count(&dir), 2);
-    let dropped = s.retain_results(|_, h| h == "keep", "system").await.unwrap();
+    let dropped = s.retain_results(|e| e.input_hash == "keep", "system").await.unwrap();
     assert_eq!(dropped, 1);
     assert_eq!(blob_count(&dir), 1);
     assert_eq!(s.results_for(&keys(&[("P", "keep")])).await.unwrap().len(), 1);
@@ -164,4 +183,44 @@ async fn prune_keeps_result_blobs_and_removes_orphans_of_a_crash() {
     assert_eq!(blob_count(&dir), 1, "the orphan goes, the stored run's figure stays");
     let got = s.results_for(&keys(&[("P", "h")])).await.unwrap();
     assert_eq!(got[&("P".into(), "h".into())].outputs[0]["data"], json!(image));
+}
+
+#[tokio::test]
+async fn a_results_table_from_before_base_hash_gains_the_column() {
+    use deltalake::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringArray};
+    use deltalake::arrow::datatypes::{DataType, Field, Schema};
+    use deltalake::kernel::engine::arrow_conversion::TryIntoKernel as _;
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    drop(seeded(&dir).await);
+
+    // The table as ADR-0018 first wrote it: no `base_hash`.
+    let text = |n: &str, null| Field::new(n, DataType::Utf8, null);
+    let int = |n: &str| Field::new(n, DataType::Int64, false);
+    let schema = Arc::new(Schema::new(vec![
+        text("cell_id", false), text("input_hash", false), text("status", false), text("values", true),
+        text("outputs", true), text("stdout", true), text("stderr", true), text("error", true),
+        int("duration_ms"), text("env", false), int("computed_at_us"), text("computed_by", false),
+        int("doc_version"), text("blobs", true),
+    ]));
+    let s = |v: Option<&str>| -> ArrayRef { Arc::new(StringArray::from(vec![v])) };
+    let i = |v: i64| -> ArrayRef { Arc::new(Int64Array::from(vec![v])) };
+    let batch = RecordBatch::try_new(schema.clone(), vec![
+        s(Some("P")), s(Some("old")), s(Some("done")), s(Some("[]")), s(Some("[]")), s(Some("hi")), s(Some("")),
+        s(None), i(5), s(Some("env-test")), i(10), s(Some("user:test@host")), i(1), s(None),
+    ]).unwrap();
+    let results_dir = path(&dir).join("results");
+    std::fs::create_dir_all(&results_dir).unwrap();
+    let url = url::Url::from_directory_path(&results_dir).unwrap();
+    let kernel: deltalake::kernel::StructType = schema.as_ref().try_into_kernel().unwrap();
+    let table = deltalake::DeltaTable::try_from_url(url).await.unwrap()
+        .create().with_table_name("results").with_columns(kernel.fields().cloned()).await.unwrap();
+    table.write([batch]).await.unwrap();
+
+    let mut s = Store::open(path(&dir)).await.unwrap();
+    let got = s.results_for(&keys(&[("P", "old")])).await.unwrap();
+    assert_eq!(got[&("P".into(), "old".into())].base_hash, None);
+    assert_eq!(got[&("P".into(), "old".into())].stdout, "hi");
+    s.put_results(vec![run("P", "new", 20, "x")], "user:test").await.unwrap();
+    assert_eq!(s.results_by_base(&keys(&[("P", "base-new")])).await.unwrap().len(), 1);
 }

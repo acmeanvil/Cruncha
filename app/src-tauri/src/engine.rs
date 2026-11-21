@@ -168,6 +168,9 @@ pub struct StoredFrom {
     pub env: String,
     /// Computed on another computer: its numbers weren't reproduced here.
     pub elsewhere: bool,
+    /// Computed with another Python environment (ADR-0019): shown only because the cell
+    /// can't run here; it would run again otherwise.
+    pub other_env: bool,
 }
 
 impl PyView {
@@ -250,6 +253,8 @@ pub struct PyJob {
     pub id: String,
     /// [`py_input_hash`]: what the run's result depends on.
     pub key: String,
+    /// [`py_base_hash`]: the same without the environment (ADR-0019).
+    pub base: String,
     pub request: RunRequest,
 }
 
@@ -321,7 +326,20 @@ pub struct Engine {
     /// Finished runs not yet written to the document's `results/`.
     unstored: Vec<RunRecord>,
     /// Memo misses of the current evaluation.
-    missed: Vec<(String, String)>,
+    missed: Vec<PyKey>,
+    /// Stored runs from another Python environment, by cell, keyed by their base hash: shown
+    /// when the cell can't run here (ADR-0019).
+    foreign: HashMap<String, PyOutcome>,
+}
+
+/// A Python cell's hashes in one evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PyKey {
+    pub id: String,
+    /// [`py_input_hash`].
+    pub key: String,
+    /// [`py_base_hash`].
+    pub base: String,
 }
 
 impl Default for Engine {
@@ -336,9 +354,9 @@ pub struct Run {
     pub jobs: Vec<PyJob>,
     /// Python cells with no outcome for their current inputs, `(cell id, input hash)`: what
     /// to look up in the stored results before anything runs.
-    pub missing: Vec<(String, String)>,
+    pub missing: Vec<PyKey>,
     /// Every Python cell's input hash, by cell id (whether it had an outcome or not).
-    pub keys: HashMap<String, String>,
+    pub keys: HashMap<String, PyKey>,
 }
 
 impl Engine {
@@ -361,6 +379,7 @@ impl Engine {
             doc_version: 0,
             unstored: Vec::new(),
             missed: Vec::new(),
+            foreign: HashMap::new(),
         }
     }
 
@@ -475,6 +494,7 @@ impl Engine {
                     self.unstored.push(RunRecord {
                         cell_id: job.id.clone(),
                         input_hash: job.key.clone(),
+                        base_hash: Some(job.base.clone()),
                         status: if r.status == Status::Done { RunStatus::Done } else { RunStatus::Error },
                         values: serde_json::to_value(&r.defines).unwrap_or_default(),
                         outputs: serde_json::to_value(&view.outputs).unwrap_or_default(),
@@ -518,37 +538,57 @@ impl Engine {
         std::mem::take(&mut self.unstored)
     }
 
+    /// A stored run as an outcome, keyed by `key`.
+    fn outcome_of(&self, source: &str, r: RunRecord, key: String) -> PyOutcome {
+        let host = |by: &str| by.rsplit_once('@').map(|(_, h)| h.to_owned());
+        let defines: Vec<Defined> = serde_json::from_value(r.values).unwrap_or_default();
+        let outputs: Vec<OutputView> = serde_json::from_value(r.outputs).unwrap_or_default();
+        let (values, defined) = self.values_of(&defines);
+        let elsewhere = host(&r.computed_by) != host(&self.computed_by);
+        let other_env = r.env != self.env;
+        let view = PyView {
+            state: match r.status {
+                RunStatus::Done => PyState::Done,
+                RunStatus::Error => PyState::Error,
+                RunStatus::Interrupted => PyState::Interrupted,
+            },
+            note: None,
+            ms: Some(r.duration_ms as f64),
+            stdout: r.stdout,
+            stderr: r.stderr,
+            outputs,
+            error: r.error.and_then(|e| serde_json::from_str(&e).ok()),
+            stored: Some(StoredFrom { by: r.computed_by, at_us: r.computed_at_us, env: r.env, elsewhere, other_env }),
+        };
+        PyOutcome { key, source: source.to_owned(), values, defined, view }
+    }
+
     /// Use stored runs (ADR-0018) as the outcomes of cells whose input hash they match, as if
     /// they had run. `cells` gives each cell's source. Returns how many were used. A stored
     /// run's values are data: nothing runs, and trust isn't needed to show them.
     pub fn use_stored(&mut self, cells: &[Cell], runs: Vec<RunRecord>) -> usize {
         let source: HashMap<&str, &str> = cells.iter().map(|c| (c.id.as_str(), c.source.as_str())).collect();
-        let host = |by: &str| by.rsplit_once('@').map(|(_, h)| h.to_owned());
         let mut used = 0;
         for r in runs {
             let Some(src) = source.get(r.cell_id.as_str()) else { continue };
-            let defines: Vec<Defined> = serde_json::from_value(r.values).unwrap_or_default();
-            let outputs: Vec<OutputView> = serde_json::from_value(r.outputs).unwrap_or_default();
-            let (values, defined) = self.values_of(&defines);
-            let elsewhere = host(&r.computed_by) != host(&self.computed_by);
-            let view = PyView {
-                state: match r.status {
-                    RunStatus::Done => PyState::Done,
-                    RunStatus::Error => PyState::Error,
-                    RunStatus::Interrupted => PyState::Interrupted,
-                },
-                note: None,
-                ms: Some(r.duration_ms as f64),
-                stdout: r.stdout,
-                stderr: r.stderr,
-                outputs,
-                error: r.error.and_then(|e| serde_json::from_str(&e).ok()),
-                stored: Some(StoredFrom { by: r.computed_by, at_us: r.computed_at_us, env: r.env, elsewhere }),
-            };
-            self.py_memo.insert(
-                r.cell_id,
-                PyOutcome { key: r.input_hash, source: (*src).to_owned(), values, defined, view },
-            );
+            let (id, key) = (r.cell_id.clone(), r.input_hash.clone());
+            let o = self.outcome_of(src, r, key);
+            self.py_memo.insert(id, o);
+            used += 1;
+        }
+        used
+    }
+
+    /// Keep stored runs from another Python environment (found by their base hash,
+    /// ADR-0019). They are shown only while their cell can't run here. Returns how many.
+    pub fn use_foreign(&mut self, cells: &[Cell], runs: Vec<RunRecord>) -> usize {
+        let source: HashMap<&str, &str> = cells.iter().map(|c| (c.id.as_str(), c.source.as_str())).collect();
+        let mut used = 0;
+        for r in runs {
+            let (Some(src), Some(base)) = (source.get(r.cell_id.as_str()), r.base_hash.clone()) else { continue };
+            let id = r.cell_id.clone();
+            let o = self.outcome_of(src, r, base);
+            self.foreign.insert(id, o);
             used += 1;
         }
         used
@@ -646,7 +686,7 @@ impl Engine {
         let mut live: HashSet<String> = HashSet::new();
         // Python cells that will produce values later (queued or running) / their keys.
         let mut py_pending: HashSet<String> = HashSet::new();
-        let mut py_keys: HashMap<String, String> = HashMap::new();
+        let mut py_keys: HashMap<String, PyKey> = HashMap::new();
         // Names defined in Python whose values calcs can't use, with what they are.
         let mut opaque: HashMap<String, String> = HashMap::new();
         let order: Vec<String> = graph.order().map(str::to_owned).collect();
@@ -834,7 +874,7 @@ impl Engine {
         result: &mut CellResult,
         jobs: &mut Vec<PyJob>,
         py_pending: &mut HashSet<String>,
-        py_keys: &mut HashMap<String, String>,
+        py_keys: &mut HashMap<String, PyKey>,
         opaque: &mut HashMap<String, String>,
     ) {
         let id = cell.id.as_str();
@@ -866,6 +906,8 @@ impl Engine {
         }
         // Inputs: calc values (sent along) and Python values (already in the worker).
         let mut parts: Vec<(String, String)> = Vec::with_capacity(result.reads.len());
+        // The same, with upstream Python cells' base hashes (ADR-0019).
+        let mut base_parts: Vec<(String, String)> = Vec::with_capacity(result.reads.len());
         let mut request = RunRequest {
             cell: cell.id.clone(),
             source: cell.source.clone(),
@@ -891,8 +933,9 @@ impl Engine {
                             "{name} comes from a Python cell that hasn't run successfully"
                         ));
                     }
-                    let upstream = py_keys.get(d).map_or("?", String::as_str);
-                    parts.push((name.clone(), format!("python:{upstream}")));
+                    let (up, up_base) = py_keys.get(d).map_or(("?", "?"), |k| (k.key.as_str(), k.base.as_str()));
+                    parts.push((name.clone(), format!("python:{up}")));
+                    base_parts.push((name.clone(), format!("python:{up_base}")));
                     request.python_inputs.push(name.clone());
                 }
                 Some(CellKind::Calc) => match vars.get(name) {
@@ -900,6 +943,7 @@ impl Engine {
                         let plain = v.to_plain();
                         let json = serde_json::to_value(&plain).expect("plain serializes");
                         parts.push((name.clone(), format!("calc:{}", canonical_json(&json))));
+                        base_parts.push(parts.last().cloned().expect("just pushed"));
                         match plain {
                             Plain::Unsupported { kind, .. } => {
                                 blocked.get_or_insert(format!(
@@ -916,70 +960,65 @@ impl Engine {
                     }
                     None => {
                         parts.push((name.clone(), "missing".into()));
+                        base_parts.push((name.clone(), "missing".into()));
                         blocked
                             .get_or_insert(format!("{name} has no value (its calc has an error)"));
                     }
                 },
                 Some(_) => {
                     parts.push((name.clone(), "other".into()));
+                    base_parts.push((name.clone(), "other".into()));
                     blocked.get_or_insert(format!("{name} comes from a cell that can't run yet"));
                 }
                 // Not defined anywhere: Python raises NameError, which says it best.
-                None => parts.push((name.clone(), "undefined".into())),
+                None => {
+                    parts.push((name.clone(), "undefined".into()));
+                    base_parts.push((name.clone(), "undefined".into()));
+                }
             }
         }
         let key = py_input_hash(cell.kind, &cell.source, &self.env, parts);
-        py_keys.insert(id.to_owned(), key.clone());
+        let base = py_base_hash(cell.kind, &cell.source, base_parts);
+        let k = PyKey { id: id.to_owned(), key: key.clone(), base: base.clone() };
+        py_keys.insert(id.to_owned(), k.clone());
 
-        let memo_hit = self.py_memo.get(id).filter(|o| o.key == key);
-        if let Some(o) = memo_hit {
-            for (name, value) in &o.values {
-                vars.insert(name.clone(), value.clone());
-            }
-            for (name, summary) in &o.defined {
-                if !o.values.iter().any(|(n, _)| n == name) {
-                    opaque.insert(name.clone(), summary.clone());
-                }
-            }
-            result.values = py_value_views(o);
-            if o.view.state == PyState::Error {
-                result.error = Some(
-                    o.view
-                        .error
-                        .as_ref()
-                        .map(|e| format!("{}: {}", e.kind, e.message))
-                        .or(o.view.note.clone())
-                        .unwrap_or_else(|| "failed".into()),
-                );
-            }
-            result.python = Some(o.view.clone());
-            return;
+        if let Some(o) = self.py_memo.get(id).filter(|o| o.key == key) {
+            return apply_outcome(o, vars, opaque, result);
         }
-        self.missed.push((id.to_owned(), key.clone()));
+        self.missed.push(k);
         if self.running.as_ref() == Some(&(id.to_owned(), key.clone())) {
             py_pending.insert(id.to_owned());
             return set(result, PyState::Running, None);
         }
-        if self.past {
-            return set(result, PyState::Past, None);
-        }
-        if !self.python_available {
-            return set(result, PyState::NoPython, None);
-        }
-        if !self.trusted {
-            return set(result, PyState::Untrusted, None);
+        // A cell that can't run here shows a run from another environment, if there is one
+        // (ADR-0019); one that can run, runs.
+        let foreign = self.foreign.get(id).filter(|o| o.key == base);
+        let cannot = if self.past {
+            Some(PyState::Past)
+        } else if !self.python_available {
+            Some(PyState::NoPython)
+        } else if !self.trusted {
+            Some(PyState::Untrusted)
+        } else if blocked.is_none() && !self.may_run(cell) {
+            Some(PyState::Edited)
+        } else {
+            None
+        };
+        if let Some(state) = cannot {
+            return match foreign {
+                Some(o) => apply_outcome(o, vars, opaque, result),
+                None => set(result, state, None),
+            };
         }
         if let Some(why) = blocked {
             return set(result, PyState::Blocked, Some(why));
-        }
-        if !self.may_run(cell) {
-            return set(result, PyState::Edited, None);
         }
         py_pending.insert(id.to_owned());
         if !waiting {
             jobs.push(PyJob {
                 id: id.to_owned(),
                 key,
+                base,
                 request,
             });
         }
@@ -1014,6 +1053,30 @@ impl Engine {
             ..CellResult::default()
         }
     }
+}
+
+/// Show `o` as the cell's outcome: its values for calcs, its output for the window.
+fn apply_outcome(o: &PyOutcome, vars: &mut Vars, opaque: &mut HashMap<String, String>, result: &mut CellResult) {
+    for (name, value) in &o.values {
+        vars.insert(name.clone(), value.clone());
+    }
+    for (name, summary) in &o.defined {
+        if !o.values.iter().any(|(n, _)| n == name) {
+            opaque.insert(name.clone(), summary.clone());
+        }
+    }
+    result.values = py_value_views(o);
+    if o.view.state == PyState::Error {
+        result.error = Some(
+            o.view
+                .error
+                .as_ref()
+                .map(|e| format!("{}: {}", e.kind, e.message))
+                .or(o.view.note.clone())
+                .unwrap_or_else(|| "failed".into()),
+        );
+    }
+    result.python = Some(o.view.clone());
 }
 
 enum Blocked {
@@ -1059,7 +1122,18 @@ pub const RESULT_FORMAT: u32 = 1;
 /// versions, platforms and sessions, so it can key stored results. `inputs` are each name it
 /// reads with what that name is (`calc:<canonical Plain JSON>`, `python:<upstream hash>`, …);
 /// their order doesn't matter.
-pub fn py_input_hash(kind: CellKind, source: &str, env: &str, mut inputs: Vec<(String, String)>) -> String {
+pub fn py_input_hash(kind: CellKind, source: &str, env: &str, inputs: Vec<(String, String)>) -> String {
+    hash_inputs(&format!("cruncha-result/{RESULT_FORMAT}"), kind, source, Some(env), inputs)
+}
+
+/// [`py_input_hash`] without the environment (ADR-0019), under its own tag: finds a run with
+/// the same inputs from any Python environment. Upstream Python inputs must be given by their
+/// base hashes, so it is environment-free all the way up.
+pub fn py_base_hash(kind: CellKind, source: &str, inputs: Vec<(String, String)>) -> String {
+    hash_inputs(&format!("cruncha-result-base/{RESULT_FORMAT}"), kind, source, None, inputs)
+}
+
+fn hash_inputs(tag: &str, kind: CellKind, source: &str, env: Option<&str>, mut inputs: Vec<(String, String)>) -> String {
     use sha2::{Digest, Sha256};
     fn field(h: &mut Sha256, s: &str) {
         h.update((s.len() as u64).to_le_bytes());
@@ -1068,10 +1142,12 @@ pub fn py_input_hash(kind: CellKind, source: &str, env: &str, mut inputs: Vec<(S
     inputs.sort();
     inputs.dedup();
     let mut h = Sha256::new();
-    field(&mut h, &format!("cruncha-result/{RESULT_FORMAT}"));
+    field(&mut h, tag);
     field(&mut h, kind.as_str());
     field(&mut h, source);
-    field(&mut h, env);
+    if let Some(env) = env {
+        field(&mut h, env);
+    }
     h.update((inputs.len() as u64).to_le_bytes());
     for (name, what) in &inputs {
         field(&mut h, name);
@@ -1462,6 +1538,59 @@ mod tests {
     }
 
     /// Also computed independently with Python's hashlib from the encoding in `py_input_hash`.
+    #[test]
+    fn base_hash_ignores_the_environment_and_is_distinct() {
+        let inputs = vec![("L".to_string(), "calc:{\"v\":1}".to_string())];
+        let b = py_base_hash(CellKind::Python, "y = L * 2", inputs.clone());
+        assert_eq!(b, GOLDEN_BASE_HASH);
+        assert_ne!(b, py_input_hash(CellKind::Python, "y = L * 2", "", inputs.clone()), "its own tag");
+        assert_ne!(b, py_base_hash(CellKind::Python, "y = L * 3", inputs));
+    }
+
+    /// Also computed independently with Python's hashlib (no environment field).
+    const GOLDEN_BASE_HASH: &str = "4cd0e7b863a1e970b21b0493a84998c095a81c8dede7e62aa9883c8c1eb5f949";
+
+    #[test]
+    fn runs_from_another_environment_show_only_where_the_cell_cant_run() {
+        let cells = vec![calc("A", "a0", "L = 2"), py_cell("PY", "a1", "y = L")];
+        let mut e = Engine::new();
+        e.python_available = true;
+        e.env = "env-new".into();
+        e.computed_by = "user:me@here".into();
+        e.set_py_names("y = L", PyNames { defines: vec!["y".into()], reads: vec!["L".into()], ..Default::default() });
+        let k = e.evaluate(&cells).missing[0].clone();
+        let record = RunRecord {
+            cell_id: "PY".into(),
+            input_hash: "computed-under-env-old".into(),
+            base_hash: Some(k.base.clone()),
+            status: RunStatus::Done,
+            values: serde_json::json!([]),
+            outputs: serde_json::json!([{ "kind": "text", "text": "old" }]),
+            stdout: String::new(),
+            stderr: String::new(),
+            error: None,
+            duration_ms: 1,
+            env: "env-old".into(),
+            computed_at_us: 1,
+            computed_by: "user:me@here".into(),
+            doc_version: 1,
+        };
+        assert_eq!(e.use_foreign(&cells, vec![record]), 1);
+        // Untrusted: it can't run, so the old environment's output shows, labelled.
+        let r = e.evaluate(&cells);
+        let py = r.results["PY"].python.as_ref().unwrap();
+        assert_eq!(py.state, PyState::Done);
+        let from = py.stored.as_ref().unwrap();
+        assert!(from.other_env && !from.elsewhere);
+        assert!(r.jobs.is_empty());
+        // Trusted and approved: it runs instead.
+        e.trusted = true;
+        e.approve(&cells);
+        let r = e.evaluate(&cells);
+        assert_eq!(r.results["PY"].python.as_ref().unwrap().state, PyState::Queued);
+        assert_eq!(r.jobs[0].base, k.base);
+    }
+
     const GOLDEN_HASH: &str = "02637db6f304c86dcac63b09556214fe48472eb2fcea079155fba0ea8a36a3a6";
 
     #[test]
@@ -1491,14 +1620,16 @@ mod tests {
         e.set_py_names("y = L", PyNames { defines: vec!["y".into()], reads: vec!["L".into()], ..Default::default() });
         let run = e.evaluate(&cells);
         assert_eq!(run.results["PY"].python.as_ref().unwrap().state, PyState::Untrusted);
-        let (id, key) = run.missing[0].clone();
-        assert_eq!(run.keys["PY"], key);
+        let k = run.missing[0].clone();
+        assert_eq!(run.keys["PY"], k);
+        let (id, key) = (k.id.clone(), k.key.clone());
         let mut tmp = Engine::new();
         tmp.run(&[calc("T", "a", "y = 4")]);
         let plain = serde_json::to_value(tmp.vars.get("y").unwrap().to_plain()).unwrap();
         let record = RunRecord {
             cell_id: id,
             input_hash: key,
+            base_hash: Some(k.base.clone()),
             status: RunStatus::Done,
             values: serde_json::json!([{ "name": "y", "summary": "4", "plain": plain }]),
             outputs: serde_json::json!([{ "kind": "text", "text": "hi" }]),

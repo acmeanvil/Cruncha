@@ -343,6 +343,8 @@ export interface StoredFrom {
   env: string;
   /** Computed on another computer: not reproduced here. */
   elsewhere: boolean;
+  /** Computed with another Python environment (ADR-0019): shown because the cell can't run here. */
+  otherEnv: boolean;
 }
 
 export interface PythonStatus {

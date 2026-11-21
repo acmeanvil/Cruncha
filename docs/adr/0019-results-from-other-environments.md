@@ -1,6 +1,6 @@
 # ADR-0019: Stored results from another Python environment are found by an environment-free hash
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-21
 **Deciders:** acmeanvil
 **Refines:** ADR-0018
@@ -72,7 +72,7 @@ Reusing such a run as if it were current would be wrong: a package upgrade can c
 
 ## Action Items
 
-1. [ ] `cruncha-store`: nullable `base_hash` column (migrated on open), `RunRecord.base_hash`, a lookup by `(cell_id, base_hash)`; tests.
-2. [ ] Engine: `base_hash` beside `input_hash` (golden test); fall back to it when the cell can't run here; the label.
-3. [ ] App and report: the "different Python environment" note; retention keeps either hash.
-4. [ ] Update CLAUDE.md and `skills/cruncha-code-cells`.
+1. [x] `cruncha-store`: nullable `base_hash` column (migrated on open), `RunRecord.base_hash`, a lookup by `(cell_id, base_hash)`; tests.
+2. [x] Engine: `base_hash` beside `input_hash` (golden test); fall back to it when the cell can't run here; the label.
+3. [x] App and report: the "different Python environment" note; retention keeps either hash.
+4. [x] Update CLAUDE.md and `skills/cruncha-code-cells`.
