@@ -7,15 +7,18 @@
   import { onMount } from "svelte";
   import { api, type FunctionReference } from "./api";
   import { findEntries, insertion } from "./functionRef";
+  import UnitReference from "./UnitReference.svelte";
 
   let {
     editable,
     oninsert,
     onclose,
+    tab = $bindable("functions"),
   }: {
     editable: boolean;
     oninsert: (text: string, back: number) => void;
     onclose: () => void;
+    tab?: "functions" | "units";
   } = $props();
 
   let reference = $state<FunctionReference | null>(null);
@@ -34,12 +37,11 @@
   });
 
   const shown = $derived(reference ? findEntries(reference.entries, query, category) : []);
-  const groups = $derived.by(() => {
-    if (query.trim()) return [{ name: "", entries: shown }];
-    return (reference?.categories ?? [])
-      .map((c) => ({ name: c, entries: shown.filter((e) => e.category === c) }))
-      .filter((g) => g.entries.length);
-  });
+  // One alphabetical list (search keeps its best-match-first order), as the Units tab.
+  const byName = (a: { name: string }, b: { name: string }) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const listed = $derived(query.trim() ? shown : [...shown].sort(byName));
+  const categories = $derived([...(reference?.categories ?? [])].sort((a, b) => a.localeCompare(b)));
 
   async function copy(text: string) {
     try {
@@ -55,19 +57,25 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<aside class="ref" aria-label="Function reference" onkeydown={(e) => e.key === "Escape" && onclose()}>
+<aside class="ref" aria-label="Functions and units" onkeydown={(e) => e.key === "Escape" && onclose()}>
   <header>
-    <strong><i>ƒ</i>x Functions</strong>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected={tab === "functions"} class:on={tab === "functions"} onmousedown={keep} onclick={() => (tab = "functions")}><i>ƒ</i>x Functions</button>
+      <button role="tab" aria-selected={tab === "units"} class:on={tab === "units"} onmousedown={keep} onclick={() => (tab = "units")}>Units</button>
+    </div>
     <span class="spacer"></span>
     <button class="x" aria-label="Close the function reference" onclick={onclose}>×</button>
   </header>
+  {#if tab === "units"}
+    <UnitReference {editable} {oninsert} />
+  {:else}
   <div class="tools">
     <input bind:this={search} type="search" placeholder="Find a function: sqrt, degrees, interpolate…" aria-label="Find a function" bind:value={query} />
-    <div class="cats" role="group" aria-label="Category">
-      <button class:on={category === null} onmousedown={keep} onclick={() => (category = null)}>All</button>
-      {#each reference?.categories ?? [] as c (c)}
-        <button class:on={category === c} onmousedown={keep} onclick={() => (category = category === c ? null : c)}>{c}</button>
-      {/each}
+    <div class="row">
+      <select aria-label="Category" bind:value={category}>
+        <option value={null}>All categories</option>
+        {#each categories as c (c)}<option value={c}>{c}</option>{/each}
+      </select>
     </div>
   </div>
   <div class="list">
@@ -78,9 +86,7 @@
     {:else if shown.length === 0}
       <p class="small muted">Nothing matches “{query}”.</p>
     {/if}
-    {#each groups as g (g.name)}
-      {#if g.name}<h4>{g.name}</h4>{/if}
-      {#each g.entries as e (e.name)}
+    {#each listed as e (e.name)}
         {@const ok = e.available !== false}
         {@const [text, back] = insertion(e)}
         <div class="entry" class:off={!ok}>
@@ -94,16 +100,16 @@
             {/if}
             <button class="small link" onmousedown={keep} onclick={() => copy(text)} title="Copy {text}">{copied === text ? "Copied" : "Copy"}</button>
           </div>
-          <p class="sum">{e.summary}</p>
+          <p class="sum">{e.summary}{#if !category}<span class="cat small muted"> · {e.category}</span>{/if}</p>
           {#if e.caution}<p class="caution small">{e.caution}</p>{/if}
           {#if e.note}<p class="note small">{e.note}</p>{/if}
           {#if e.example}
             <pre class="ex">{e.example.join("\n")}<span class="res">  →  {e.result}</span></pre>
           {/if}
         </div>
-      {/each}
     {/each}
   </div>
+  {/if}
 </aside>
 
 <style>
@@ -111,16 +117,21 @@
     display: grid; grid-template-rows: auto auto 1fr; min-height: 0; height: 100%;
     background: var(--panel); border-left: 1px solid var(--border);
   }
-  header { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  header { display: flex; align-items: center; padding: 4px 12px 0; border-bottom: 1px solid var(--border); }
+  .tabs { display: flex; gap: 2px; }
+  .tabs button {
+    border: none; background: none; border-radius: 0; padding: 6px 10px 5px; font-size: 13px; color: var(--muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
   .spacer { flex: 1; }
   .x { border: none; background: none; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 4px; }
   .x:hover { color: var(--text); }
   .tools { padding: 8px 12px 6px; display: grid; gap: 6px; border-bottom: 1px solid var(--border); }
-  .cats { display: flex; flex-wrap: wrap; gap: 4px; }
-  .cats button { font-size: 11.5px; padding: 1px 8px; border-radius: 10px; }
-  .cats button.on { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .row { display: flex; gap: 6px; }
+  .row select { flex: 1; min-width: 0; font-size: 12.5px; }
   .list { overflow: auto; padding: 4px 12px 16px; min-height: 0; }
-  h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 0 4px; }
   .entry { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
   .entry.off code { color: var(--muted); }
   .sig { display: flex; align-items: center; gap: 6px; }

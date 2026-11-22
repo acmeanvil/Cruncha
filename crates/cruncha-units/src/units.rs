@@ -164,6 +164,35 @@ fn prefix_factor(prefix: &str) -> f64 {
     }
 }
 
+/// The prefixes `prefix_factor` knows, largest first: symbol (empty when only the word works),
+/// word, factor. For the Units palette (`catalog::prefixes`).
+pub(crate) const SI_PREFIX_LIST: &[(&str, &str, f64)] = &[
+    ("Y", "yotta", 1e24),
+    ("Z", "zetta", 1e21),
+    ("E", "exa", 1e18),
+    ("P", "peta", 1e15),
+    ("T", "tera", 1e12),
+    ("G", "giga", 1e9),
+    ("M", "mega", 1e6),
+    ("k", "kilo", 1e3),
+    ("h", "hecto", 1e2),
+    ("", "deka", 1e1),
+    ("d", "deci", 1e-1),
+    ("c", "centi", 1e-2),
+    ("m", "milli", 1e-3),
+    ("µ", "micro", 1e-6),
+    ("n", "nano", 1e-9),
+    ("p", "pico", 1e-12),
+    ("f", "femto", 1e-15),
+    ("a", "atto", 1e-18),
+    ("z", "zepto", 1e-21),
+    ("y", "yocto", 1e-24),
+    ("Ki", "kibi", 1024.0),
+    ("Mi", "mebi", 1_048_576.0),
+    ("Gi", "gibi", 1_073_741_824.0),
+    ("Ti", "tebi", 1_099_511_627_776.0),
+];
+
 const SI_PREFIXES: [&str; 20] = [
     "yotta", "zetta", "exa", "peta", "tera", "giga", "mega", "kilo", "hecto", "deka", "deci",
     "centi", "milli", "micro", "nano", "pico", "femto", "atto", "zepto", "yocto",
@@ -192,39 +221,49 @@ fn unit_from_word(input: &str, currencies: &Currencies) -> Result<Unit, UnitErro
     let mut got_match = false;
     let mut got_si_prefix_unit = false;
 
+    // ADR-0022: a name in the table is that unit, before any plural or prefix is stripped.
+    // Hurmet stripped first, so `Celsius`, `gauss`, `kilogram`, `kilobyte` and `centistoke`
+    // were unknown and `mas` (milliarcsecond) read as milli-annum.
+    let exact = TABLE.get(word.as_str());
     // Pass 1: no short SI prefix, but a long one is allowed if the word is long enough.
-    if len > 2 && word.ends_with('s') {
+    if exact.is_none() && len > 2 && word.ends_with('s') {
         let second_is_p = word.chars().nth(1) == Some('p');
         if !(word == "cfs" || (len == 3 && second_is_p)) {
             word.pop();
         }
     }
-    if len > 3
+    if let Some(row) = exact.or_else(|| TABLE.get(word.as_str())) {
+        // The whole name, or its singular (`kilograms`).
+        found = Some(row);
+        got_match = true;
+    } else if len > 3
         && word != "micron"
         && let Some(p) = SI_PREFIXES.iter().find(|p| word.starts_with(*p))
     {
         prefix = (*p).to_string();
         word = word[p.len()..].to_string();
     }
-    if let Some(row) = TABLE.get(word.as_str()) {
-        found = Some(row);
-        got_match = true;
-        if !prefix.is_empty() {
-            got_match = row.misc == "siWord";
-            got_si_prefix_unit = true;
-        }
-    } else {
-        // Pass 2: try a short SI prefix.
-        if let Some(first) = word.chars().next()
-            && "YZEPTGMkhdcmnpfazyµμ".contains(first)
-        {
+    if found.is_none() {
+        if let Some(row) = TABLE.get(word.as_str()) {
+            found = Some(row);
+            got_match = true;
+            if !prefix.is_empty() {
+                got_match = row.misc == "siWord";
+                got_si_prefix_unit = true;
+            }
+        } else {
+            // Pass 2: try a short SI prefix.
+            if let Some(first) = word.chars().next()
+                && "YZEPTGMkhdcmnpfazyµμ".contains(first)
             {
-                prefix = first.to_string();
-                word = word[first.len_utf8()..].to_string();
-                if let Some(row) = TABLE.get(word.as_str()) {
-                    found = Some(row);
-                    got_match = row.misc == "siSymbol";
-                    got_si_prefix_unit = true;
+                {
+                    prefix = first.to_string();
+                    word = word[first.len_utf8()..].to_string();
+                    if let Some(row) = TABLE.get(word.as_str()) {
+                        found = Some(row);
+                        got_match = row.misc == "siSymbol";
+                        got_si_prefix_unit = true;
+                    }
                 }
             }
         }

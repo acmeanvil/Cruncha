@@ -517,6 +517,69 @@ async fn setup_python(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<St
 /// Set up Rust for Rust cells (ADR-0006): Cruncha's own toolchain, then a first build of the
 /// prelude (a minute or two; progress as `rust-setup` events). The session isn't locked meanwhile.
 /// The calc language's function reference (`cruncha_eval::REFERENCE`).
+/// The units a calc can use, for the Units palette (from `cruncha_units::catalog`).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnitCatalog {
+    quantities: Vec<QuantityView>,
+    prefixes: Vec<PrefixView>,
+    units: Vec<UnitView>,
+}
+
+#[derive(serde::Serialize)]
+struct QuantityView {
+    name: &'static str,
+    si: &'static str,
+}
+
+#[derive(serde::Serialize)]
+struct PrefixView {
+    symbol: &'static str,
+    word: &'static str,
+    factor: f64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnitView {
+    name: &'static str,
+    aliases: Vec<&'static str>,
+    quantity: &'static str,
+    si_factor: f64,
+    gauge: f64,
+    prefixes: Option<&'static str>,
+    currency: Option<&'static str>,
+}
+
+#[tauri::command]
+fn unit_catalog() -> UnitCatalog {
+    use cruncha_units::catalog;
+    let units = catalog::catalog();
+    UnitCatalog {
+        quantities: catalog::QUANTITIES
+            .iter()
+            .filter(|q| units.iter().any(|u| u.quantity == q.name))
+            .map(|q| QuantityView { name: q.name, si: q.si })
+            .collect(),
+        prefixes: catalog::prefixes()
+            .iter()
+            .map(|&(symbol, word, factor)| PrefixView { symbol, word, factor })
+            .collect(),
+        units: units
+            .into_iter()
+            .map(|u| UnitView {
+                name: u.name,
+                aliases: u.aliases,
+                quantity: u.quantity,
+                si_factor: u.si_factor,
+                gauge: u.gauge,
+                prefixes: u.prefixes,
+                currency: u.currency,
+            })
+            .collect(),
+    }
+}
+
 #[tauri::command]
 fn function_reference() -> Result<serde_json::Value> {
     serde_json::from_str(cruncha_eval::REFERENCE).map_err(|e| e.to_string())
@@ -811,6 +874,7 @@ pub fn run() {
             trust_document,
             setup_rust,
             function_reference,
+            unit_catalog,
             run_python,
             stop_python,
             restart_python,

@@ -19,6 +19,7 @@
 //!   [`Currencies`] table.
 //! - [`jsnum`]: JavaScript number formatting and parsing, which Hurmet's results depend on.
 
+pub mod catalog;
 pub mod jsmath;
 pub mod jsnum;
 pub mod rational;

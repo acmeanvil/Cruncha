@@ -111,3 +111,27 @@ fn trace_char_and_e() {
     // A document's own `e` (an eccentricity, say) wins over Euler's number.
     assert_eq!(calc(&["e = 0.5", "a = 2 e = ?"]), "1");
 }
+
+/// Unit names Hurmet couldn't read, and units whose dimensions it had wrong (ADR-0022).
+#[test]
+fn unit_names_and_dimensions() {
+    let cases = [
+        ("a = 5 'kilogram' = ?? kg", "5 kg"),
+        ("a = 3 'kilograms' = ?? kg", "3 kg"),
+        ("a = 20 'Celsius' = ?? K", "293.15 K"),
+        ("a = 1 'gauss' = ?? T", "0.0001 T"),
+        // Hurmet's kilobyte is 1024 bytes (kB and KiB are separate units).
+        ("a = 2 'kilobyte' = ?? byte", "2,048 byte"),
+        ("a = 2 'T' × 3 'm^2' = ?? Wb", "6 Wb"),
+        ("a = 4 'At' = ?? A", "4 A"),
+        ("a = 3600 'mas' = ?? arcsecond", "3.6 arcsecond"),
+    ];
+    let mut failures = Vec::new();
+    for (line, want) in cases {
+        let got = calc(&[line]);
+        if got != want {
+            failures.push(format!("{line}: got `{got}`, expected `{want}`"));
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}

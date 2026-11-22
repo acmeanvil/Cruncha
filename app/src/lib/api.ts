@@ -419,6 +419,29 @@ export interface FunctionEntry {
   insert?: string;
 }
 
+/** The units a calc can use (cruncha_units::catalog, `unit_catalog`). */
+export interface UnitCatalog {
+  /** In the order the palette groups by; `si` is the unit sizes are shown in. */
+  quantities: { name: string; si: string }[];
+  /** SI and binary prefixes, largest first; `symbol` is empty when only the word works. */
+  prefixes: { symbol: string; word: string; factor: number }[];
+  units: CatalogUnit[];
+}
+
+export interface CatalogUnit {
+  name: string;
+  aliases: string[];
+  quantity: string;
+  /** One of this unit in its quantity's SI unit. */
+  siFactor: number;
+  /** Non-zero for an offset scale (°C, °F, psig). */
+  gauge: number;
+  /** SI prefixes as symbols (kN) or words (kilonewton), or none. */
+  prefixes: "symbol" | "word" | null;
+  /** Needs exchange rates, which Cruncha doesn't have yet. */
+  currency: string | null;
+}
+
 /** The start and end of a vector, matrix or data frame (engine.rs `Preview`). */
 export interface Preview {
   rows: number;
@@ -503,6 +526,7 @@ export const api = {
   /** Set up Rust for Rust cells (progress as `rust-setup` events). */
   setupRust: () => invoke<Record<string, CellResult>>("setup_rust"),
   functionReference: () => invoke<FunctionReference>("function_reference"),
+  unitCatalog: () => invoke<UnitCatalog>("unit_catalog"),
   trustDocument: () => invoke<Record<string, CellResult>>("trust_document"),
   /** Run these Python cells (all if omitted), even if nothing changed. */
   runPython: (ids?: string[]) => invoke<Record<string, CellResult>>("run_python", { ids: ids ?? null }),

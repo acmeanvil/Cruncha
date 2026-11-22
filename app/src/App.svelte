@@ -77,6 +77,16 @@
   let bottomTab = $state<BottomTab>("variables");
   let bottomOpen = $state(false);
   let functions = $state(false);
+  /** Which tab of the reference panel is showing. */
+  let refTab = $state<"functions" | "units">("functions");
+  /** Open the reference panel on `tab`, or close it if it's already showing there. */
+  function reference(tab: "functions" | "units") {
+    if (functions && refTab === tab) functions = false;
+    else {
+      refTab = tab;
+      functions = true;
+    }
+  }
   const columns = $derived(
     [sidebar && "300px", "minmax(0, 1fr)", agentPanel && "minmax(320px, 400px)", functions && "minmax(300px, 380px)"]
       .filter(Boolean)
@@ -391,7 +401,11 @@
     }
     if (e.key.toLowerCase() === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
-      functions = !functions;
+      reference("functions");
+    }
+    if (e.key.toLowerCase() === "u" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
+      e.preventDefault();
+      reference("units");
     }
     if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
@@ -545,7 +559,8 @@
             onvariables={(v) => (variables = v)}
             onerror={(m) => (error = m)}
             onproposal={showProposals}
-            onfunctions={() => (functions = !functions)}
+            onfunctions={() => reference("functions")}
+            onunits={() => reference("units")}
           />
         </div>
       </main>
@@ -558,7 +573,7 @@
         />
       {/if}
       {#if functions}
-        <FunctionReference {editable} oninsert={(t, back) => editor?.insertInCalc(t, back)} onclose={() => (functions = false)} />
+        <FunctionReference {editable} bind:tab={refTab} oninsert={(t, back) => editor?.insertInCalc(t, back)} onclose={() => (functions = false)} />
       {/if}
     </div>
     <BottomPanel

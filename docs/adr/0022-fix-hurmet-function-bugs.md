@@ -129,4 +129,30 @@ A per-document semantics level (Option B) is the right tool once that changes. I
    Then update the skill and write `docs/design/03-hurmet-differences.md`.
 8. [x] Keep Hurmet's goldens green, and mark any changed expectation with this ADR.
 
+9. [x] Unit names and data (found while building the Units palette, 2026-11-22). A name in Hurmet's unit table is now that unit before a plural *s* or an SI prefix is stripped. Before, `Celsius`, `gauss`, `kilogram`, `kilobyte`, `centistoke`, `dekan` and `megaton TNT` were "unknown", and `mas` (milliarcsecond) read as milli-annum. Two rows of the table had wrong dimensions, corrected in `tools/gen_table.py`: tesla and gauss (kg·s⁻²·A⁻¹), and ampere-turn and gilbert (a current, not temperature × luminous intensity). `crates/cruncha-units/tests/catalog.rs` reads every name in the table.
+
 Done 2026-11-22. Each change is covered by `crates/cruncha-eval/tests/functions.rs`, the reference's examples and an engine test for `e`. Hurmet's goldens needed no changes. Found along the way: `mod` dropped units, and `Rational::power` used the broken `mod` to detect odd roots; both are fixed and noted in `docs/design/03-hurmet-differences.md`.
+
+### Second set: found 2026-11-22, to correct
+
+A sweep of the port's "Hurmet bug, reproduced" comments, each probed in a calc (unit-aware, as in the app). These give wrong answers without an error, so they are fixed under this ADR's same decision (in place, documented, tests first). Until then, the reference and `skills/cruncha-calc-authoring` warn about each.
+
+| Where | Today | Correct | Cause |
+| --- | --- | --- | --- |
+| Fixed display format (`format = "f2"`, `roundn(x, "f2")`, `string`) | −0.25 shows as **0.25**; any value between −1 and 0 loses its sign | −0.25 | `Rational::to_fixed`: the integer quotient is 0, so its sign is lost. |
+| `×` (cross product) | `[1, 0, 0] × [0, 1, 0]` = `[]` | `[0, 0, 1]` | The vector branch checks the length of the first *element* (`x[0].length`, 2 for a Hurmet rational). |
+| `sum`, `product`, `mean`, `min`, `max`, `range`, `median` of a matrix | `sum([1, 2; 3, 4])` = 0 | 10 (over every element; `sum(A, 1)` and `sum(A, 2)` already work) | Hurmet tests `args.dtype & MATRIX` on the argument list (always 0), so the rows are folded as numbers. |
+| `product` units | `product(2 'm', 3 'm')` = 6 m | 6 m² | The exponents are summed and then discarded. |
+| A vector in an offset unit | `[20; 30] '°C'` = [−166.52; −156.52] °F | [68; 86] °F | With a gauge, the vector conversion subtracts the gauge and drops the factor (a single value is right). |
+| `zeros(m, 1)`, `ones(m, 1)` | `zeros(3, 1)` = `[0]` | a 3-element column | The column vector's length is n, not m. |
+| `^` on a two-element vector | `[2, 3]^2` = 4 + j 9 | `[4, 9]` | Hurmet's `isComplex` accepts any pair of rationals. |
+| `atan2`, `gcd` (and other two-argument functions) | `atan2(1 'm', 1 's')` = 0.785 | an error: the units differ | The unit check's error is discarded (`unwrap_or(None)`); `mod` and `rem` already check. |
+| Matrix literal of column vectors, inside a larger expression | `2 + sum([x, y])` → "does not understand" | 2 + the sum | The vectors are read from the bottom of the stack, not from the first argument. Loud, not silent. |
+| Data frames | to probe | — | Three reproduced bugs in `dataframe.rs`: a row range "all" uses the number of columns; a column range looks up `columnMap[NaN]`; a selection's column keys are the source's k-th headings. |
+
+10. [ ] Fix the sign of fixed-format values between −1 and 0 (`to_fixed`), in results, `roundn` and `string`. This is the most urgent: it changes what a report prints.
+11. [ ] Fix the cross product, and the reducers over a matrix (`sum`, `product`, `mean`, `min`, `max`, `range`, `median`).
+12. [ ] Fix `product`'s unit, offset units on vectors, `zeros`/`ones` columns, and `[a, b]^n`.
+13. [ ] Check units in every two-argument function that requires one unit (`atan2`, `gcd`, …), as `mod` does.
+14. [ ] Fix the column-vector matrix literal, and probe and fix the three data-frame bugs.
+15. [ ] For each: a case in `tests/functions.rs`, the caution removed from the reference, the skill and `docs/design/03-hurmet-differences.md` updated.

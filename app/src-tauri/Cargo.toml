@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 cruncha-store = { path = "../../crates/cruncha-store" }
 cruncha-eval = { path = "../../crates/cruncha-eval" }
+cruncha-units = { path = "../../crates/cruncha-units" }
 cruncha-graph = { path = "../../crates/cruncha-graph" }
 cruncha-kernel-py = { path = "../../crates/cruncha-kernel-py" }
 cruncha-kernel-rs = { path = "../../crates/cruncha-kernel-rs" }

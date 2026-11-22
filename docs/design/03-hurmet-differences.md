@@ -24,6 +24,15 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | `roundSig(x, n)` | Known to the parser, not to the evaluator. | x rounded to n significant digits. |
 | `e` | Not a constant ("Variable e not found"). | Euler's number unless the document defines `e`; a definition wins and gets a warning (as for `j`). |
 
+## Units (ADR-0022)
+
+- **A unit's own name wins.** Hurmet stripped a plural *s* and an SI prefix before looking a name up, so names in its own table were unknown: `Celsius`, `gauss`, `kilogram`, `kilobyte`, `centistoke`, `dekan` and `megaton TNT`. And `mas` (milliarcsecond) read as milli-annum. Cruncha looks up the whole name first, then the singular, then prefixes.
+- **Corrected table rows** (`crates/cruncha-units/tools/gen_table.py`, `CORRECTIONS`):
+  - The Fahrenheit gauge is 459.67, not 459.
+  - Tesla and gauss are kg·s⁻²·A⁻¹; Hurmet had m⁻²·kg⁻²·s⁻²·A⁻¹.
+  - Ampere-turn and gilbert are a current; Hurmet had temperature × luminous intensity.
+- Unchanged, but worth knowing: `kilobyte` is 1024 bytes (`kB` and `KiB` are separate units), and `kpph` is kilopascals per hour.
+
 Internally, `Rational::power` for a negative base and a fractional exponent p/q now returns the real root only when q is odd (Hurmet's test went through its broken `mod`). Calcs aren't affected: a negative base takes the complex principal root there, as before (`(-8)^(1/3)` = 1 + j 1.732).
 
 Hurmet's golden tests still pass: none of them encoded these bugs. `crates/cruncha-eval/tests/functions.rs` covers each row.

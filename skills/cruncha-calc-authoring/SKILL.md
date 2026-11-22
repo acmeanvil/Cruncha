@@ -84,6 +84,14 @@ Where Cruncha differs from Hurmet (ADR-0022, `docs/design/03-hurmet-differences.
 - `rms(v)` is the root mean square of its arguments or a vector's elements; for √(a² + b²) use `hypot`.
 - `median` is the true median; `variance` and `stddev` are sample statistics (n − 1); the variance is in the unit squared.
 - `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work.
+- Unit names: a unit's full name works as written (`Celsius`, `gauss`, `kilogram`, `mas` for milliarcsecond). Tesla and gauss are kg·s⁻²·A⁻¹; ampere-turn and gilbert are currents. Every unit, with its aliases and size in SI, is in the app's Units palette (`cruncha_units::catalog`).
+- **Not fixed yet (ADR-0022, second set). Avoid or check these:**
+  - With a fixed format (`format = "f2"`, `roundn(x, "f2")`), a value between −1 and 0 displays **without its minus sign**. Use `"r…"` (significant digits) for such values.
+  - The cross product `×` gives `[]`. Write it by components.
+  - `sum`, `product`, `mean`, `min`, `max`, `range` and `median` of a *matrix* give 0. Use `sum(A, 1)` or `sum(A, 2)`, or a Python cell.
+  - `product` of quantities has the wrong unit; `zeros(m, 1)` and `ones(m, 1)` give one element; `[a, b]^2` is read as a complex number.
+  - A vector in an offset unit (°C, °F, psig) converts wrongly; single values are right.
+  - `atan2` and `gcd` don't check that their arguments share a unit.
 - `e` is Euler's number unless the document defines `e` (an eccentricity, say); a definition wins and gets a warning. `j` works the same way for the imaginary unit.
 
 ## Checklist before proposing a calc

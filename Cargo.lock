@@ -1831,6 +1831,7 @@ dependencies = [
  "cruncha-mcp",
  "cruncha-report",
  "cruncha-store",
+ "cruncha-units",
  "futures",
  "keyring",
  "serde",

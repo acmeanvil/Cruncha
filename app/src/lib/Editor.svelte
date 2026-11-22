@@ -39,6 +39,7 @@
     onerror,
     onproposal,
     onfunctions,
+    onunits,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -54,6 +55,8 @@
     onproposal?: () => void;
     /** The toolbar's function reference button. */
     onfunctions?: () => void;
+    /** The toolbar's units button. */
+    onunits?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -439,6 +442,9 @@
     {#if onfunctions}
       <span class="sep"></span>
       <button onclick={onfunctions} title="Functions, operators and constants (⌘⇧F)"><i>ƒ</i>x Functions</button>
+    {/if}
+    {#if onunits}
+      <button onclick={onunits} title="Units: lengths, forces, pressures… (⌘⇧U)">Units</button>
     {/if}
     <span class="sep"></span>
     <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
