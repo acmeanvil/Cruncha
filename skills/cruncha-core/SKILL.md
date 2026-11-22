@@ -20,17 +20,17 @@ Cruncha documents are engineering calculation packages: prose, calc cells, Pytho
 
 | Tool | Purpose |
 | --- | --- |
-| `read_doc(range?)` | The document as Markdown mirror text, with cell IDs and current results (`⇒` lines). Start here. |
+| `read_doc(range?, snapshot?)` | The document as Markdown mirror text, with cell IDs and current results (`⇒` lines). Start here. With `snapshot`, a snapshot's version, read-only. |
 | `run(cell_ids?)` | Evaluate the given cells (or everything stale) and return results and errors |
 | `propose_edit(changes, message, base_version?)` | Insert, modify or delete cells as one proposal; returns its ID, the new cells' IDs, and the "if accepted" results |
 | `proposals()` | Open proposals (any agent's) and your decided ones, with the reviewer's notes |
 | `withdraw(proposal_id)` | Take back one of your open proposals |
 | `explain(cell_id)` | Dependencies, echo with substituted values, and the definitions of everything the cell reads |
 | `check(scope?)` | Built-in checks: unit consistency, names used before they're defined, unfilled placeholders, failing `@test`s, cycles |
-| `history(cell_id?, since?)` | Versions, actors and diffs (see the `cruncha-history` skill) |
+| `history(cell_id?, since?, archived?)` | Versions, actors and diffs; with `archived`, the archive and save log (see the `cruncha-history` skill) |
 | `query_data(name, polars_or_sql)` | Read-only query on a data frame in the document |
 
-**Available now:** `read_doc(from?, limit?)`, `run(cell_ids?)`, `explain(cell_id)`, `check()`, `history(cell_id?, since?)`, `propose_edit`, `proposals()` and `withdraw(proposal_id)`.
+**Available now:** `read_doc(from?, limit?, snapshot?)`, `run(cell_ids?)`, `explain(cell_id)`, `check()`, `history(cell_id?, since?, archived?)`, `propose_edit`, `proposals()` and `withdraw(proposal_id)`.
 - `run` returns the engine's current results; the document recalculates by itself, and `run` waits for Python cells that are still running.
 - `query_data` isn't available yet.
 

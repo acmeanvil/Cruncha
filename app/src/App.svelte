@@ -352,6 +352,13 @@
   }
 
   /** Make the version on screen the latest again (a new version; it can be undone the same way). */
+  /** After archiving (ADR-0023): the history is shorter; a version shown that's gone isn't. */
+  async function archived(info: DocInfo) {
+    doc = info;
+    history = await api.history();
+    if (selected.kind === "version" && selected.version < info.earliestVersion) await show({ kind: "latest" });
+  }
+
   const restoreShown = () =>
     attempt(async () => {
       const s = selected;
@@ -493,6 +500,7 @@
           onselect={show}
           onjump={(pos) => editor?.jumpTo(pos)}
           onsnapshot={() => (modal = "snapshot")}
+          onarchived={archived}
           bind:tab={sidebarTab}
         />
       {/if}

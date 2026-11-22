@@ -12,8 +12,10 @@
 //! ├── blobs/         large cell sources, zstd-compressed, named by SHA-256 (ADR-0013)
 //! ├── proposals/     Delta table: agents' proposed changes and their decisions (ADR-0016;
 //! │                  created by the first proposal)
-//! └── results/       Delta table: stored runs of code cells, keyed by their inputs (ADR-0018;
-//!                    created by the first stored run)
+//! ├── results/       Delta table: stored runs of code cells, keyed by their inputs (ADR-0018;
+//! │                  created by the first stored run)
+//! └── archive/       Delta table: the save log, one row per save a prune or archive removed
+//!                    (ADR-0023; created by the first one)
 //! ```
 //!
 //! Every [`Store::commit`] is one atomic Delta transaction, so there is no "save": a crash
@@ -49,6 +51,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::archive::{self, ArchivedSave};
 use crate::blobs::{self, Blobs};
 use crate::cell::{Cell, CellDiff, Change};
 use crate::error::{Error, Result};
@@ -64,7 +67,9 @@ pub const FORMAT: &str = "cruncha-container";
 /// them, so it must refuse the container.
 /// 5: code-cell results may live in `results/` (ADR-0018), referencing blobs an older Cruncha's
 /// prune would delete.
-pub const FORMAT_VERSION: u32 = 5;
+/// 6: prunes and archives record every save they remove in `archive/` (ADR-0023); an older
+/// Cruncha would prune without that record, so it must refuse the container.
+pub const FORMAT_VERSION: u32 = 6;
 /// Squash the revision log after this many commits (spike S3b: 50 balances commit latency,
 /// read latency and growth).
 pub const DEFAULT_SQUASH_EVERY: u64 = 50;
@@ -160,6 +165,20 @@ pub struct PruneReport {
     pub proposals_deleted: usize,
 }
 
+/// What [`Store::archive_before`] would do, without deleting anything.
+#[derive(Debug, Clone)]
+pub struct ArchivePreview {
+    /// Versions from this one up to `cutoff` would be archived.
+    pub from_version: u64,
+    pub cutoff: u64,
+    /// Saves (edits, restores, accepted proposals) that would go to the save log.
+    pub saves: usize,
+    /// Estimated bytes freed (data files no longer needed, plus log entries).
+    pub bytes_freed: u64,
+    /// Snapshots archived (kept in `pins/`), oldest first.
+    pub snapshots: Vec<Ref>,
+}
+
 /// What [`Store::prune`] would do under a policy, without deleting anything.
 #[derive(Debug, Clone)]
 pub struct RetentionPreview {
@@ -197,6 +216,8 @@ pub struct Store {
     proposals: Option<DeltaTable>,
     /// `results/`, once a run has been stored.
     results: Option<DeltaTable>,
+    /// `archive/`, once a prune or archive has removed a save (ADR-0023).
+    archive: Option<DeltaTable>,
     /// Blobs the live `results/` rows reference (counted apart from history).
     result_blobs: HashSet<String>,
     /// Added to the clock for Cruncha's own timestamps. Tests use it to simulate time passing.
@@ -411,6 +432,7 @@ impl Store {
             pins: None,
             proposals: None,
             results: None,
+            archive: None,
             result_blobs: HashSet::new(),
             clock_offset_us: 0,
             blob_threshold: blobs::DEFAULT_BLOB_THRESHOLD,
@@ -458,6 +480,12 @@ impl Store {
         } else {
             None
         };
+        let archive_dir = root.join("archive");
+        let archive = if archive_dir.join("_delta_log").is_dir() {
+            Some(open_table(&archive_dir, &storage).await?)
+        } else {
+            None
+        };
         // Every append adds one data file and a squash leaves at most one, so the live file
         // count recovers the squash counter across sessions.
         let since_squash = live_files(&doc)?.saturating_sub(1);
@@ -471,6 +499,7 @@ impl Store {
             pins,
             proposals,
             results,
+            archive,
             result_blobs: HashSet::new(),
             clock_offset_us: 0,
             since_squash,
@@ -1015,9 +1044,91 @@ impl Store {
         let Some(cutoff) = computed.or(unfinished.then_some(earliest)) else {
             return Ok(None);
         };
+        let date = entries
+            .iter()
+            .find(|e| e.version == cutoff)
+            .and_then(|e| chrono::DateTime::from_timestamp_millis(e.at_ms))
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        let message = format!("history before version {cutoff} ({date}) pruned; policy: {policy}");
+        self.prune_to(cutoff, &entries, actor, &message).await.map(Some)
+    }
+
+    /// Archive the oldest snapshot groups (ADR-0023): every version before `cutoff`, which
+    /// must be a snapshot's version, becomes unavailable. Snapshots before it are kept in
+    /// `pins/` and every removed save in the save log ([`Store::archived`]). **Irreversible.**
+    ///
+    /// Unlike [`Store::prune`] it is the user's explicit choice, so it needs no new edits and
+    /// no retention floor applies. The newest snapshot group can't be archived: `cutoff` is at
+    /// most the latest snapshot's version.
+    pub async fn archive_before(&mut self, cutoff: u64, actor: &str) -> Result<PruneReport> {
+        let (refs, entries) = self.check_archive_cutoff(cutoff).await?;
+        let first = self.earliest_version();
+        let upto = refs
+            .iter()
+            .filter(|r| r.doc_version < cutoff)
+            .map(|r| format!("“{}”", r.name))
+            .next_back();
+        let message = match upto {
+            Some(name) => format!("archived versions {first}–{} (up to {name})", cutoff - 1),
+            None => format!("archived versions {first}–{} (draft)", cutoff - 1),
+        };
+        self.prune_to(cutoff, &entries, actor, &message).await
+    }
+
+    /// What [`Store::archive_before`] would do with `cutoff`, without deleting anything.
+    pub async fn archive_preview(&self, cutoff: u64) -> Result<ArchivePreview> {
+        let (refs, entries) = self.check_archive_cutoff(cutoff).await?;
+        Ok(ArchivePreview {
+            from_version: self.earliest_version(),
+            cutoff,
+            saves: entries.iter().filter(|e| e.version < cutoff && e.kind != CommitKind::Maintenance).count(),
+            bytes_freed: entries
+                .iter()
+                .take_while(|e| e.version < cutoff)
+                .map(|e| e.log_bytes + e.removed_bytes)
+                .sum(),
+            snapshots: refs.into_iter().filter(|r| r.doc_version < cutoff).collect(),
+        })
+    }
+
+    /// The refs and log entries, after checking that `cutoff` starts a snapshot group after
+    /// the earliest available version.
+    async fn check_archive_cutoff(&self, cutoff: u64) -> Result<(Vec<Ref>, Vec<LogEntry>)> {
+        let refs = self.refs().await?;
+        let bad = |why: &str| Err(Error::BadArchive(format!("version {cutoff}: {why}")));
+        if cutoff <= self.earliest_version() {
+            return bad("nothing before it is still available");
+        }
+        if cutoff > self.version() || !refs.iter().any(|r| r.doc_version == cutoff) {
+            return bad("an archive must end where a snapshot starts the next group");
+        }
+        Ok((refs, self.log_entries().await?))
+    }
+
+    /// The save log (ADR-0023): every save a prune or archive removed, oldest first; with
+    /// `cell`, only the saves that wrote that cell.
+    pub async fn archived(&self, cell: Option<&str>) -> Result<Vec<ArchivedSave>> {
+        let rows = match &self.archive {
+            None => Vec::new(),
+            Some(t) => archive::batches_to_rows(&scan(t).await?)?,
+        };
+        Ok(match cell {
+            None => rows,
+            Some(id) => rows.into_iter().filter(|r| r.cells.iter().any(|c| c == id)).collect(),
+        })
+    }
+
+    /// Make every version before `cutoff` unavailable (ADR-0011 §3, ADR-0023). Crash-safe:
+    /// a later [`Store::prune`] finishes an interrupted run.
+    async fn prune_to(&mut self, cutoff: u64, entries: &[LogEntry], actor: &str, message: &str) -> Result<PruneReport> {
+        let entries = entries.to_vec();
 
         // 1. Named versions survive: copy any that are about to go into `pins/`.
         let pinned = self.pin_refs_before(cutoff, actor).await?;
+
+        // 1b. The save log: a row for every save about to go (ADR-0023).
+        self.log_saves_before(cutoff, &entries, actor).await?;
 
         // 2. A checkpoint at the cutoff, so every version from it on stays readable once the
         //    older log is gone.
@@ -1099,25 +1210,129 @@ impl Store {
         let proposals_deleted = self.prune_proposals(cutoff_us, keep_upto, actor).await?;
 
         // 7. The marker commit, so history shows where it now starts.
-        let date = entries
-            .iter()
-            .find(|e| e.version == cutoff)
-            .and_then(|e| chrono::DateTime::from_timestamp_millis(e.at_ms))
-            .map(|d| d.format("%Y-%m-%d").to_string())
-            .unwrap_or_default();
-        let message = format!("history before version {cutoff} ({date}) pruned; policy: {policy}");
-        self.squash(actor, &message, &[(META_PRUNED_BEFORE, json!(cutoff))])
+        self.squash(actor, message, &[(META_PRUNED_BEFORE, json!(cutoff))])
             .await?;
         checkpoints::create_checkpoint(&self.doc, None).await?;
 
-        Ok(Some(PruneReport {
+        Ok(PruneReport {
             pruned_before: cutoff,
             pinned,
             data_files_deleted: metrics.files_deleted.len(),
             log_files_deleted,
             blobs_deleted,
             proposals_deleted,
-        }))
+        })
+    }
+
+    /// Append a save-log row for every save before `cutoff` not logged yet.
+    async fn log_saves_before(&mut self, cutoff: u64, entries: &[LogEntry], actor: &str) -> Result<()> {
+        let logged: HashSet<u64> = self.archived(None).await?.into_iter().map(|r| r.version).collect();
+        let saves: Vec<&LogEntry> = entries
+            .iter()
+            .filter(|e| e.version < cutoff && e.kind != CommitKind::Maintenance && !logged.contains(&e.version))
+            .collect();
+        if saves.is_empty() {
+            return Ok(());
+        }
+        let cells = self.cells_written(entries, saves[0].version, cutoff).await?;
+        let refs = self.refs().await?;
+        let rows: Vec<ArchivedSave> = saves
+            .iter()
+            .map(|e| {
+                let text = |k: &str| e.info.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+                let kind = if e.info.contains_key(META_PROPOSAL) {
+                    "proposal"
+                } else {
+                    match e.kind {
+                        CommitKind::Create => "create",
+                        CommitKind::Restore => "restore",
+                        _ => "edit",
+                    }
+                };
+                // The group: the latest snapshot at or before the save (the first one taken
+                // there, as the History tab names it).
+                let snapshot = refs
+                    .iter()
+                    .filter(|r| r.doc_version <= e.version)
+                    .max_by(|a, b| a.doc_version.cmp(&b.doc_version).then(b.created_at_us.cmp(&a.created_at_us)))
+                    .map(|r| r.name.clone());
+                ArchivedSave {
+                    version: e.version,
+                    at_us: e.info.get(META_AT).and_then(Value::as_i64).unwrap_or(e.at_ms * 1000),
+                    actor: text(META_ACTOR),
+                    message: text(META_MESSAGE),
+                    kind: kind.into(),
+                    snapshot,
+                    cells: cells.get(&e.version).cloned().unwrap_or_default(),
+                    removed_before: cutoff,
+                }
+            })
+            .collect();
+        let table = match &self.archive {
+            Some(t) => t.clone(),
+            None => {
+                let dir = self.root.join("archive");
+                if dir.join("_delta_log").is_dir() {
+                    open_table(&dir, &self.storage).await?
+                } else {
+                    create_table(&dir, "archive", &archive::ARCHIVE_SCHEMA, actor, &self.storage).await?
+                }
+            }
+        };
+        let table = table
+            .write([archive::rows_to_batch(&rows)?])
+            .with_save_mode(SaveMode::Append)
+            .with_commit_properties(commit_props(
+                CommitKind::Maintenance,
+                actor,
+                &format!("log {} save(s) before version {cutoff}", rows.len()),
+                self.now_us(),
+                &[],
+            ))
+            .await?;
+        self.archive = Some(table);
+        Ok(())
+    }
+
+    /// The cells each version in `from..to` wrote: its rows (`rev` = the version). Between
+    /// two maintenance commits the log is only appended to, so one scan at the end of each
+    /// such window sees every row written in it (a squash is maintenance and starts a new
+    /// window). About one table load per 50 versions.
+    async fn cells_written(&self, entries: &[LogEntry], from: u64, to: u64) -> Result<HashMap<u64, Vec<String>>> {
+        use deltalake::arrow::array::{Array, Int64Array, StringArray};
+        let mut ends: Vec<u64> = entries
+            .iter()
+            .filter(|e| e.kind == CommitKind::Maintenance && e.version > from && e.version < to)
+            .map(|e| e.version - 1)
+            .collect();
+        ends.push(to - 1);
+        ends.dedup();
+        let mut out: HashMap<u64, std::collections::BTreeSet<String>> = HashMap::new();
+        let mut lo = from;
+        for end in ends {
+            if end >= lo {
+                let mut t = self.doc.clone();
+                t.load_version(end).await?;
+                for b in scan(&t).await? {
+                    // Scans may return other string types: conform to the log schema first.
+                    let b = schema::conform_filling(&b, &schema::DOC_LOG_SCHEMA)?;
+                    let ids = b.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+                    let revs = b
+                        .column_by_name(schema::REV_COLUMN)
+                        .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
+                    let (Some(ids), Some(revs)) = (ids, revs) else {
+                        return Err(Error::Corrupt("doc table has no id or rev column".into()));
+                    };
+                    for i in 0..b.num_rows() {
+                        if revs.is_valid(i) && revs.value(i) >= lo as i64 && revs.value(i) <= end as i64 {
+                            out.entry(revs.value(i) as u64).or_default().insert(ids.value(i).to_owned());
+                        }
+                    }
+                }
+            }
+            lo = end + 2;
+        }
+        Ok(out.into_iter().map(|(v, ids)| (v, ids.into_iter().collect())).collect())
     }
 
     /// Copy every ref older than `cutoff` that isn't pinned yet into `pins/`.

@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cruncha_store::{
-    Cell, CellKind, Change, CommitKind, Error, PruneReport, Ref, Retention, RetentionPreview,
-    Store, VersionInfo,
+    ArchivePreview, ArchivedSave, Cell, CellKind, Change, CommitKind, Error, PruneReport, Ref, Retention,
+    RetentionPreview, Store, VersionInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -216,6 +216,57 @@ impl From<VersionInfo> for VersionView {
             message: v.message,
             restored_from: v.restored_from,
             pruned_before: v.pruned_before,
+        }
+    }
+}
+
+/// What archiving the snapshot groups before `cutoff` would do (ADR-0023).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchivePreviewView {
+    pub from_version: u64,
+    pub cutoff: u64,
+    pub saves: usize,
+    pub bytes_freed: u64,
+    /// Snapshots archived (kept and restorable), oldest first.
+    pub snapshots: Vec<String>,
+}
+
+impl From<ArchivePreview> for ArchivePreviewView {
+    fn from(p: ArchivePreview) -> Self {
+        ArchivePreviewView {
+            from_version: p.from_version,
+            cutoff: p.cutoff,
+            saves: p.saves,
+            bytes_freed: p.bytes_freed,
+            snapshots: p.snapshots.into_iter().map(|r| r.name).collect(),
+        }
+    }
+}
+
+/// One row of the save log (ADR-0023).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchivedSaveView {
+    pub version: u64,
+    pub at_ms: i64,
+    pub actor: String,
+    pub message: String,
+    pub kind: String,
+    pub snapshot: Option<String>,
+    pub cells: Vec<String>,
+}
+
+impl From<ArchivedSave> for ArchivedSaveView {
+    fn from(s: ArchivedSave) -> Self {
+        ArchivedSaveView {
+            version: s.version,
+            at_ms: s.at_us / 1000,
+            actor: s.actor,
+            message: s.message,
+            kind: s.kind,
+            snapshot: s.snapshot,
+            cells: s.cells,
         }
     }
 }
@@ -1202,6 +1253,28 @@ impl Session {
         Ok(s.retention_preview(&policy).await.map_err(err)?.into())
     }
 
+    /// What archiving every version before `cutoff` (a snapshot's version) would do.
+    pub async fn archive_preview(&self, cutoff: u64) -> Result<ArchivePreviewView> {
+        Ok(self.doc()?.store.archive_preview(cutoff).await.map_err(err)?.into())
+    }
+
+    /// Archive the oldest snapshot groups, up to the one starting at `cutoff` (ADR-0023; the
+    /// user confirmed the preview). Stored results are trimmed as after any prune.
+    pub async fn archive(&mut self, cutoff: u64) -> Result<DocInfo> {
+        let doc = self.doc_mut()?;
+        doc.store.archive_before(cutoff, &local_actor()).await.map_err(err)?;
+        doc.pruned = true;
+        crate::stored::retain_after_prune(&mut doc.store, &doc.engine, "system")
+            .await
+            .map_err(err)?;
+        self.info().await
+    }
+
+    /// The save log: every removed save, oldest first; with `cell`, only those that wrote it.
+    pub async fn archived(&self, cell: Option<&str>) -> Result<Vec<ArchivedSaveView>> {
+        Ok(self.doc()?.store.archived(cell).await.map_err(err)?.into_iter().map(Into::into).collect())
+    }
+
     /// Apply the open document's effective policy now (the user confirmed the preview).
     pub async fn prune_now(&mut self) -> Result<Option<PruneView>> {
         let policy = self.effective_retention(&self.doc()?.store);
@@ -2093,5 +2166,38 @@ mod tests {
         let info = session.info().await.unwrap();
         assert!(info.refs[0].pinned);
         assert!(session.cells_at_ref("Rev A").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn archive_the_oldest_groups_from_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        session.close().await;
+        let mut store = Store::open(&path).await.unwrap();
+        for i in 0..6 {
+            let c = calc("L", "b2", &format!("L = {} ft", 26 + i), &["L"], &[]);
+            store.commit(&[Change::Upsert(c)], "user:t", "edit").await.unwrap();
+        }
+        let rev_b = store.tag("Rev B", "issued", "user:t").await.unwrap().doc_version;
+        let c = calc("L", "b2", "L = 40 ft", &["L"], &[]);
+        store.commit(&[Change::Upsert(c)], "user:t", "edit").await.unwrap();
+        drop(store);
+        session.open(&path).await.unwrap();
+
+        // The newest group (Rev B on) can't go; everything before it can.
+        let p = session.archive_preview(rev_b).await.unwrap();
+        assert_eq!(p.snapshots, ["Rev A"]);
+        assert!(p.saves >= 6 && p.bytes_freed > 0);
+        assert!(session.archive_preview(rev_b + 1).await.is_err());
+        let info = session.archive(rev_b).await.unwrap();
+        assert_eq!(info.earliest_version, rev_b);
+        assert!(info.refs.iter().any(|r| r.name == "Rev A" && r.pinned));
+        assert!(session.cells_at_ref("Rev A").await.is_ok());
+        let log = session.archived(None).await.unwrap();
+        assert_eq!(log.len(), p.saves);
+        assert!(log.iter().any(|s| s.actor == "user:t" && s.cells == ["L"]));
+        assert!(!session.archived(Some("L")).await.unwrap().is_empty());
     }
 }

@@ -5,6 +5,7 @@
 //!
 //! See `docs/design/02-document-model.md` §5.
 
+mod archive;
 mod blobs;
 mod cell;
 mod error;
@@ -16,6 +17,7 @@ mod retention;
 pub mod schema;
 mod store;
 
+pub use archive::ArchivedSave;
 pub use blobs::DEFAULT_BLOB_THRESHOLD;
 pub use cell::{Cell, CellDiff, CellKind, Change, Provenance};
 pub use error::{Error, Result};
@@ -24,6 +26,6 @@ pub use results::{MAX_RUN_BYTES, MAX_TEXT_BYTES, PutReport, RunEntry, RunRecord,
 pub use retention::{DEFAULT_FLOOR, MIN_FLOOR, Retention};
 pub use schema::Ref;
 pub use store::{
-    CommitKind, CompactStats, FORMAT, FORMAT_VERSION, META_PROPOSAL, Manifest, PruneReport, RetentionPreview, Store,
+    ArchivePreview, CommitKind, CompactStats, FORMAT, FORMAT_VERSION, META_PROPOSAL, Manifest, PruneReport, RetentionPreview, Store,
     VersionInfo, diff_cells,
 };

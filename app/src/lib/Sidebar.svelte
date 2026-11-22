@@ -6,7 +6,7 @@
 </script>
 
 <script lang="ts">
-  import type { RefView, Selection, VersionView } from "./api";
+  import type { DocInfo, RefView, Selection, VersionView } from "./api";
   import type { OutlineItem } from "./editor/outline";
   import HistoryPanel from "./HistoryPanel.svelte";
 
@@ -20,6 +20,7 @@
     onselect,
     onjump,
     onsnapshot,
+    onarchived,
     tab = $bindable("outline"),
   }: {
     outline: OutlineItem[];
@@ -31,6 +32,7 @@
     onselect: (s: Selection) => void;
     onjump: (pos: number) => void;
     onsnapshot: () => void;
+    onarchived?: (info: DocInfo) => void;
     tab?: SidebarTab;
   } = $props();
 
@@ -83,7 +85,7 @@
         </nav>
       {/if}
     {:else}
-      <HistoryPanel {history} {refs} {latest} {earliest} {selected} {onselect} {onsnapshot} />
+      <HistoryPanel {history} {refs} {latest} {earliest} {selected} {onselect} {onsnapshot} {onarchived} />
     {/if}
   </div>
 </aside>

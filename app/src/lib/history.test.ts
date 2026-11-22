@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import type { CommitKind, RefView, VersionView } from "./api";
-import { entryMatches, groupHistory, labelOf } from "./history";
+import { DRAFT, archiveCutoff, entryMatches, groupHistory, labelOf, splitArchived } from "./history";
 
 const v = (version: number, kind: CommitKind = "edit", message = ""): VersionView => ({
   version, timestampMs: 1000 * version, kind, actor: "nate", message, restoredFrom: null, prunedBefore: null,
@@ -67,4 +67,30 @@ describe("groupHistory", () => {
     expect(entryMatches(e, "v1")).toBe(true);
     expect(entryMatches(e, "v2")).toBe(false);
   });
+});
+
+it("archived groups leave the tab; the newest never does (ADR-0023)", () => {
+  // Draft 0–2, Rev A at 3, Rev B at 6, Rev C at 9; versions to 11.
+  const all = Array.from({ length: 12 }, (_, i) => v(i, i === 0 ? "create" : "edit"));
+  const refs = [ref("Rev A", 3), ref("Rev B", 6), ref("Rev C", 9)];
+  const names = (gs: { name: string }[]) => gs.map((g) => g.name);
+
+  // Nothing archived: every group shows; archiving from Rev A down ends at Rev B's version.
+  const g0 = groupHistory(all, refs, 0);
+  const s0 = splitArchived(g0, 0);
+  expect(names(s0.shown)).toEqual(["Rev C", "Rev B", "Rev A", DRAFT]);
+  expect(s0.archived).toEqual([]);
+  expect(archiveCutoff(s0.shown, 2)).toBe(6);
+  expect(archiveCutoff(s0.shown, 0)).toBeNull();
+
+  // Archived before Rev B (earliest 6): Draft and Rev A go, though Rev A's group listed v6.
+  const kept = all.filter((x) => x.version >= 6);
+  const s1 = splitArchived(groupHistory(kept, refs.map((r) => ({ ...r, pinned: r.version < 6 })), 6), 6);
+  expect(names(s1.shown)).toEqual(["Rev C", "Rev B"]);
+  expect(names(s1.archived)).toEqual(["Rev A"]);
+
+  // Trimmed by a policy in the middle of a group (earliest 4): nothing is archived.
+  const s2 = splitArchived(groupHistory(all.filter((x) => x.version >= 4), refs, 4), 4);
+  expect(names(s2.shown)).toEqual(["Rev C", "Rev B", "Rev A"]);
+  expect(s2.archived).toEqual([]);
 });

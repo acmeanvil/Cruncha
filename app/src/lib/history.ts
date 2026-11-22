@@ -85,6 +85,27 @@ export function groupHistory(history: VersionView[], refs: RefView[], earliest: 
   return groups.filter((x) => x.snapshot || x.entries.length).reverse();
 }
 
+/** Split `groups` (newest first, from [`groupHistory`]) into those the History tab shows and
+ *  the archived ones (ADR-0023): groups whose own versions are all before `earliest`. A
+ *  group's own versions end before the next snapshot, so a group is archived when the next
+ *  newer group's snapshot is at or before `earliest`. The newest group never is. */
+export function splitArchived(groups: Group[], earliest: number): { shown: Group[]; archived: Group[] } {
+  const shown: Group[] = [];
+  const archived: Group[] = [];
+  groups.forEach((g, i) => {
+    const newer = i > 0 ? groups[i - 1].snapshot : null;
+    if (earliest > 0 && newer && earliest >= newer.version) archived.push(g);
+    else shown.push(g);
+  });
+  return { shown, archived };
+}
+
+/** The archive cutoff for archiving `shown[k]` and every older group: the version of the
+ *  snapshot that starts the next newer group. Null for the newest group. */
+export function archiveCutoff(shown: Group[], k: number): number | null {
+  return k > 0 ? (shown[k - 1].snapshot?.version ?? null) : null;
+}
+
 /** The label for `version`: "Rev A" at a snapshot, "Rev A · 3" after one, "Draft · 2" before
  *  any; null when it can't be numbered. */
 export function labelOf(groups: Group[], version: number): string | null {

@@ -1,6 +1,6 @@
 # ADR-0023: Archive major versions from the History tab
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Date:** 2026-11-22
 **Deciders:** acmeanvil
 **Refines:** ADR-0011 (retention and pruning). It uses ADR-0016's and ADR-0018's prune rules unchanged.
@@ -46,13 +46,13 @@ The individual saves between snapshots can't be opened any more. This can't be u
 | `at_us` | i64 | `cruncha.at` |
 | `actor`, `message`, `kind` | string | from the commit metadata |
 | `snapshot` | string, null | the group's snapshot; null for Draft |
-| `cells` | list<string> | IDs of the cells the save wrote (its rows with `rev = version + 1`) |
+| `cells` | string | JSON array of the IDs of the cells the save wrote (its rows with `rev` = its version) |
 | `removed_before` | u64 | the cutoff of the prune that removed it |
 
 - **Every prune writes it**, whether it's an archive or an automatic retention prune. Trimming by policy therefore no longer erases the record of who changed what.
 - **The rows are written after pinning and before the point of no return** (ADR-0011 step 4). Writing is idempotent by `version`, so an interrupted prune that resumes doesn't duplicate them.
 - **It is never pruned itself.** At about 100 bytes per save, 10,000 saves come to roughly 1 MB.
-- **Older containers** get the table on first use. The version bumps to 6 with no data rewritten, as with `proposals/` and `results/`.
+- **Older containers** are bumped to format 6 when this version opens them (no data rewritten), as with formats 4 and 5. The table itself is created by the first prune or archive that removes a save.
 
 ### 4. Store API
 
@@ -77,7 +77,7 @@ New read APIs:
 
 ### 6. Agents
 
-- `history` takes `archived: true` to list the save log and archived snapshots. Without it, it lists available versions, as now. Archived snapshots also appear in the normal listing, marked `[archived]`.
+- `history` takes `archived: true` to list the save log and archived snapshots. Without it, it lists available versions, as now. A last line of the normal listing says how many saves were archived and which snapshots were kept.
 - `read_doc` takes `snapshot: "Rev A"` to read any snapshot, archived or not, as read-only mirror text with the results stored for it. Calc results come from evaluating the pinned cells; stored code-cell results are looked up as in ADR-0018.
 - `skills/cruncha-history` documents both.
 
@@ -113,15 +113,17 @@ The owner preferred a simple rule with immediate savings (A) over freedom of cho
 - **An archived save can't be reopened**, only its snapshot. "Restore to version *n*" for archived *n* is refused with `Error::Pruned`, as today.
 - **Agents can read old revisions for the first time**, through `read_doc(snapshot)`, whether archived or not.
 - **The tombstone growth noted in ADR-0011 is not fixed by this.** Archiving deletes files and log entries, but checkpoint tombstones stay (ADR-0011 item 5).
-- **Container format 6.** Older Cruncha builds refuse to open a format-6 container, as with every format bump.
+- **Container format 6.** Older Cruncha builds refuse to open a document once this version has opened it, as with every format bump.
 
 ## Action Items
 
-1. [ ] `cruncha-store`:
+**Implementation notes (2026-11-22):** a save's group is the latest snapshot at or before it, so a snapshot's own version belongs to its group (`snapshot` = that snapshot), as the History tab labels it. The cells a save wrote are read with one table load per maintenance-bounded window (between squashes `doc/` is only appended to), about one load per 50 versions.
+
+1. [x] `cruncha-store`:
    - the `archive/` table and format 6;
    - save-log rows written in `prune`, idempotent, before the point of no return;
    - `archive_before`, `archive_preview` and `archived`;
    - tests: oldest-first validation, the newest group refused, a dormant document archives on request, the crash test extended to an interrupted archive, and automatic prunes write the log.
-2. [ ] App: History tab archive mode, the confirmation, the archive line and dialog (snapshots read-only, restore, report; the save log by cell).
-3. [ ] MCP: `history(archived)` and `read_doc(snapshot)`; update `skills/cruncha-history` and `skills/cruncha-core`.
-4. [ ] CLAUDE.md: the `archive/` table in the store invariants and in the pruning order.
+2. [x] App: History tab archive mode, the confirmation, the archive line and dialog (snapshots read-only, restore, report; the save log by cell).
+3. [x] MCP: `history(archived)` and `read_doc(snapshot)`; update `skills/cruncha-history` and `skills/cruncha-core`.
+4. [x] CLAUDE.md: the `archive/` table in the store invariants and in the pruning order.

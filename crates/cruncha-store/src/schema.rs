@@ -328,7 +328,7 @@ pub fn read_pins(
 
 /// Like [`conform`], but columns missing from `batch` are filled with nulls when the target
 /// field is nullable (used for rows predating a schema extension).
-fn conform_filling(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
+pub(crate) fn conform_filling(batch: &RecordBatch, schema: &SchemaRef) -> Result<RecordBatch> {
     let columns = schema
         .fields()
         .iter()

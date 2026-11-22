@@ -24,6 +24,9 @@ pub struct ReadDocRequest {
     pub from: Option<String>,
     /// At most this many cells. Omit for the whole document.
     pub limit: Option<u32>,
+    /// Read this snapshot (e.g. "Rev A"), read-only, instead of the latest version. Archived
+    /// snapshots work too. Edits are always proposed against the latest version.
+    pub snapshot: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -44,6 +47,9 @@ pub struct HistoryRequest {
     pub cell_id: Option<String>,
     /// Also list what changed from this version to the latest.
     pub since: Option<u64>,
+    /// List the archive instead: snapshots kept from archived or trimmed history, and the
+    /// save log (who changed which cells, when) of the saves that were removed.
+    pub archived: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -100,12 +106,20 @@ impl<B: Backend> CrunchaTools<B> {
     #[tool(description = "The document as Markdown (the text mirror): headings and prose, every cell \
         with its ID in the fence ({#ID}), and the engine's result on a `⇒` line. Start here.")]
     async fn read_doc(&self, Parameters(req): Parameters<ReadDocRequest>) -> Result<CallToolResult, ErrorData> {
-        match self.backend.snapshot(false).await {
-            Ok(doc) => ok(mirror::render(
-                &doc,
-                &Range { from: req.from, limit: req.limit.map(|l| l as usize) },
-            )),
-            Err(e) => fail(e),
+        let range = Range { from: req.from, limit: req.limit.map(|l| l as usize) };
+        match &req.snapshot {
+            None => match self.backend.snapshot(false).await {
+                Ok(doc) => ok(mirror::render(&doc, &range)),
+                Err(e) => fail(e),
+            },
+            Some(name) => match self.backend.snapshot_named(name.clone()).await {
+                Ok(doc) => ok(format!(
+                    "<!-- Snapshot “{name}” (version {}), read-only. Propose edits against the latest version. -->\n{}",
+                    doc.version,
+                    mirror::render(&doc, &range)
+                )),
+                Err(e) => fail(e),
+            },
         }
     }
 
@@ -267,8 +281,17 @@ impl<B: Backend> CrunchaTools<B> {
 
     #[tool(description = "Versions (newest first) with actor, time, message and snapshots. \
         With cell_id, only versions where that cell changed; with since, also the cells that \
-        changed from that version to the latest, with their sources before and after.")]
+        changed from that version to the latest, with their sources before and after. With \
+        archived: true, the archive instead: snapshots kept from archived or trimmed history \
+        (read them with read_doc's snapshot) and the save log of removed saves (with cell_id, \
+        those that changed that cell).")]
     async fn history(&self, Parameters(req): Parameters<HistoryRequest>) -> Result<CallToolResult, ErrorData> {
+        if req.archived == Some(true) {
+            return match self.backend.archive(req.cell_id.clone()).await {
+                Ok(a) => ok(archive_text(&a)),
+                Err(e) => fail(e),
+            };
+        }
         let versions = match self.backend.history().await {
             Ok(v) => v,
             Err(e) => return fail(e),
@@ -294,6 +317,16 @@ impl<B: Backend> CrunchaTools<B> {
         }
         if listed == 0 {
             out.push_str("(no matching versions)\n");
+        }
+        if let Ok(a) = self.backend.archive(None).await
+            && (!a.saves.is_empty() || !a.snapshots.is_empty())
+        {
+            let names: Vec<&str> = a.snapshots.iter().map(|s| s.name.as_str()).collect();
+            out.push_str(&format!(
+                "\nArchived: {} removed save(s){}; history with archived: true lists them.\n",
+                a.saves.len(),
+                if names.is_empty() { String::new() } else { format!(", snapshots {} kept", names.join(", ")) }
+            ));
         }
         if let Some(since) = req.since {
             match self.backend.diff(since, latest).await {
@@ -355,4 +388,37 @@ impl<B: Backend> ServerHandler for CrunchaTools<B> {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(INSTRUCTIONS)
     }
+}
+
+/// The archive as text: kept snapshots, then removed saves, newest first.
+fn archive_text(a: &crate::ArchiveView) -> String {
+    let mut out = String::new();
+    if a.snapshots.is_empty() && a.saves.is_empty() {
+        return "Nothing has been archived or trimmed.\n".into();
+    }
+    out.push_str("Archived snapshots (read with read_doc snapshot):\n");
+    if a.snapshots.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for s in a.snapshots.iter().rev() {
+        out.push_str(&format!("- {} (v{}, {}){}\n", s.name, s.version, s.at, if s.message.is_empty() { String::new() } else { format!(": {}", s.message) }));
+    }
+    out.push_str(&format!("\nRemoved saves ({}), newest first:\n", a.saves.len()));
+    for (n, s) in a.saves.iter().rev().enumerate() {
+        if n == 200 {
+            out.push_str("… older saves omitted\n");
+            break;
+        }
+        out.push_str(&format!(
+            "v{} {} {} ({}) in {}: {} — cells {}\n",
+            s.version,
+            s.at,
+            s.actor,
+            s.kind,
+            s.snapshot.as_deref().unwrap_or("Draft"),
+            s.message,
+            if s.cells.is_empty() { "none".to_owned() } else { s.cells.join(", ") }
+        ));
+    }
+    out
 }

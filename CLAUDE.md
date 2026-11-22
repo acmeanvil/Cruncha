@@ -23,10 +23,11 @@ crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/logindex.rs          LogIndexStore (ADR-0021): every table's _delta_log listed from an index kept by this (single) writer; call forget() after any write that bypasses it
   src/blobs.rs             content-addressed, zstd-compressed `blobs/` for large cell sources (ADR-0013)
   src/proposals.rs         agents' proposals (ADR-0016): `proposals/` schema, ProposedChange, Proposal folding
+  src/archive.rs           the save log (ADR-0023): `archive/` schema, ArchivedSave (one row per save a prune or archive removed)
   src/results.rs           stored code-cell runs (ADR-0018): `results/` schema, RunRecord, long strings ↔ blob references (`$blob`/`$json`)
   examples/store_bench.rs  spike S3 benchmark
   examples/store_variants.rs  spike S3b: merge vs append-only vs bucketed layouts
-  tests/                   integration tests (tempdir containers): store, retention, blobs, proposals, results, crash
+  tests/                   integration tests (tempdir containers): store, retention, blobs, proposals, results, archive, crash
 crates/cruncha-lang/       Hurmet lexer + parser port (spike S1; MIT notice in LICENSE-HURMET): parse_tex, parse_calc
   tests/golden.rs          Hurmet's golden TeX/RPN tests (tests/fixtures/*.json); keep green when adding an AST
   src/lib.rs `hurmet`      helpers shared with cruncha-eval (doc-hidden, not a stable API)
@@ -160,7 +161,8 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - `doc/` is an **append-only revision log** (ADR-0010; container format 3). A commit appends the changed rows with `rev = version + 1`, and the store fails loudly if the committed version differs. Reads reduce to the highest `rev` per id. Every 50 commits the log is squashed (overwritten with current rows); old files stay, so time travel still works. Older containers are migrated on open by adding nullable columns (no data rewritten).
 - Sources of at least 1 KiB live out of line (ADR-0013): the row has `source_hash` (SHA-256) and a null `source`; the text is in `blobs/ab/cdef….zst`. Blobs are immutable and written **before** the commit that references them. Only `Store::prune` deletes blobs, and only those no data file left in `doc/` or `pins/` references. Keep the layout seam (`commit_with` appends, `maintain` squashes) so a deletion-vector layout (S3 option C) can replace those two steps; `reduce_log` already reads a one-row-per-id table.
 - Container tables are created with expired-log cleanup **disabled**. Delta's default 30-day log retention would silently destroy time travel. `Store::history` reads `doc/_delta_log/NNN.json` directly, from `manifest.earliest_version` to the latest version, and fails loudly on a gap.
-- Pruning order (each step crash-safe): pin refs older than the cutoff into `pins/` → checkpoint at the cutoff → write `earliest_version` to the manifest (point of no return) → VACUUM (Lite, explicit retention, fixed clock) → `cleanup_expired_logs_for(cutoff, …)` → delete unreferenced blobs → marker squash carrying `cruncha.prunedBefore`. An interrupted prune is finished by the next call.
+- Pruning order (each step crash-safe): pin refs older than the cutoff into `pins/` → append a save-log row to `archive/` for every removed save not logged yet (ADR-0023) → checkpoint at the cutoff → write `earliest_version` to the manifest (point of no return) → VACUUM (Lite, explicit retention, fixed clock) → `cleanup_expired_logs_for(cutoff, …)` → delete unreferenced blobs → marker squash carrying `cruncha.prunedBefore`. An interrupted prune is finished by the next call.
+- Archiving (ADR-0023, container format 6) is `Store::archive_before(cutoff)`: the same pruning steps with an explicit cutoff that must be a snapshot's version (the oldest groups only, never the newest), no wait for new edits and no floor, because the user chose it. The save log in `archive/` is append-only and never pruned. The History tab hides archived groups (`history.ts` `splitArchived`) and lists them in the archive dialog; agents read them with `read_doc(snapshot)` and `history(archived)`.
 - There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Tables are opened and created through the `Store`'s `LogIndexStore` (ADR-0021), whose `_delta_log` listings rely on that: anything that writes a table through other storage (e.g. a URL-based delta-rs call) must be followed by `storage.forget()`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
 - One `Store::commit` is one atomic Delta version (a squash, when due, adds a second, maintenance version). Batch changes (on cell submit or idle), never per keystroke.
 - A calc cell's `defines` and `reads` are always recomputed by the backend (`cruncha_eval::prepare`) when it is committed; the editor's values are ignored. A Python cell's come from the worker's scan when Python is set up. Other kinds keep what they were given.
@@ -181,7 +183,8 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 ## Decisions and docs as we go
 
 - Write an ADR (`docs/adr/NNNN-title.md`, using the template in `docs/adr/README.md`) for any significant, hard-to-reverse choice: a new dependency with lock-in, a file-format change, a semantics change, or a license-affecting change. Add it to the index table. Proposals start as **Proposed**. Only the project owner moves an ADR to **Accepted**.
-- Accepted ADRs are immutable. Supersede them with a new ADR rather than editing.
+- Accepted ADRs are immutable. Supersede them with a new ADR rather than editing. Ticking an action item, with a note on what delivered it, is the one allowed edit.
+- `docs/TODO.md` lists every ADR action item not done yet (not started or partial). When an item is done, tick it in its ADR and remove it from `docs/TODO.md` in the same change.
 - When a spike finishes, record its numbers in the relevant ADR or design doc.
 - `skills/` is the agent-facing spec of the calc syntax and the MCP tools. When an implementation changes syntax, tools or semantics, update the matching skill **in the same change**.
 - The agent interface reuses the user's own `~/Developer/looking_glass` (MIT; `lg-acp` and `lg-agent`). Keep the MIT notice on anything ported from it (ADR-0009). Its UX (session view, permission prompts, model menus, usage, history) is the spec for the agent panel.

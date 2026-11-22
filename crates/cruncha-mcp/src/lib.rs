@@ -86,6 +86,40 @@ pub struct VersionInfo {
     pub snapshots: Vec<String>,
 }
 
+/// What archiving and trimming removed (ADR-0023): the snapshots kept from removed history
+/// and the save log.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ArchiveView {
+    /// Oldest first.
+    pub snapshots: Vec<ArchivedSnapshot>,
+    /// Oldest first.
+    pub saves: Vec<ArchivedSaveInfo>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ArchivedSnapshot {
+    pub name: String,
+    pub version: u64,
+    /// ISO 8601, UTC.
+    pub at: String,
+    pub message: String,
+}
+
+/// One removed save.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ArchivedSaveInfo {
+    pub version: u64,
+    /// ISO 8601, UTC.
+    pub at: String,
+    pub actor: String,
+    pub kind: String,
+    pub message: String,
+    /// The snapshot group it was in; `None` before the first snapshot.
+    pub snapshot: Option<String>,
+    /// IDs of the cells it changed.
+    pub cells: Vec<String>,
+}
+
 /// A cell that changed between two versions.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CellChange {
@@ -178,4 +212,15 @@ pub trait Backend: Clone + Send + Sync + 'static {
     fn proposals(&self) -> impl Future<Output = Result<Vec<ProposalInfo>, String>> + Send;
     /// Withdraw one of this agent's open proposals.
     fn withdraw(&self, id: String) -> impl Future<Output = Result<ProposalInfo, String>> + Send;
+    /// The document at a named snapshot, read-only, with its results (ADR-0023: archived
+    /// snapshots too).
+    fn snapshot_named(&self, name: String) -> impl Future<Output = Result<DocSnapshot, String>> + Send {
+        async move { Err(format!("this server can't read snapshot “{name}”")) }
+    }
+    /// The archive: snapshots kept from removed history and the save log; with `cell`, only
+    /// saves that changed it.
+    fn archive(&self, cell: Option<String>) -> impl Future<Output = Result<ArchiveView, String>> + Send {
+        let _ = cell;
+        async { Ok(ArchiveView::default()) }
+    }
 }

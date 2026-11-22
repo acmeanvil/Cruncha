@@ -48,7 +48,7 @@ fn crash_child() {
     });
 }
 
-/// The pruning child: edits, tags every so often, and prunes, forever.
+/// The pruning child: edits, tags every so often, and prunes or archives (ADR-0023), forever.
 #[test]
 #[ignore = "helper process for survives_sigkill_mid_prune"]
 fn prune_child() {
@@ -68,7 +68,17 @@ fn prune_child() {
             if v % 3 == 0 {
                 store.tag(&format!("t{v}"), "", "user:child").await.unwrap();
             }
-            store.prune(&tight_policy(), "system").await.unwrap();
+            // Every other round, archive up to the second-newest snapshot instead.
+            let refs = store.refs().await.unwrap();
+            let archive_to = (v % 2 == 0 && refs.len() >= 2).then(|| refs[refs.len() - 2].doc_version);
+            match archive_to {
+                Some(c) if c > store.earliest_version() => {
+                    store.archive_before(c, "user:child").await.unwrap();
+                }
+                _ => {
+                    store.prune(&tight_policy(), "system").await.unwrap();
+                }
+            }
         }
     });
 }
@@ -111,6 +121,13 @@ async fn check(path: &Path, min_version: u64) -> u64 {
             .await
             .unwrap_or_else(|e| panic!("ref {} (v{}): {e}", r.name, r.doc_version));
         assert_eq!(cells.len(), 2, "ref {}", r.name);
+    }
+    // The save log (ADR-0023) lists only removed versions, each save with both its cells.
+    for save in store.archived(None).await.unwrap() {
+        assert!(save.version < earliest, "logged v{} is still available (earliest {earliest})", save.version);
+        if save.kind == "edit" {
+            assert_eq!(save.cells.len(), 2, "logged v{}: {:?}", save.version, save.cells);
+        }
     }
     v
 }

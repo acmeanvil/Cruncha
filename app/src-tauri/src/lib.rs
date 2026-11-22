@@ -485,6 +485,23 @@ async fn set_document_retention(
 }
 
 #[tauri::command]
+async fn archive_preview(cutoff: u64, s: State<'_, Shared>) -> Result<session::ArchivePreviewView> {
+    s.lock().await.archive_preview(cutoff).await
+}
+
+/// Archive the oldest snapshot groups, up to the one starting at `cutoff` (ADR-0023).
+#[tauri::command]
+async fn archive_history(cutoff: u64, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.archive(cutoff).await
+}
+
+/// The save log: removed saves, oldest first; with `cell`, those that wrote it.
+#[tauri::command]
+async fn archived_saves(cell: Option<String>, s: State<'_, Shared>) -> Result<Vec<session::ArchivedSaveView>> {
+    s.lock().await.archived(cell.as_deref()).await
+}
+
+#[tauri::command]
 async fn retention_preview(policy: Option<Retention>, s: State<'_, Shared>) -> Result<PreviewView> {
     s.lock().await.retention_preview(policy).await
 }
@@ -912,6 +929,9 @@ pub fn run() {
             set_document_retention,
             retention_preview,
             prune_now,
+            archive_preview,
+            archive_history,
+            archived_saves,
             clear_results,
             proposals,
             accept_proposal,

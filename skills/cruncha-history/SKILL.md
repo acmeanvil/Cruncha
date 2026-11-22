@@ -14,10 +14,13 @@ History is never rewritten:
 - A rollback is a **new** version, so it can itself be undone.
 - `maintenance` versions (compaction) don't change content. Leave them out of summaries.
 - **Retention:** a document may have a history-retention policy, set in Preferences or in the document's settings (ADR-0011): a cap on saves, on size, or on days of *activity*, counted back from the last edit, not from today. Pruning happens only after new edits, so a document nobody is editing never loses history. Versions past the cutoff can be pruned, and a maintenance version marks where (its message reads "history before version *v* (*date*) pruned"). History then starts at the earliest available version, and asking for anything older fails with "pruned". **Snapshots (tags) are always kept**, and can still be viewed and restored after their version is trimmed. If a request reaches past the earliest available version, say so plainly and offer the nearest snapshot instead. Never imply the older history still exists.
+- **Archive** (ADR-0023): the user can archive the oldest snapshot groups from the History tab. Their snapshots are kept (readable, printable, restorable), and every removed save stays in the **save log**: version, time, actor, message, kind (`create`, `edit`, `restore`, `proposal`), its snapshot group and the IDs of the cells it changed. Trimming by a retention policy writes the save log too. The individual saves can't be read any more: answer "who changed this, and when?" from the save log, and "what was it at Rev A?" by reading the snapshot.
 
 ## Tools
 
-- `history(cell_id?, since?)`: the version list, or the versions that touched one cell.
+- `history(cell_id?, since?)`: the version list, or the versions that touched one cell. A last line says how much was archived, if anything.
+- `history(archived: true, cell_id?)`: the archive: snapshots kept from removed history, and the save log (newest first; with `cell_id`, the saves that changed that cell).
+- `read_doc(snapshot: "Rev A")`: the document as it was at a snapshot, archived or not, read-only, with its results. Edits are still proposed against the latest version.
 - `history(diff: {from, to})`: per-cell changes (added, removed, modified), with source and result diffs. `from` and `to` can be version numbers or tag names.
 - *(Planned, not available yet)* `propose_edit(restore: version | snapshot)`: proposes a rollback as a normal proposal, which the user accepts. For now, tell the user which version or snapshot to restore from the History tab. Restoring adds a new version with the old content (message "restore to version *v*" or "restore to “*name*”").
 - Agents don't take snapshots: a snapshot asserts that a human considers the version good. Suggest one when a check is complete instead.

@@ -26,6 +26,8 @@ pub enum Error {
     NoSuchVersion(u64),
     #[error("history before version {earliest} has been pruned")]
     Pruned { earliest: u64 },
+    #[error("can't archive: {0}")]
+    BadArchive(String),
     #[error("no such ref: {0}")]
     NoSuchRef(String),
     #[error("ref already exists: {0}")]

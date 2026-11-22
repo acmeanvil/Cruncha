@@ -280,6 +280,27 @@ export interface Preview {
   waitsForEdit: boolean;
 }
 
+/** What archiving the snapshot groups before `cutoff` would do (ADR-0023). */
+export interface ArchivePreview {
+  fromVersion: number;
+  cutoff: number;
+  saves: number;
+  bytesFreed: number;
+  /** Snapshots archived (kept and restorable), oldest first. */
+  snapshots: string[];
+}
+
+/** One row of the save log: a save that archiving or trimming removed. */
+export interface ArchivedSave {
+  version: number;
+  atMs: number;
+  actor: string;
+  message: string;
+  kind: "create" | "edit" | "restore" | "proposal";
+  snapshot: string | null;
+  cells: string[];
+}
+
 export interface PruneResult {
   prunedBefore: number;
   pinned: string[];
@@ -581,6 +602,10 @@ export const api = {
     invoke<DocInfo>("set_document_retention", { policy }),
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),
   pruneNow: () => invoke<PruneResult | null>("prune_now"),
+  archivePreview: (cutoff: number) => invoke<ArchivePreview>("archive_preview", { cutoff }),
+  /** Archive every version before `cutoff` (a snapshot's version): irreversible. */
+  archiveHistory: (cutoff: number) => invoke<DocInfo>("archive_history", { cutoff }),
+  archivedSaves: (cell: string | null = null) => invoke<ArchivedSave[]>("archived_saves", { cell }),
   clearResults: () => invoke<DocInfo>("clear_results"),
   figuresToRender: (at?: At) => invoke<FigureJob[]>("figures_to_render", { at: at ?? null }),
   putFigure: (key: string, svg: string) => invoke<void>("put_figure", { key, svg }),

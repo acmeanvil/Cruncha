@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
+use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
 use cruncha_store::{CellDiff, CellKind};
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -162,6 +162,41 @@ fn proposal_info(p: ProposalView) -> ProposalInfo {
     }
 }
 
+/// A document's cells and results as the MCP server shows them.
+fn doc_snapshot(
+    name: String,
+    id: String,
+    version: u64,
+    cells: &[cruncha_store::Cell],
+    results: &HashMap<String, crate::engine::CellResult>,
+) -> DocSnapshot {
+    DocSnapshot {
+        name,
+        id,
+        version,
+        cells: cells
+            .iter()
+            .filter(|c| c.parent_id.is_none())
+            .map(|c| CellView {
+                id: c.id.clone(),
+                kind: c.kind.as_str().to_owned(),
+                source: c.source.clone(),
+                description: c.attrs["description"].as_str().unwrap_or_default().to_owned(),
+                defines: c.defines.clone(),
+                reads: c.reads.clone(),
+                provenance: match &c.provenance {
+                    cruncha_store::Provenance::Human => "human".into(),
+                    cruncha_store::Provenance::AiProposed { .. } => "ai:proposed".into(),
+                    cruncha_store::Provenance::AiAccepted { .. } => "ai:accepted".into(),
+                    cruncha_store::Provenance::Imported { .. } => "imported".into(),
+                },
+                modified_by: c.modified_by.clone(),
+            })
+            .collect(),
+        results: results.iter().map(|(id, r)| (id.clone(), result_view(r))).collect(),
+    }
+}
+
 impl Backend for AppBackend {
     async fn snapshot(&self, wait: bool) -> Result<DocSnapshot, String> {
         if wait {
@@ -177,30 +212,57 @@ impl Backend for AppBackend {
         let cells = s.cells(None).await?;
         let results = s.results(&Default::default()).await?;
         let info = s.info().await?;
-        Ok(DocSnapshot {
-            name: info.name,
-            id: info.id,
-            version: info.version,
-            cells: cells
+        Ok(doc_snapshot(info.name, info.id, info.version, &cells, &results))
+    }
+
+    async fn snapshot_named(&self, name: String) -> Result<DocSnapshot, String> {
+        let mut s = self.0.lock().await;
+        if !s.is_open() {
+            return Err("no document is open in Cruncha".into());
+        }
+        let info = s.info().await?;
+        let Some(r) = info.refs.iter().find(|r| r.name == name) else {
+            let names: Vec<&str> = info.refs.iter().map(|r| r.name.as_str()).collect();
+            return Err(format!("no snapshot “{name}”; the document has: {}", if names.is_empty() { "none".into() } else { names.join(", ") }));
+        };
+        let version = r.version;
+        let cells = s.cells_at_ref(&name).await?;
+        let at = crate::session::At { version: None, ref_name: Some(name) };
+        let results = s.results(&at).await?;
+        Ok(doc_snapshot(info.name, info.id, version, &cells, &results))
+    }
+
+    async fn archive(&self, cell: Option<String>) -> Result<ArchiveView, String> {
+        let s = self.0.lock().await;
+        if !s.is_open() {
+            return Err("no document is open in Cruncha".into());
+        }
+        let info = s.info().await?;
+        let saves = s.archived(cell.as_deref()).await?;
+        Ok(ArchiveView {
+            snapshots: info
+                .refs
                 .iter()
-                .filter(|c| c.parent_id.is_none())
-                .map(|c| CellView {
-                    id: c.id.clone(),
-                    kind: c.kind.as_str().to_owned(),
-                    source: c.source.clone(),
-                    description: c.attrs["description"].as_str().unwrap_or_default().to_owned(),
-                    defines: c.defines.clone(),
-                    reads: c.reads.clone(),
-                    provenance: match &c.provenance {
-                        cruncha_store::Provenance::Human => "human".into(),
-                        cruncha_store::Provenance::AiProposed { .. } => "ai:proposed".into(),
-                        cruncha_store::Provenance::AiAccepted { .. } => "ai:accepted".into(),
-                        cruncha_store::Provenance::Imported { .. } => "imported".into(),
-                    },
-                    modified_by: c.modified_by.clone(),
+                .filter(|r| r.version < info.earliest_version)
+                .map(|r| ArchivedSnapshot {
+                    name: r.name.clone(),
+                    version: r.version,
+                    at: iso_utc(r.created_at_ms),
+                    message: r.message.clone(),
                 })
                 .collect(),
-            results: results.iter().map(|(id, r)| (id.clone(), result_view(r))).collect::<HashMap<_, _>>(),
+            saves: saves
+                .into_iter()
+                .map(|v| ArchivedSaveInfo {
+                    version: v.version,
+                    at: iso_utc(v.at_ms),
+                    actor: v.actor,
+                    kind: v.kind,
+                    message: v.message,
+                    snapshot: v.snapshot,
+                    cells: v.cells,
+                })
+                .collect(),
         })
     }
 
@@ -339,5 +401,42 @@ mod tests {
         assert!(h.iter().any(|v| !v.snapshots.is_empty()), "the sample has a snapshot");
         let changes = backend.diff(0, doc.version).await.unwrap();
         assert!(changes.iter().all(|c| c.change == "added"), "everything was added since v0");
+    }
+
+    #[tokio::test]
+    async fn agents_read_archived_snapshots_and_the_save_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        session.close().await;
+        let mut store = cruncha_store::Store::open(&path).await.unwrap();
+        let mut c = store.cells().await.unwrap().into_iter().find(|c| c.defines.contains(&"L".to_string())).unwrap();
+        c.source = "L = 30 ft".into();
+        store.commit(&[cruncha_store::Change::Upsert(c.clone())], "user:t", "longer span").await.unwrap();
+        // Rev B's own version stays available; this save before it is archived.
+        let mut c2 = c.clone();
+        c2.source = "L = 32 ft".into();
+        store.commit(&[cruncha_store::Change::Upsert(c2)], "user:t", "longer still").await.unwrap();
+        let rev_b = store.tag("Rev B", "", "user:t").await.unwrap().doc_version;
+        drop(store);
+        session.open(&path).await.unwrap();
+        session.archive(rev_b).await.unwrap();
+        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into());
+
+        let a = backend.archive(None).await.unwrap();
+        assert_eq!(a.snapshots.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Rev A"]);
+        assert!(a.saves.iter().any(|s| s.message == "longer span" && s.cells == [c.id.clone()]));
+        assert_eq!(backend.archive(Some(c.id.clone())).await.unwrap().saves.last().unwrap().message, "longer span");
+
+        // The archived snapshot reads with its results; the latest version is unchanged.
+        let rev_a = backend.snapshot_named("Rev A".into()).await.unwrap();
+        let latest = backend.snapshot(false).await.unwrap();
+        let m = |d: &DocSnapshot| {
+            let id = &d.cells.iter().find(|c| c.defines.contains(&"M".to_string())).unwrap().id;
+            d.results[id].values[0].1.clone()
+        };
+        assert_ne!(m(&rev_a), m(&latest), "Rev A has the shorter span");
+        assert!(backend.snapshot_named("Rev Z".into()).await.unwrap_err().contains("Rev A"));
     }
 }

@@ -179,6 +179,8 @@ beam-check.cruncha/
 │                 (SHA-256 of source, inputs, environment, result format), status,
 │                 values, outputs (JSON; long strings as blob refs), stdout, stderr,
 │                 error, duration_ms, env, computed_at_us, computed_by, doc_version, blobs
+├── archive/      Delta table (ADR-0023): the save log, one row per save a prune or archive
+│                 removed. version, at_us, actor, message, kind, snapshot, cells, removed_before
 ├── data/<name>/  one Delta table per data frame (Polars reads and writes these directly)
 ├── assets/       content-addressed blobs (images, figures): sha256 → file (never rewritten)
 ├── refs/         Delta table: named versions/tags → {doc_version, data_versions{}, message, author}
