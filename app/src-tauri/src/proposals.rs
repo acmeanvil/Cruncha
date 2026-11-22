@@ -88,8 +88,9 @@ fn parse_kind(kind: &str) -> Result<CellKind, String> {
     match kind {
         "calc" => Ok(CellKind::Calc),
         "python" => Ok(CellKind::Python),
+        "rust" => Ok(CellKind::Rust),
         "prose" => Ok(CellKind::Prose),
-        other => Err(format!("an agent can add calc, python or prose cells, not {other:?}")),
+        other => Err(format!("an agent can add calc, python, rust or prose cells, not {other:?}")),
     }
 }
 

@@ -196,6 +196,7 @@ fn python_status(r: &CellResult) -> Status {
                 .unwrap_or_else(|| "it failed".into()),
         },
         PyState::NoPython => reason("Python isn't set up on this computer"),
+        PyState::NoRust => reason("Rust isn't set up on this computer"),
         PyState::Past => reason("no stored result for this version"),
         PyState::Untrusted => reason("this document isn't trusted to run code here"),
         PyState::Edited => reason("edited since it last ran: press Run"),
@@ -254,7 +255,7 @@ pub fn build(
                         || c.source.trim_start().starts_with("@@test"),
                 });
             }
-            CellKind::Python => {
+            CellKind::Python | CellKind::Rust => {
                 let mut outputs = Vec::new();
                 if let Some(py) = &r.python {
                     for (i, o) in py.outputs.iter().enumerate() {
@@ -318,7 +319,7 @@ pub fn build(
                     .collect();
                 blocks.push(Block::Code {
                     id: c.id.clone(),
-                    lang: "python".into(),
+                    lang: if c.kind == CellKind::Rust { "rust" } else { "python" }.into(),
                     source: c.source.clone(),
                     status: python_status(r),
                     outputs,

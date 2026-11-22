@@ -9,12 +9,17 @@
 //! - [`Runtime`] compiles components (Cranelift) and instantiates them; [`Cell`] calls the
 //!   `cell` world's exports (`wit/cell.wit`).
 
+pub mod cells;
+pub mod env;
+pub mod scan;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Error, Result, Store};
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 mod bindings {
@@ -114,7 +119,7 @@ impl WasiView for State {
 
 /// Compiles and instantiates cell components.
 pub struct Runtime {
-    engine: Engine,
+    pub(crate) engine: Engine,
     linker: Linker<State>,
 }
 
@@ -149,13 +154,16 @@ impl Runtime {
         unsafe { Component::deserialize(&self.engine, bytes) }
     }
 
-    /// A fresh instance with an empty WASI context (stdout and stderr discarded).
+    /// A fresh instance with an empty WASI context: no files, environment or network; its
+    /// stdout and stderr are kept (up to 1 MB each) for the cell's output.
     pub fn instantiate(&self, component: &Component) -> Result<Cell> {
-        let ctx = WasiCtx::builder().build();
+        let stdout = MemoryOutputPipe::new(1 << 20);
+        let stderr = MemoryOutputPipe::new(1 << 20);
+        let ctx = WasiCtx::builder().stdout(stdout.clone()).stderr(stderr.clone()).build();
         let mut store = Store::new(&self.engine, State { ctx, table: ResourceTable::new() });
         store.set_epoch_deadline(u64::MAX / 2);
         let bindings = CellWorld::instantiate(&mut store, component, &self.linker)?;
-        Ok(Cell { store, bindings, engine: self.engine.clone() })
+        Ok(Cell { store, bindings, engine: self.engine.clone(), stdout, stderr })
     }
 }
 
@@ -164,9 +172,20 @@ pub struct Cell {
     store: Store<State>,
     bindings: CellWorld,
     engine: Engine,
+    stdout: MemoryOutputPipe,
+    stderr: MemoryOutputPipe,
 }
 
 impl Cell {
+    /// What the cell printed so far.
+    pub fn stdout(&self) -> String {
+        String::from_utf8_lossy(&self.stdout.contents()).into_owned()
+    }
+
+    pub fn stderr(&self) -> String {
+        String::from_utf8_lossy(&self.stderr.contents()).into_owned()
+    }
+
     pub fn run(&mut self, inputs: &str) -> Result<std::result::Result<String, String>> {
         self.bindings.call_run(&mut self.store, inputs)
     }

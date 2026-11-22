@@ -101,21 +101,48 @@ fig          # or fig.show(), or cruncha.show(fig, other_fig)
 
 ## Rust
 
-Rust cells compile to WASM and run sandboxed (ADR-0006). The first run compiles, which takes seconds; later runs are cached.
+Rust cells (ADR-0006) work like Python cells. They are compiled to WebAssembly and run sandboxed, with no files, network or clock.
 
 ```rust
-use cruncha::prelude::*;
-
-/// Plastic section modulus of a solid rectangle.
-#[cruncha::export]
-fn z_rect(b: Length, h: Length) -> Volume {
-    b * h * h / 4.0
-}
+// Reads L and w (calc quantities). Defines M and x.
+let M = (w * L * L / 8.0).to("kip*ft");
+let x: Vec<f64> = (0..=50).map(|i| L.si() * i as f64 / 50.0).collect();
+println!("M = {M}");
 ```
 
-- Only `#[cruncha::export]` items become names in the graph. Units are checked by the types (`Length`, `Force`, `Stress`, …), so a dimension error is a compile error.
-- Use only crates on the document's allowlist (nalgebra, faer, statrs, …). There is no file system, network or clock.
-- Call them from a calc as `Z = z_rect(b, h) = ?? in³`.
+**Names**
+- Top-level `let` bindings, `const` and `static` are defines.
+- Free names the cell uses are reads, including inside `println!`/`format!` (and `{name}` captures).
+- Functions written in the cell are local helpers. They can't use the cell's variables; pass them in.
+
+**Inputs arrive typed:**
+- a calc quantity with a unit → `Quantity`;
+- a plain number → `f64`;
+- a vector → `Vec<f64>`, or `Vec<Quantity>` with a unit;
+- a matrix → `Vec<Vec<f64>>`;
+- true/false → `bool`, text → `String`.
+
+Frames and complex numbers can't be passed yet. A Python cell's value reaches a Rust cell (and the other way round) only when it converts like a calc value.
+
+**`Quantity`** holds an SI value and its dimensions, and is `Copy`.
+- `*`, `/` and powers combine dimensions; `+`, `-` and comparisons require equal dimensions, and panic otherwise (the error points at your line).
+- `q.to("kip*ft")` sets the display unit, from Cruncha's unit table; `q.value()` is the number in that unit, and `q.si()` the SI value.
+- `Quantity::new(12.0, "kip")` makes one.
+
+**Outputs:** each define goes back:
+- `Quantity` with its unit;
+- numbers, `bool`, `String`;
+- `Vec<f64>`, `Vec<Quantity>`, `Vec<Vec<f64>>`.
+
+Any other type is kept by name only: calcs and other cells can't use it.
+
+**Running:**
+- The same trust rule as Python applies: a document runs Rust cells only where it is trusted, and an edited cell waits for Run.
+- The first build after setting up Rust (Settings, or the banner) already happened during setup. A changed cell compiles in about a second; an unchanged one loads in under a millisecond.
+- Compile errors and panics show at the cell's line.
+- A cell that runs too long can be stopped.
+- Runs are stored with the document like Python's, keyed by the toolchain version.
+- Crates beyond the prelude (`std`, `Quantity`) aren't available yet.
 
 ## Checklist
 

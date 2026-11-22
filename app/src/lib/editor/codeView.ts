@@ -12,6 +12,7 @@ import { FigureFrame, figureElement } from "./figures";
 
 const STATE_LABEL: Record<PyState, string> = {
   no_python: "Python isn't set up",
+  no_rust: "Rust isn't set up",
   past: "no stored result for this version",
   untrusted: "not trusted to run",
   edited: "edited · Run to update",
@@ -154,7 +155,7 @@ export class CodeView implements NodeView {
     this.head.replaceChildren();
     this.head.append(el("span", "code-lang", lang === "python" ? "Python" : lang === "rust" ? "Rust" : "TeX"));
     this.dom.dataset.state = py?.state ?? "";
-    if (lang !== "python") {
+    if (lang !== "python" && lang !== "rust") {
       if (r?.error) this.head.append(el("span", "code-state", r.error));
       this.out.replaceChildren();
       return;

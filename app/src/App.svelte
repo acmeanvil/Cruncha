@@ -137,6 +137,24 @@
     python = doc ? await api.pythonStatus().catch(() => null) : null;
   }
 
+  const RUST_SETUP_LABEL: Record<string, string> = {
+    downloading: "Downloading Rust…",
+    installing: "Installing Rust 1.99 and the WebAssembly target…",
+    warming: "Building the Rust cell prelude (once)…",
+    done: "Rust is ready",
+  };
+
+  const setUpRust = () =>
+    attempt(async () => {
+      setup = "Starting…";
+      try {
+        editor?.applyResults(await api.setupRust());
+      } finally {
+        setup = null;
+        await refreshPython();
+      }
+    });
+
   const setUpPython = () =>
     attempt(async () => {
       setup = "Starting…";
@@ -233,10 +251,12 @@
       if (doc && e.payload === doc.id) void refreshProposals();
     });
     const unSetup = listen<SetupProgress>("python-setup", (e) => (setup = SETUP_LABEL[e.payload.step]));
+    const unRustSetup = listen<string>("rust-setup", (e) => (setup = RUST_SETUP_LABEL[e.payload] ?? setup));
     return () => {
       void unlisten.then((f) => f());
       void unResults.then((f) => f());
       void unSetup.then((f) => f());
+      void unRustSetup.then((f) => f());
       void unProposals.then((f) => f());
     };
   });
@@ -265,7 +285,7 @@
   async function committed(v: CommitView) {
     doc = v.info;
     history = await api.history();
-    if (!python?.hasPython) await refreshPython();
+    if (!python?.hasPython && !python?.hasRust) await refreshPython();
     proposalsSoon();
   }
 
@@ -463,24 +483,27 @@
               Latest · every change is saved · history: {describeRetention(doc.effectiveRetention).toLowerCase()}{doc.retention == null ? " (app default)" : ""}
             </span>
             <span class="spacer"></span>
-            {#if python?.hasPython && python.available && python.trusted}
-              <button onclick={() => void editor?.runPython()} title="Run every Python cell again">▶ Run Python</button>
+            {#if (python?.hasPython && python.available || python?.hasRust && python.rustAvailable) && python?.trusted}
+              <button onclick={() => void editor?.runPython()} title="Run every code cell again">▶ Run code</button>
               <button onclick={() => void api.stopPython()} title="Stop the running cell">■ Stop</button>
               <button onclick={restartPython} title="Restart the Python worker and recompute every Python value">↻ Restart</button>
             {/if}
             <button class="snap" onclick={() => (modal = "snapshot")} title="Mark this version as a known-good point">Take snapshot…</button>
           {/if}
         </div>
-        {#if python?.hasPython && selected.kind === "latest" && (!python.available || !python.trusted || setup)}
+        {#if python && (python.hasPython || python.hasRust) && selected.kind === "latest" && (setup || !python.trusted || (python.hasPython && !python.available) || (python.hasRust && !python.rustAvailable))}
           <div class="python-bar" role="status">
             {#if setup}
               <span class="spinner" aria-hidden="true"></span> {setup}
               <span class="muted small">This takes a minute or two the first time (about 500 MB).</span>
-            {:else if !python.available}
+            {:else if python.hasRust && !python.rustAvailable && !(python.hasPython && !python.available)}
+              <span><strong>Rust cells need Cruncha's Rust toolchain.</strong> Cruncha installs its own Rust 1.99 with the WebAssembly target (about 650 MB, once for all documents); it doesn't touch any Rust you already have. Cells run sandboxed, with no access to files or the network.</span>
+              <button class="primary" onclick={setUpRust}>Set up Rust</button>
+            {:else if python.hasPython && !python.available}
               <span><strong>Python cells need a Python environment.</strong> Cruncha installs its own Python 3.13 with NumPy, SciPy, Polars, pint, SymPy and matplotlib (about 500 MB, once for all documents).</span>
               <button class="primary" onclick={setUpPython}>Set up Python</button>
             {:else}
-              <span><strong>This document has Python code that hasn't run on this computer.</strong> Python cells run with your permissions, like any program. Run them only if you trust where the document came from.</span>
+              <span><strong>This document has code that hasn't run on this computer.</strong> {python.hasPython ? "Python cells run with your permissions, like any program." : "Rust cells run sandboxed, but they can still use your computer's time."} Run them only if you trust where the document came from.</span>
               <button class="primary" onclick={trustDocument}>Trust and run</button>
             {/if}
           </div>

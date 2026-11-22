@@ -17,6 +17,7 @@ cruncha-store = { path = "../../crates/cruncha-store" }
 cruncha-eval = { path = "../../crates/cruncha-eval" }
 cruncha-graph = { path = "../../crates/cruncha-graph" }
 cruncha-kernel-py = { path = "../../crates/cruncha-kernel-py" }
+cruncha-kernel-rs = { path = "../../crates/cruncha-kernel-rs" }
 cruncha-report = { path = "../../crates/cruncha-report" }
 cruncha-mcp = { path = "../../crates/cruncha-mcp" }
 ulid = "3"

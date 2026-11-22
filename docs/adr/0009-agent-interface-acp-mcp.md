@@ -74,7 +74,7 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - Built on `rmcp` 3.11 (Apache-2.0), Streamable HTTP, served by the app on 127.0.0.1 with a bearer token, behind a Host check and refusal of browser `Origin`s.
    - The user turns it on in the Agents dialog, which shows the `claude mcp add` command.
    - The crate doesn't depend on `cruncha-store`; the app implements its `Backend` trait.
-2. [ ] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills (unverified).
+2. [x] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills. Verified 2026-11-22 in the app's agent panel with Claude Code (Claude Agent adapter): it loaded `cruncha-core`, listed the five Cruncha skills, and called `read_doc` on Cruncha's MCP server, reporting the document's 12 cells and the engine's results.
 3. [x] Port `lg-acp` with the `mcpServers` and capability changes (2026-11-20):
    - `crates/cruncha-acp` keeps the MIT notice in `LICENSE-LOOKING-GLASS`.
    - The client advertises no fs or terminal; there are no remote agents.
@@ -95,7 +95,7 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - cancellation is per session; the demo mode reads the document;
    - the app runs it as `cruncha-app --acp-agent`, listed as "Cruncha agent";
    - tests drive it through `cruncha-acp` against a real `cruncha-mcp` server (demo, OpenAI-style and Claude loops).
-5. [x] Consider upstreaming MCP and skills support to looking_glass. Done 2026-11-21 in `~/Developer/looking_glass` (uncommitted there):
+5. [x] Consider upstreaming MCP and skills support to looking_glass. Done 2026-11-21 in `~/Developer/looking_glass` (committed there as 5880157):
    - `[[mcp_servers]]` in config.toml reach every local agent as ACP `mcpServers`;
    - lg-agent connects to HTTP and stdio servers and offers their tools as `mcp__<server>__<tool>` (asking first unless read-only);
    - lg-agent loads AGENTS.md and Agent Skills (`load_skill`);

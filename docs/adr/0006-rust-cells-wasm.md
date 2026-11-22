@@ -41,4 +41,11 @@ Users want Rust blocks for performance-critical or reusable logic, and functions
    - a call costs about 1 µs, 100k `f64` 0.16 ms, a small JSON call 7 µs;
    - an empty WASI context denies files, environment and network; epoch deadlines stop runaway cells;
    - Cruncha uses its own rustup home (1.99.1 plus `wasm32-wasip2`) under the app's data, not Homebrew's Rust.
-2. [ ] App: Rust setup (rustup-init, checksum-verified), `#[cruncha::export]` and the define/read scan, prelude `Quantity` and arrays with units, engine jobs and stored results, compile errors mapped to cell lines.
+2. [x] App: Rust setup (rustup-init, checksum-verified), `#[cruncha::export]` and the define/read scan, prelude `Quantity` and arrays with units, engine jobs and stored results, compile errors mapped to cell lines. **Done 2026-11-21.**
+   - *Changed by the owner's decision:* cells are written like Python cells (top-level `let`s define, free names read; a `syn` scan), not with `#[cruncha::export]`.
+   - Built:
+     - `cruncha-kernel-rs` `scan`, `cells` (typed inputs, `Plain` outputs, cached builds, cell-line errors and panics, timeouts) and `env` (setup);
+     - the prelude's `Quantity`, using `cruncha-units`;
+     - the engine treats Rust cells as code cells (same states, trust and stored results);
+     - "Set up Rust" in the app.
+3. [ ] Calling Rust functions from calcs; a crate allowlist beyond the prelude; data frames.

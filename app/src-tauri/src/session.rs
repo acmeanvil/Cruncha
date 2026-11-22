@@ -156,6 +156,9 @@ pub struct PythonStatus {
     pub trusted: bool,
     /// The open document has Python cells.
     pub has_python: bool,
+    /// Rust is set up (ADR-0006), and the document has Rust cells.
+    pub rust_available: bool,
+    pub has_rust: bool,
 }
 
 /// How many recent documents to remember.
@@ -280,6 +283,9 @@ pub struct Session {
     prefs_path: Option<PathBuf>,
     /// Where Python environments live, and the worker package.
     python_base: PathBuf,
+    /// Cruncha's Rust toolchain (ADR-0006) and the cells built with it, once set up.
+    rust_base: PathBuf,
+    rust_cells: Option<Arc<cruncha_kernel_rs::cells::Cells>>,
     /// Static renderings of figures for reports (ADR-0017).
     figures: crate::figures::Cache,
     worker_dir: PathBuf,
@@ -302,6 +308,8 @@ impl Session {
             prefs,
             prefs_path,
             python_base: std::env::temp_dir().join("cruncha-no-python"),
+            rust_base: std::env::temp_dir().join("cruncha-no-rust"),
+            rust_cells: None,
             worker_dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python")),
             figures: crate::figures::Cache::new(std::env::temp_dir().join("cruncha-figures")),
             on_results: None,
@@ -327,6 +335,29 @@ impl Session {
     }
 
     /// Use the Python environments under `base` and the worker package in `worker_dir`.
+    /// Use Cruncha's Rust toolchain under `base` for Rust cells.
+    pub fn with_rust(mut self, base: PathBuf) -> Session {
+        self.rust_base = base;
+        self
+    }
+
+    pub fn rust_base(&self) -> PathBuf {
+        self.rust_base.clone()
+    }
+
+    /// The Rust cell runner, if Rust is set up (made once, shared by documents).
+    fn rust_cells(&mut self) -> Option<Arc<cruncha_kernel_rs::cells::Cells>> {
+        if self.rust_cells.is_none()
+            && let Some(tc) = cruncha_kernel_rs::env::ready(&self.rust_base)
+        {
+            match cruncha_kernel_rs::cells::Cells::new(tc, cruncha_kernel_rs::env::work_dir(&self.rust_base)) {
+                Ok(c) => self.rust_cells = Some(Arc::new(c)),
+                Err(e) => eprintln!("cruncha: Rust cells unavailable: {e}"),
+            }
+        }
+        self.rust_cells.clone()
+    }
+
     pub fn with_python(mut self, base: PathBuf, worker_dir: PathBuf) -> Session {
         self.python_base = base;
         self.worker_dir = worker_dir;
@@ -384,8 +415,12 @@ impl Session {
         let path_shown = path.clone();
         let id = store.manifest().id.clone();
         let python = Python::new(&self.python_base, &self.worker_dir);
+        let rust = self.rust_cells();
         let mut engine = Engine::new();
         engine.python_available = python.interpreter().is_some();
+        engine.rust_available = rust.is_some();
+        engine.rust_env = rust.as_ref().map(|r| r.env_label()).unwrap_or_default();
+        python.set_rust(rust);
         engine.env = crate::python::env_label(&self.python_base);
         engine.computed_by = crate::stored::this_computer(&local_actor());
         self.doc = Some(OpenDoc {
@@ -477,17 +512,17 @@ impl Session {
             interpreter: interpreter.map(|p| p.display().to_string()),
             trusted,
             has_python: false,
+            rust_available: doc.python.rust().is_some(),
+            has_rust: false,
         })
     }
 
     /// Python for the open document, including whether it has Python cells.
     pub async fn python_status_full(&self) -> Result<PythonStatus> {
         let mut st = self.python_status()?;
-        st.has_python = self
-            .cells(None)
-            .await?
-            .iter()
-            .any(|c| c.kind == CellKind::Python);
+        let cells = self.cells(None).await?;
+        st.has_python = cells.iter().any(|c| c.kind == CellKind::Python);
+        st.has_rust = cells.iter().any(|c| c.kind == CellKind::Rust);
         Ok(st)
     }
 
@@ -495,6 +530,19 @@ impl Session {
     pub async fn python_ready(&mut self) -> Result<HashMap<String, CellResult>> {
         let available = self.doc()?.python.interpreter().is_some();
         self.doc()?.engine.lock().unwrap().python_available = available;
+        self.latest_results().await
+    }
+
+    /// Rust was just set up: Rust cells can run now.
+    pub async fn rust_ready(&mut self) -> Result<HashMap<String, CellResult>> {
+        let rust = self.rust_cells();
+        {
+            let doc = self.doc()?;
+            let mut e = doc.engine.lock().unwrap();
+            e.rust_available = rust.is_some();
+            e.rust_env = rust.as_ref().map(|r| r.env_label()).unwrap_or_default();
+            doc.python.set_rust(rust);
+        }
         self.latest_results().await
     }
 
@@ -525,7 +573,7 @@ impl Session {
         let chosen: Vec<&Cell> = cells
             .iter()
             .filter(|c| {
-                c.kind == CellKind::Python && ids.as_ref().is_none_or(|ids| ids.contains(&c.id))
+                matches!(c.kind, CellKind::Python | CellKind::Rust) && ids.as_ref().is_none_or(|ids| ids.contains(&c.id))
             })
             .collect();
         {
@@ -727,6 +775,10 @@ impl Session {
                             if let Some(n) = engine.py_names(&cell.source) {
                                 (cell.defines, cell.reads) = (n.defines.clone(), n.reads.clone());
                             }
+                        }
+                        CellKind::Rust => {
+                            let n = engine.rust_names(&cell.source);
+                            (cell.defines, cell.reads) = (n.defines.clone(), n.reads.clone());
                         }
                         _ => {}
                     }
@@ -1363,6 +1415,49 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no results in time");
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rust_cells_read_calcs_and_calcs_read_them() {
+        let Some(base) = cruncha_kernel_rs::Toolchain::default_base().filter(|b| cruncha_kernel_rs::env::ready(b).is_some()) else {
+            eprintln!("no Rust toolchain; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(None).with_rust(base);
+        let (tx, rx) = std::sync::mpsc::channel();
+        session.on_results(move |ev| {
+            let _ = tx.send(ev);
+        });
+        session.create(&dir.path().join("rust.cruncha")).await.unwrap();
+        let mut r = Cell::new(CellKind::Rust, "a2", "let M = (w * L * L / 8.0).to(\"kip*ft\");\nprintln!(\"M = {M}\");");
+        r.id = "R".into();
+        session
+            .commit(
+                vec![
+                    ChangeView::Upsert { cell: calc("L", "a0", "L = 24 ft", &[], &[]) },
+                    ChangeView::Upsert { cell: calc("W", "a1", "w = 1.5 kip/ft", &[], &[]) },
+                    ChangeView::Upsert { cell: r },
+                    ChangeView::Upsert { cell: calc("C", "a3", "ratio = M / 100 'kip·ft' = ?", &[], &[]) },
+                ],
+                "rust",
+            )
+            .await
+            .unwrap();
+        let cells = session.cells(None).await.unwrap();
+        let rc = cells.iter().find(|c| c.id == "R").unwrap();
+        assert_eq!((rc.defines.clone(), rc.reads.clone()), (vec!["M".to_string()], vec!["L".to_string(), "w".to_string()]), "names from the scan");
+        session.run_python(Some(vec!["R".into()])).await.unwrap();
+        let ev = wait_for(&rx, |ev| {
+            ev.results.get("R").and_then(|r| r.python.as_ref()).is_some_and(|p| matches!(p.state, crate::engine::PyState::Done | crate::engine::PyState::Error))
+        })
+        .await;
+        let py = ev.results["R"].python.as_ref().unwrap();
+        assert_eq!(py.state, crate::engine::PyState::Done, "{:?}", py.error);
+        assert_eq!(py.stdout.trim(), "M = 108 kip·ft");
+        assert!(ev.results["C"].text.contains("1.08"), "{:?}", ev.results["C"]);
+        // Kept with the document like a Python run (ADR-0018).
+        assert_eq!(session.flush_results().await.unwrap(), 1);
     }
 
     #[tokio::test]

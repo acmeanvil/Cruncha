@@ -1827,6 +1827,7 @@ dependencies = [
  "cruncha-eval",
  "cruncha-graph",
  "cruncha-kernel-py",
+ "cruncha-kernel-rs",
  "cruncha-mcp",
  "cruncha-report",
  "cruncha-store",
@@ -1877,7 +1878,13 @@ dependencies = [
 name = "cruncha-kernel-rs"
 version = "0.0.1"
 dependencies = [
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "syn 2.0.119",
  "tempfile",
+ "tokio",
  "wasmtime",
  "wasmtime-wasi",
 ]

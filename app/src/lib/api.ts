@@ -311,7 +311,7 @@ export interface CellResult {
 }
 
 export type PyState =
-  | "no_python" | "past" | "untrusted" | "edited" | "blocked"
+  | "no_python" | "no_rust" | "past" | "untrusted" | "edited" | "blocked"
   | "queued" | "running" | "done" | "error" | "interrupted";
 
 export interface PyError {
@@ -364,6 +364,9 @@ export interface PythonStatus {
   interpreter: string | null;
   trusted: boolean;
   hasPython: boolean;
+  /** Rust is set up (ADR-0006); the document has Rust cells. */
+  rustAvailable: boolean;
+  hasRust: boolean;
 }
 
 /** `python-setup` events. */
@@ -460,6 +463,8 @@ export const api = {
   pythonStatus: () => invoke<PythonStatus | null>("python_status"),
   /** Set up the Python environment (progress as `python-setup` events). */
   setupPython: () => invoke<Record<string, CellResult>>("setup_python"),
+  /** Set up Rust for Rust cells (progress as `rust-setup` events). */
+  setupRust: () => invoke<Record<string, CellResult>>("setup_rust"),
   trustDocument: () => invoke<Record<string, CellResult>>("trust_document"),
   /** Run these Python cells (all if omitted), even if nothing changed. */
   runPython: (ids?: string[]) => invoke<Record<string, CellResult>>("run_python", { ids: ids ?? null }),

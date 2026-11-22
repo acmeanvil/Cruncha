@@ -494,6 +494,22 @@ async fn setup_python(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<St
     s.python_ready().await
 }
 
+/// Set up Rust for Rust cells (ADR-0006): Cruncha's own toolchain, then a first build of the
+/// prelude (a minute or two; progress as `rust-setup` events). The session isn't locked meanwhile.
+#[tauri::command]
+async fn setup_rust(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    let base = s.lock().await.rust_base();
+    let progress = |step: cruncha_kernel_rs::env::Step| {
+        let _ = app.emit("rust-setup", step);
+    };
+    cruncha_kernel_rs::env::setup(&base, progress).await?;
+    let mut s = s.lock().await;
+    if !s.is_open() {
+        return Ok(HashMap::new());
+    }
+    s.rust_ready().await
+}
+
 #[tauri::command]
 async fn trust_document(s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
     s.lock().await.trust_document().await
@@ -689,6 +705,7 @@ pub fn run() {
             let python = app.path().app_data_dir()?.join("python");
             let mut session = Session::new(Some(prefs))
                 .with_python(python, worker_dir(app))
+                .with_rust(app.path().app_data_dir()?.join("rust"))
                 .with_figure_cache(app.path().app_cache_dir()?.join("figures"));
             let handle = app.handle().clone();
             session.on_results(move |ev| {
@@ -766,6 +783,7 @@ pub fn run() {
             python_status,
             setup_python,
             trust_document,
+            setup_rust,
             run_python,
             stop_python,
             restart_python,

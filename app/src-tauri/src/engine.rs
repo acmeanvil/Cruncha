@@ -125,6 +125,8 @@ fn value_views(values: &[(String, Value)]) -> Vec<ValueView> {
 pub enum PyState {
     /// There's no Python environment yet.
     NoPython,
+    /// Rust isn't set up yet (a Rust cell).
+    NoRust,
     /// A past version with no stored result for this cell (nothing runs for history).
     Past,
     /// The document isn't trusted to run code.
@@ -276,6 +278,8 @@ pub struct PyJob {
     pub key: String,
     /// [`py_base_hash`]: the same without the environment (ADR-0019).
     pub base: String,
+    /// `Python` or `Rust`: which runner takes it.
+    pub kind: CellKind,
     pub request: RunRequest,
 }
 
@@ -338,6 +342,11 @@ pub struct Engine {
     pub trusted: bool,
     /// The Python environment's label (`env-…`); part of every Python cell's input hash.
     pub env: String,
+    /// Is Rust set up (ADR-0006)? Its toolchain and cell format label, for Rust input hashes.
+    pub rust_available: bool,
+    pub rust_env: String,
+    /// The `syn` scan of each Rust source.
+    rust_names: HashMap<String, PyNames>,
     /// Evaluating a past version: Python cells don't run.
     pub past: bool,
     /// `user:<name>@<host>`: who this computer's runs are recorded as.
@@ -395,6 +404,9 @@ impl Engine {
             python_available: false,
             trusted: false,
             env: String::new(),
+            rust_available: false,
+            rust_env: String::new(),
+            rust_names: HashMap::new(),
             past: false,
             computed_by: String::new(),
             doc_version: 0,
@@ -431,6 +443,26 @@ impl Engine {
     }
 
     /// The worker's scan of a Python source, if it has one.
+    /// A Rust source's names (scanned here, with `syn`; cached by source).
+    pub fn rust_names(&mut self, source: &str) -> &PyNames {
+        if !self.rust_names.contains_key(source) {
+            let n = cruncha_kernel_rs::scan::scan(source);
+            let names = PyNames {
+                defines: n.defines,
+                reads: n.reads,
+                syntax_error: n.syntax_error.map(|(message, line)| cruncha_kernel_py::PyError {
+                    kind: "SyntaxError".into(),
+                    message,
+                    line,
+                    traceback: String::new(),
+                }),
+                ..Default::default()
+            };
+            self.rust_names.insert(source.to_owned(), names);
+        }
+        &self.rust_names[source]
+    }
+
     pub fn py_names(&self, source: &str) -> Option<&PyNames> {
         self.py_names.get(source)
     }
@@ -449,7 +481,7 @@ impl Engine {
     /// Allow these cells' current sources to run (Run, opening or trusting the document).
     pub fn approve<'a>(&mut self, cells: impl IntoIterator<Item = &'a Cell>) {
         for c in cells {
-            if c.kind == CellKind::Python {
+            if matches!(c.kind, CellKind::Python | CellKind::Rust) {
                 self.approved.insert(c.id.clone(), c.source.clone());
             }
         }
@@ -623,6 +655,8 @@ impl Engine {
         e.env = self.env.clone();
         e.computed_by = self.computed_by.clone();
         e.python_available = self.python_available;
+        e.rust_available = self.rust_available;
+        e.rust_env = self.rust_env.clone();
         e.trusted = self.trusted;
         e.past = true;
         e
@@ -657,6 +691,10 @@ impl Engine {
                     Some(n) => (n.defines.clone(), n.reads.clone()),
                     None => (c.defines.clone(), c.reads.clone()),
                 },
+                CellKind::Rust => {
+                    let n = self.rust_names(&c.source);
+                    (n.defines.clone(), n.reads.clone())
+                }
                 _ => (c.defines.clone(), c.reads.clone()),
             };
             nodes.push(Node {
@@ -736,9 +774,9 @@ impl Engine {
             };
             match cell.kind {
                 CellKind::Calc => {}
-                CellKind::Python => {
+                CellKind::Python | CellKind::Rust => {
                     live.insert(id.clone());
-                    if let Some(n) = self.py_names.get(&cell.source) {
+                    if let Some(n) = self.py_names.get(&cell.source).filter(|_| cell.kind == CellKind::Python) {
                         warnings.extend(n.warnings.iter().cloned());
                     }
                     result.warnings = warnings;
@@ -758,14 +796,9 @@ impl Engine {
                     continue;
                 }
                 _ => {
-                    // Rust (and other) cells take part in the graph but don't run yet.
+                    // Other cells take part in the graph but don't run yet.
                     if !node.defines.is_empty() {
-                        let label = if cell.kind == CellKind::Rust {
-                            "Rust cells"
-                        } else {
-                            "these cells"
-                        };
-                        result.error = Some(format!("{label} can't run yet"));
+                        result.error = Some("these cells can't run yet".to_string());
                         out.insert(id.clone(), result);
                     }
                     continue;
@@ -843,37 +876,34 @@ impl Engine {
                 continue;
             };
             match kind_of.get(definer) {
-                Some(CellKind::Python) => {
+                Some(k @ (CellKind::Python | CellKind::Rust)) => {
                     if vars.contains(name) {
                         continue;
                     }
                     if py_pending.contains(definer) {
                         return Some(Blocked::Pending);
                     }
+                    let lang = if *k == CellKind::Rust { "Rust" } else { "Python" };
                     if let Some(what) = opaque.get(name) {
                         return Some(Blocked::Because(format!(
-                            "{name} is a Python {what}; calcs can use numbers, quantities, vectors, matrices and frames"
+                            "{name} is a {lang} {what}; calcs can use numbers, quantities, vectors, matrices and frames"
                         )));
                     }
+                    let available = if *k == CellKind::Rust { self.rust_available } else { self.python_available };
                     let why = if self.past {
                         "its cell has no stored result for this version"
-                    } else if !self.python_available {
-                        "Python isn't set up yet"
+                    } else if !available {
+                        if *k == CellKind::Rust { "Rust isn't set up yet" } else { "Python isn't set up yet" }
                     } else if !self.trusted {
                         "this document isn't trusted to run code"
                     } else {
                         "it hasn't run successfully"
                     };
                     return Some(Blocked::Because(format!(
-                        "{name} comes from a Python cell; {why}"
+                        "{name} comes from a {lang} cell; {why}"
                     )));
                 }
                 Some(CellKind::Calc) | None => {}
-                Some(CellKind::Rust) => {
-                    return Some(Blocked::Because(format!(
-                        "{name} comes from a Rust cell, which can't run yet"
-                    )));
-                }
                 Some(_) => {
                     return Some(Blocked::Because(format!(
                         "{name} comes from a cell that can't run yet"
@@ -905,11 +935,8 @@ impl Engine {
         if cell.source.trim().is_empty() {
             return;
         }
-        if let Some(e) = self
-            .py_names
-            .get(&cell.source)
-            .and_then(|n| n.syntax_error.clone())
-        {
+        let names = if cell.kind == CellKind::Rust { self.rust_names.get(&cell.source) } else { self.py_names.get(&cell.source) };
+        if let Some(e) = names.and_then(|n| n.syntax_error.clone()) {
             result.error = Some(format!(
                 "{}: {} (line {})",
                 e.kind,
@@ -941,7 +968,8 @@ impl Engine {
             let definer = graph.definer(name);
             let definer_kind = definer.and_then(|d| cell_of.get(d)).map(|c| c.kind);
             match definer_kind {
-                Some(CellKind::Python) => {
+                // A Python cell reading another Python cell's value: it's in the worker.
+                Some(CellKind::Python) if cell.kind == CellKind::Python => {
                     let d = definer.unwrap();
                     if py_pending.contains(d) {
                         waiting = true;
@@ -959,6 +987,23 @@ impl Engine {
                     base_parts.push((name.clone(), format!("python:{up_base}")));
                     request.python_inputs.push(name.clone());
                 }
+                // Values between languages (and from Rust) travel as Plain, like calc values.
+                Some(k @ (CellKind::Python | CellKind::Rust)) => {
+                    let d = definer.unwrap();
+                    let lang = if k == CellKind::Rust { "rust" } else { "python" };
+                    let (up, up_base) = py_keys.get(d).map_or(("?", "?"), |k| (k.key.as_str(), k.base.as_str()));
+                    parts.push((name.clone(), format!("{lang}:{up}")));
+                    base_parts.push((name.clone(), format!("{lang}:{up_base}")));
+                    if py_pending.contains(d) {
+                        waiting = true;
+                    } else if let Some(what) = opaque.get(name) {
+                        blocked.get_or_insert(format!("{name} is a {what}, which can't be passed between languages"));
+                    } else if let Some(v) = vars.get(name) {
+                        request.inputs.insert(name.clone(), serde_json::to_value(v.to_plain()).expect("plain serializes"));
+                    } else {
+                        blocked.get_or_insert(format!("{name} comes from a cell that hasn't run successfully"));
+                    }
+                }
                 Some(CellKind::Calc) => match vars.get(name) {
                     Some(v) => {
                         let plain = v.to_plain();
@@ -968,7 +1013,7 @@ impl Engine {
                         match plain {
                             Plain::Unsupported { kind, .. } => {
                                 blocked.get_or_insert(format!(
-                                    "{name} ({kind}) can't be passed to Python yet"
+                                    "{name} ({kind}) can't be passed to a code cell yet"
                                 ));
                             }
                             p => {
@@ -998,7 +1043,8 @@ impl Engine {
                 }
             }
         }
-        let key = py_input_hash(cell.kind, &cell.source, &self.env, parts);
+        let env = if cell.kind == CellKind::Rust { &self.rust_env } else { &self.env };
+        let key = py_input_hash(cell.kind, &cell.source, env, parts);
         let base = py_base_hash(cell.kind, &cell.source, base_parts);
         let k = PyKey { id: id.to_owned(), key: key.clone(), base: base.clone() };
         py_keys.insert(id.to_owned(), k.clone());
@@ -1016,8 +1062,10 @@ impl Engine {
         let foreign = self.foreign.get(id).filter(|o| o.key == base);
         let cannot = if self.past {
             Some(PyState::Past)
-        } else if !self.python_available {
+        } else if cell.kind == CellKind::Python && !self.python_available {
             Some(PyState::NoPython)
+        } else if cell.kind == CellKind::Rust && !self.rust_available {
+            Some(PyState::NoRust)
         } else if !self.trusted {
             Some(PyState::Untrusted)
         } else if blocked.is_none() && !self.may_run(cell) {
@@ -1040,6 +1088,7 @@ impl Engine {
                 id: id.to_owned(),
                 key,
                 base,
+                kind: cell.kind,
                 request,
             });
         }

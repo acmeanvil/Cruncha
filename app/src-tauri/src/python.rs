@@ -7,6 +7,10 @@
 //! outcome and reports fresh results, until nothing is due. A newer commit starts a newer
 //! loop; the older one stops before its next job (the cell already running finishes, and its
 //! outcome is memoized, so the newer loop reuses it when the inputs still match).
+//!
+//! Rust cells (ADR-0006) are jobs of the same loop: they compile and run in wasmtime
+//! ([`cruncha_kernel_rs::cells::Cells`]) instead of the worker, and come back as the same
+//! `RunResult`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +47,8 @@ pub struct Python {
     generation: AtomicU64,
     /// A cell is interrupted after this long (none: never).
     pub timeout: Option<Duration>,
+    /// Rust cells, once Rust is set up.
+    rust: Mutex<Option<Arc<cruncha_kernel_rs::cells::Cells>>>,
 }
 
 impl Python {
@@ -57,7 +63,17 @@ impl Python {
             interrupter: Mutex::new(None),
             generation: AtomicU64::new(0),
             timeout: None,
+            rust: Mutex::new(None),
         })
+    }
+
+    /// Run Rust cells with `cells` (Rust is set up).
+    pub fn set_rust(&self, cells: Option<Arc<cruncha_kernel_rs::cells::Cells>>) {
+        *self.rust.lock().unwrap() = cells;
+    }
+
+    pub fn rust(&self) -> Option<Arc<cruncha_kernel_rs::cells::Cells>> {
+        self.rust.lock().unwrap().clone()
     }
 
     /// The interpreter, if the environment is set up.
@@ -128,6 +144,9 @@ impl Python {
         if let Some(i) = *self.interrupter.lock().unwrap() {
             i.interrupt();
         }
+        if let Some(r) = self.rust() {
+            r.interrupter().increment_epoch();
+        }
     }
 
     /// Start a run loop over `cells` (the latest version), replacing any older one.
@@ -166,6 +185,22 @@ impl Python {
                 e.run(&cells)
             };
             notify(results);
+            if job.kind == cruncha_store::CellKind::Rust {
+                let outcome = match self.rust() {
+                    Some(cells) => Ok(rust_result(cells.run(&rust_request(&job.request), self.timeout).await)),
+                    None => Err("Rust isn't set up".to_string()),
+                };
+                let results = {
+                    let mut e = engine.lock().unwrap();
+                    e.record(&job, outcome);
+                    e.run(&cells)
+                };
+                notify(results);
+                if !current() {
+                    return;
+                }
+                continue;
+            }
             let outcome = match self.ensure(&mut slot).await {
                 Ok(k) => {
                     *self.interrupter.lock().unwrap() = Some(k.interrupter());
@@ -213,5 +248,39 @@ impl Python {
         if let Some(k) = self.scanner.lock().await.take() {
             k.shutdown().await;
         }
+    }
+}
+
+/// A Rust job's request (its inputs are all `Plain` values).
+fn rust_request(r: &cruncha_kernel_py::RunRequest) -> cruncha_kernel_rs::cells::Request {
+    cruncha_kernel_rs::cells::Request {
+        cell: r.cell.clone(),
+        source: r.source.clone(),
+        defines: r.defines.clone(),
+        inputs: r.inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+    }
+}
+
+/// A Rust cell's outcome as a run result (the shape the engine records for code cells).
+fn rust_result(o: cruncha_kernel_rs::cells::Outcome) -> cruncha_kernel_py::RunResult {
+    use cruncha_kernel_py::{Defined, PyError, RunResult, Status};
+    RunResult {
+        status: if o.ok {
+            Status::Done
+        } else if o.interrupted {
+            Status::Interrupted
+        } else {
+            Status::Error
+        },
+        defines: o
+            .defines
+            .into_iter()
+            .map(|(name, summary, plain)| Defined { name, summary, plain })
+            .collect(),
+        stdout: o.stdout,
+        stderr: o.stderr,
+        outputs: vec![],
+        error: o.error.map(|e| PyError { kind: e.kind, message: e.message, line: e.line, traceback: e.detail }),
+        ms: o.compile_ms + o.run_ms,
     }
 }
