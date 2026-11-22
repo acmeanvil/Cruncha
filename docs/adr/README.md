@@ -26,6 +26,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0020](0020-figure-frames-own-scheme.md) | Figure frames are served from their own scheme, with their own CSP; the renderer arrives by `postMessage` (refines 0017) | Proposed |
 | [0021](0021-indexed-delta-log-listing.md) | The store lists `_delta_log` from an index it keeps, not from the directory (refines 0010, 0011) | Accepted |
 | [0022](0022-fix-hurmet-function-bugs.md) | Fix the built-in function bugs inherited from Hurmet (`median`, `mod`, `rem`, `hypot`, `rms`, inverse trig, statistics, `e`) | Proposed |
+| [0023](0023-archive-major-versions.md) | Archive major versions (oldest first) from the History tab: snapshots and a save log kept, intermediate saves removed; agents can read archived snapshots (refines 0011) | Proposed |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 
