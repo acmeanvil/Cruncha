@@ -5,7 +5,7 @@
 // (`{"type":"paragraph","content":[…]}`), as the store and sample documents already use.
 import { Node } from "prosemirror-model";
 import type { Cell } from "../api";
-import { schema } from "./schema";
+import { PROSE_TYPES, schema } from "./schema";
 
 const CODE_KINDS = new Set(["python", "rust", "tex"]);
 
@@ -25,7 +25,7 @@ export function cellToNode(c: Cell): Node {
       } catch {
         json = textParagraph(c.source);
       }
-      if (json?.type !== "paragraph" && json?.type !== "heading") json = textParagraph(c.source);
+      if (!PROSE_TYPES.has(json?.type ?? "")) json = textParagraph(c.source);
       try {
         return Node.fromJSON(schema, { ...json, attrs: { ...(json.attrs ?? {}), ...cell } });
       } catch {
@@ -66,13 +66,12 @@ export function nodeToContent(n: Node): CellContent {
   const base = { id: n.attrs.id as string, order_key: n.attrs.key as string };
   switch (n.type.name) {
     case "paragraph":
-    case "heading": {
-      const json = n.toJSON() as { attrs?: Record<string, unknown> };
-      const { id: _i, key: _k, ...rest } = json.attrs ?? {};
-      if (Object.keys(rest).length) json.attrs = rest;
-      else delete json.attrs;
-      return { ...base, kind: "prose", source: JSON.stringify(json), attrs: {} };
-    }
+    case "heading":
+    case "bullet_list":
+    case "ordered_list":
+    case "blockquote":
+    case "horizontal_rule":
+      return { ...base, kind: "prose", source: JSON.stringify(withoutCellAttrs(n.toJSON())), attrs: {} };
     case "calc":
       return { ...base, kind: "calc", source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs) };
     case "code_block":
@@ -80,6 +79,62 @@ export function nodeToContent(n: Node): CellContent {
     default:
       return { ...base, kind: n.attrs.kind, source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs) };
   }
+}
+
+interface PMJson {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: PMJson[];
+  [k: string]: unknown;
+}
+
+/** ProseMirror JSON without the cell attributes (`id`, `key`), at every depth: a paragraph
+ *  inside a list carries them too, as nulls. */
+function withoutCellAttrs(json: PMJson): PMJson {
+  if (json.attrs) {
+    const { id: _i, key: _k, ...rest } = json.attrs;
+    if (Object.keys(rest).length) json.attrs = rest;
+    else delete json.attrs;
+  }
+  if (json.content) json.content = json.content.map(withoutCellAttrs);
+  return json;
+}
+
+/** A prose cell's source as short text, Markdown-like (`## Title`, `- item`), for lists of
+ *  changes such as proposals. Other text is returned as it is. */
+export function proseText(source: string): string {
+  let json: PMJson;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    return source;
+  }
+  const inline = (n: PMJson): string =>
+    (n.content ?? []).map((c) => (c.type === "hard_break" ? "\n" : typeof c.text === "string" ? c.text : inline(c))).join("");
+  const block = (n: PMJson): string => {
+    switch (n.type) {
+      case "heading":
+        return `${"#".repeat(Number(n.attrs?.level ?? 1))} ${inline(n)}`;
+      case "bullet_list":
+      case "ordered_list": {
+        const start = Number(n.attrs?.order ?? 1);
+        return (n.content ?? [])
+          .map((item, i) => {
+            const marker = n.type === "bullet_list" ? "- " : `${start + i}. `;
+            const body = (item.content ?? []).map(block).join("\n");
+            return marker + body.replace(/\n/g, "\n" + " ".repeat(marker.length));
+          })
+          .join("\n");
+      }
+      case "blockquote":
+        return (n.content ?? []).map(block).join("\n").replace(/^/gm, "> ");
+      case "horizontal_rule":
+        return "---";
+      default:
+        return inline(n);
+    }
+  };
+  return block(json);
 }
 
 /** A stable string for comparing a block with the committed cell. */

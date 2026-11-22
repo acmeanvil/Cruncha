@@ -215,7 +215,7 @@ Giving each inserted template its own namespace (`beam1.M`) would avoid renames 
 
 ## Action Items
 
-1. [ ] Markdown support in the editor, with a Markdown ↔ ProseMirror converter that round-trips headings, paragraphs, emphasis, code, lists, links and block quotes.
+1. [x] Markdown support in the editor, with a Markdown ↔ ProseMirror converter that round-trips headings, paragraphs, emphasis, code, lists, links and block quotes. Done 2026-11-22: `crates/cruncha-prose` (pulldown-cmark) for agents, the mirror, reports, paste and templates; Markdown input rules and list keys in the editor.
 2. [ ] `cruncha-templates`: the format (§1), validation, preview, the test runner (§6); `cargo test -p cruncha-templates` in CI.
 3. [ ] The insert flow (§3): the dialog, clash detection, renames by the calc lexer and the code-cell scanners, "use the document's", one commit, provenance.
 4. [ ] The user library (§4) and the snippet manager (§5): Templates tab (⌘⇧T), Library page, Save as snippet, Update, Rename, Duplicate, Delete to trash, Import/Export, a library folder setting.

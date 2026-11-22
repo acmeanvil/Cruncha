@@ -46,7 +46,9 @@ A document is an ordered tree of **blocks**, and every block has a stable ID (a 
 Document
  ├─ meta: title, page size, number format, unit system preferences, …
  └─ blocks[] (ordered by fractional index, so inserts never renumber)
-     ├─ prose      ProseMirror JSON (paragraph, heading, list, table, figure, callout…)
+     ├─ prose      ProseMirror JSON of one block: paragraph, heading, bulleted/numbered list,
+     │              quote or rule (now); table, figure, callout (planned). crates/cruncha-prose
+     │              reads and writes it, and converts Markdown both ways
      │              └─ may contain inline calc cells (each with its own ID)
      ├─ calc       Hurmet-syntax statement(s)                   → values
      ├─ python     Python source                                → values, figures, tables

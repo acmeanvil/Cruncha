@@ -70,6 +70,8 @@
 #show heading.where(level: 1): set text(size: 1.35em)
 #show heading.where(level: 2): set text(size: 1.15em)
 #show heading.where(level: 3): set text(size: 1.0em)
+#show quote.where(block: true): it => block(inset: (left: 10pt, y: 2pt), stroke: (left: 1.5pt + muted), it.body)
+#show link: it => text(fill: accent, underline(it))
 
 // ---------------------------------------------------------------------------------------
 // Pieces
@@ -79,7 +81,25 @@
   if x.code { c = raw(c) }
   if x.bold { c = strong(c) }
   if x.italic { c = emph(c) }
+  if x.at("sub", default: false) { c = sub(c) }
+  if x.at("sup", default: false) { c = super(c) }
+  if x.at("link", default: none) != none { c = link(x.link, c) }
   c
+}
+
+// Prose blocks: paragraphs, lists and quotes nest (a list item holds paragraphs, lists and
+// quotes); headings and rules are top-level only.
+#let prose(b) = {
+  if b.type == "paragraph" {
+    par(runs(b.text))
+  } else if b.type == "list" {
+    let items = b.items.map(item => item.map(prose).join())
+    if b.ordered { enum(start: b.start, ..items) } else { list(..items) }
+  } else if b.type == "quote" {
+    quote(block: true, b.blocks.map(prose).join())
+  } else if b.type == "rule" {
+    line(length: 100%, stroke: 0.5pt + muted)
+  }
 }
 
 #let badge(color, body) = box(
@@ -289,8 +309,8 @@
 #for b in r.blocks {
   if b.type == "heading" {
     heading(level: calc.min(b.level, 6), runs(b.text))
-  } else if b.type == "paragraph" {
-    par(runs(b.text))
+  } else if b.type in ("paragraph", "list", "quote", "rule") {
+    prose(b)
   } else if b.type == "calc" {
     calc-block(b)
   } else if b.type == "code" {

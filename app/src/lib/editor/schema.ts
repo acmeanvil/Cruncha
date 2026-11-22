@@ -13,7 +13,7 @@ const nodes: Record<string, NodeSpec> = {
   doc: { content: "block+" },
 
   paragraph: {
-    group: "block",
+    group: "block prose",
     content: "inline*",
     attrs: { ...cellAttrs },
     parseDOM: [{ tag: "p" }],
@@ -27,6 +27,45 @@ const nodes: Record<string, NodeSpec> = {
     attrs: { ...cellAttrs, level: { default: 1 } },
     parseDOM: [1, 2, 3, 4, 5, 6].map((level) => ({ tag: `h${level}`, attrs: { level } })),
     toDOM: (n) => [`h${n.attrs.level}`, 0],
+  },
+
+  bullet_list: {
+    group: "block prose",
+    content: "list_item+",
+    attrs: { ...cellAttrs },
+    parseDOM: [{ tag: "ul" }],
+    toDOM: () => ["ul", 0],
+  },
+
+  ordered_list: {
+    group: "block prose",
+    content: "list_item+",
+    attrs: { ...cellAttrs, order: { default: 1 } },
+    parseDOM: [{ tag: "ol", getAttrs: (d) => ({ order: Number((d as HTMLElement).getAttribute("start") ?? 1) || 1 }) }],
+    toDOM: (n) => (n.attrs.order === 1 ? ["ol", 0] : ["ol", { start: n.attrs.order }, 0]),
+  },
+
+  list_item: {
+    content: "paragraph prose*",
+    defining: true,
+    parseDOM: [{ tag: "li" }],
+    toDOM: () => ["li", 0],
+  },
+
+  blockquote: {
+    group: "block prose",
+    content: "prose+",
+    defining: true,
+    attrs: { ...cellAttrs },
+    parseDOM: [{ tag: "blockquote" }],
+    toDOM: () => ["blockquote", 0],
+  },
+
+  horizontal_rule: {
+    group: "block",
+    attrs: { ...cellAttrs },
+    parseDOM: [{ tag: "hr" }],
+    toDOM: () => ["hr"],
   },
 
   /** A calc statement, edited as text and shown typeset (calcView.ts). */
@@ -82,9 +121,35 @@ const marks: Record<string, MarkSpec> = {
   code: { parseDOM: [{ tag: "code" }], toDOM: () => ["code", 0] },
   sub: { excludes: "sup", parseDOM: [{ tag: "sub" }], toDOM: () => ["sub", 0] },
   sup: { excludes: "sub", parseDOM: [{ tag: "sup" }], toDOM: () => ["sup", 0] },
+  /** Only http, https and mailto targets; opened in the system browser (Editor.svelte). */
+  link: {
+    attrs: { href: {} },
+    inclusive: false,
+    parseDOM: [
+      {
+        tag: "a[href]",
+        getAttrs: (d) => {
+          const href = safeHref((d as HTMLElement).getAttribute("href") ?? "");
+          return href ? { href } : false;
+        },
+      },
+    ],
+    toDOM: (m) => ["a", { href: m.attrs.href, title: m.attrs.href, rel: "noopener noreferrer" }, 0],
+  },
 };
+
+/** A link target the editor follows: http, https or mailto (cruncha_prose::safe_href). */
+export function safeHref(href: string): string | null {
+  const h = href.trim();
+  return /^(https?:\/\/|mailto:)/i.test(h) ? h : null;
+}
 
 export const schema = new Schema({ nodes, marks });
 
 /** Node types that are a cell's whole content (one top-level block each). */
-export const CELL_TYPES = new Set(["paragraph", "heading", "calc", "code_block", "raw"]);
+export const CELL_TYPES = new Set([
+  "paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule", "calc", "code_block", "raw",
+]);
+
+/** Node types stored as prose cells. */
+export const PROSE_TYPES = new Set(["paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule"]);

@@ -2,14 +2,15 @@
 // Editor plugins: cell identity (ids and order keys), keymaps and input rules.
 import { Plugin, TextSelection, NodeSelection, type EditorState, type Transaction, type Command } from "prosemirror-state";
 import { keymap } from "prosemirror-keymap";
-import { baseKeymap, exitCode, setBlockType, toggleMark } from "prosemirror-commands";
+import { baseKeymap, chainCommands, exitCode, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
-import { inputRules, textblockTypeInputRule, InputRule } from "prosemirror-inputrules";
+import { inputRules, textblockTypeInputRule, wrappingInputRule, InputRule } from "prosemirror-inputrules";
+import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
-import type { Node } from "prosemirror-model";
+import type { Mark, MarkType, Node } from "prosemirror-model";
 import { keyBetween, ulid } from "./ids";
-import { schema } from "./schema";
+import { safeHref, schema } from "./schema";
 
 /**
  * Keeps every top-level block a distinct cell: a fresh id for new blocks and for copies made
@@ -123,6 +124,59 @@ const codeTab: Command = (state, dispatch) => {
   return true;
 };
 
+/** `**bold**`-style typing: when the closing delimiter is typed, the delimited text gets the
+ *  mark and the delimiters go. `m[1]` is the character before the opening delimiter (kept),
+ *  `m[2]` the text. */
+function markRule(re: RegExp, type: MarkType, attrs?: (m: RegExpMatchArray) => Record<string, unknown> | null): InputRule {
+  return new InputRule(re, (state, m, start, end) => {
+    const lead = m[1] ?? "";
+    const text = m[2];
+    if (!text) return null;
+    const a = attrs ? attrs(m) : {};
+    if (a === null) return null;
+    const from = start + lead.length;
+    const $from = state.doc.resolve(from);
+    if (!$from.parent.type.allowsMarkType(type)) return null;
+    const marks: readonly Mark[] = type.create(a).addToSet($from.marks());
+    const tr = state.tr.replaceWith(from, end, schema.text(text, marks));
+    return tr.removeStoredMark(type);
+  });
+}
+
+/** Markdown as you type. Blocks: `# ` heading, `- ` / `* ` list, `1. ` numbered list,
+ *  `> ` quote, `---` rule, `` ``` `` code, `= ` calc. Marks: `**bold**`, `*italic*`,
+ *  `_italic_` (not inside a word, so `f_c_` stays), `` `code` ``, `[text](https://…)`. */
+export function markdownRules(): InputRule[] {
+  const { nodes, marks } = schema;
+  return [
+    textblockTypeInputRule(/^(#{1,6})\s$/, nodes.heading, (m) => ({ level: m[1].length })),
+    wrappingInputRule(/^\s*([-+*])\s$/, nodes.bullet_list),
+    wrappingInputRule(
+      /^(\d+)\.\s$/,
+      nodes.ordered_list,
+      (m) => ({ order: Number(m[1]) }),
+      (m, n) => n.childCount + n.attrs.order === Number(m[1]),
+    ),
+    wrappingInputRule(/^\s*>\s$/, nodes.blockquote),
+    // "---" in an empty top-level paragraph: a rule, then a new paragraph.
+    new InputRule(/^--(-)$/, (state, _m, start, end) => {
+      const $s = state.doc.resolve(start);
+      if ($s.depth !== 1 || $s.parent.type !== nodes.paragraph || $s.parent.content.size !== end - start) return null;
+      const pos = $s.before(1);
+      const tr = state.tr.replaceWith(pos, pos + $s.parent.nodeSize, [nodes.horizontal_rule.create(), nodes.paragraph.create()]);
+      return tr.setSelection(TextSelection.create(tr.doc, pos + 2));
+    }),
+    markRule(/(^|[^*])\*\*([^*\s](?:[^*]*[^*\s])?)\*\*$/, marks.strong),
+    markRule(/(^|[^*\w])\*([^*\s](?:[^*]*[^*\s])?)\*$/, marks.em),
+    markRule(/(^|[^_\w])_([^_\s](?:[^_]*[^_\s])?)_$/, marks.em),
+    markRule(/(^|[^`])`([^`]+)`$/, marks.code),
+    markRule(/(^|[^!])\[([^\]]+)\]\(([^)\s]+)\)$/, marks.link, (m) => {
+      const href = safeHref(m[3]);
+      return href ? { href } : null;
+    }),
+  ];
+}
+
 export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => void) {
   const submit: Command = () => {
     onSubmit();
@@ -140,12 +194,12 @@ export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => 
     cellIdentity,
     inputRules({
       rules: [
-        textblockTypeInputRule(/^(#{1,6})\s$/, schema.nodes.heading, (m) => ({ level: m[1].length })),
+        ...markdownRules(),
         textblockTypeInputRule(/^```(python|rust|tex)?\s$/, schema.nodes.code_block, (m) => ({ lang: m[1] ?? "python" })),
         // "= " at the start of an empty paragraph starts a calc.
         new InputRule(/^=\s$/, (state, _m, start, end) => {
           const $s = state.doc.resolve(start);
-          if ($s.parent.type !== schema.nodes.paragraph || $s.parent.content.size !== end - start - 1) return null;
+          if ($s.depth !== 1 || $s.parent.type !== schema.nodes.paragraph || $s.parent.content.size !== end - start - 1) return null;
           const pos = $s.before(1);
           const tr = state.tr.replaceWith(pos, pos + $s.parent.nodeSize, newCalc());
           return tr.setSelection(NodeSelection.create(tr.doc, pos));
@@ -179,7 +233,11 @@ export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => 
         return true;
       },
       "Shift-Enter": runCode,
-      Tab: codeTab,
+      Enter: splitListItem(schema.nodes.list_item),
+      Tab: chainCommands(codeTab, sinkListItem(schema.nodes.list_item)),
+      "Shift-Tab": liftListItem(schema.nodes.list_item),
+      "Mod-Shift-8": wrapInList(schema.nodes.bullet_list),
+      "Mod-Shift-7": wrapInList(schema.nodes.ordered_list),
     }),
     keymap(baseKeymap),
     dropCursor(),

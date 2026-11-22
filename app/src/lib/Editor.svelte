@@ -4,13 +4,14 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
   import { EditorState, NodeSelection, Plugin, TextSelection } from "prosemirror-state";
-  import type { Node as PMNode } from "prosemirror-model";
+  import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
   import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
   import type { Cell, CellResult, CommitView } from "./api";
   import { CalcView } from "./editor/calcView";
   import { CodeView } from "./editor/codeView";
   import { api } from "./api";
-  import { docFromCells, withDescription } from "./editor/cells";
+  import { cellToNode, docFromCells, withDescription } from "./editor/cells";
+  import { markdownPaste } from "./editor/paste";
   import {
     currentBlock,
     editorPlugins,
@@ -183,7 +184,7 @@
         return DecorationSet.create(d, [
           Decoration.node(0, d.firstChild!.nodeSize, {
             class: "placeholder",
-            "data-placeholder": "Start writing. Type = and a space for a calculation, # for a heading.",
+            "data-placeholder": "Start writing. Type = and a space for a calculation; Markdown works: # heading, - list, **bold**.",
           }),
         ]);
       },
@@ -277,6 +278,34 @@
             refreshOutline(true);
           }
         },
+        // Pasted Markdown (plain text, or text from a code editor, that looks like Markdown)
+        // becomes cells: prose blocks, and calc/python/rust fences as cells. The backend
+        // parses it (cruncha-prose), as it does for agents and templates.
+        handlePaste(v, e) {
+          const md = markdownPaste(v, e);
+          if (md == null) return false;
+          api.markdownCells(md).then(
+            (pieces) => {
+              const nodes = pieces.map((p) => cellToNode({ id: null, order_key: null, kind: p.kind, source: p.source, attrs: {} } as unknown as Cell));
+              if (nodes.length === 0) return;
+              const inline = nodes.length === 1 && nodes[0].type === schema.nodes.paragraph;
+              const slice = new Slice(Fragment.from(nodes), inline ? 1 : 0, inline ? 1 : 0);
+              v.dispatch(v.state.tr.replaceSelection(slice).scrollIntoView());
+            },
+            () => v.dispatch(v.state.tr.insertText(md).scrollIntoView()),
+          );
+          return true;
+        },
+        handleDOMEvents: {
+          // Links never navigate the app's page; ⌘-click opens one in the browser.
+          click(v, e) {
+            const a = (e.target as HTMLElement | null)?.closest?.("a[href]");
+            if (!a || !v.dom.contains(a)) return false;
+            e.preventDefault();
+            if (e.metaKey || e.ctrlKey) void api.openUrl(a.getAttribute("href") ?? "");
+            return false;
+          },
+        },
         handleKeyDown(v, e) {
           const sel = v.state.selection;
           if (e.key === "Enter" && sel instanceof NodeSelection && sel.node.type === schema.nodes.calc) {
@@ -303,6 +332,9 @@
   function labelOf(n: PMNode) {
     switch (n.type.name) {
       case "heading": return `H${n.attrs.level}`;
+      case "bullet_list": case "ordered_list": return "List";
+      case "blockquote": return "Quote";
+      case "horizontal_rule": return "Rule";
       case "calc": return "Calc";
       case "code_block": return n.attrs.lang === "python" ? "Python" : n.attrs.lang === "rust" ? "Rust" : "TeX";
       case "raw": return n.attrs.kind;
@@ -541,6 +573,12 @@
     color: var(--accent); font: 12.5px var(--sans); cursor: pointer;
   }
   .editor :global(p) { margin: 0.35em 0; }
+  .editor :global(:is(ul, ol)) { margin: 0.35em 0; padding-left: 1.6em; }
+  .editor :global(li > p) { margin: 0.1em 0; }
+  .editor :global(blockquote) { margin: 0.5em 0; padding: 0 0 0 0.9em; border-left: 3px solid var(--border); color: var(--muted); }
+  .editor :global(hr) { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+  .editor :global(hr.ProseMirror-selectednode) { border-top-color: var(--accent); }
+  .editor :global(a[href]) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: text; }
   /* The standard HTML heading scale, relative to the text size. */
   .editor :global(h1) { font-size: 2em; margin: 0.5em 0 0.3em; }
   .editor :global(h2) { font-size: 1.5em; margin: 0.8em 0 0.3em; }

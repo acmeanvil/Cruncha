@@ -167,36 +167,9 @@ fn indent(s: &str) -> String {
     s.lines().map(|l| format!("  {l}\n")).collect()
 }
 
-/// A prose cell (a ProseMirror paragraph or heading as JSON) as Markdown.
+/// A prose cell (ProseMirror JSON) as Markdown: what `propose_edit` reads back as the same cell.
 pub fn prose_markdown(source: &str) -> String {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(source) else {
-        return source.to_owned();
-    };
-    let mut text = String::new();
-    for n in v["content"].as_array().into_iter().flatten() {
-        match n["type"].as_str() {
-            Some("text") => {
-                let mut t = n["text"].as_str().unwrap_or_default().to_owned();
-                for m in n["marks"].as_array().into_iter().flatten() {
-                    t = match m["type"].as_str() {
-                        Some("strong") => format!("**{t}**"),
-                        Some("em") => format!("*{t}*"),
-                        Some("code") => format!("`{t}`"),
-                        _ => t,
-                    };
-                }
-                text.push_str(&t);
-            }
-            Some("hard_break") => text.push_str("  \n"),
-            _ => {}
-        }
-    }
-    if v["type"] == "heading" {
-        let level = v["attrs"]["level"].as_u64().unwrap_or(1).clamp(1, 6) as usize;
-        format!("{} {text}", "#".repeat(level))
-    } else {
-        text
-    }
+    cruncha_prose::to_markdown(&cruncha_prose::parse_json(source))
 }
 
 #[cfg(test)]

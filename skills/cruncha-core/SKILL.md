@@ -46,7 +46,7 @@ Cruncha documents are engineering calculation packages: prose, calc cells, Pytho
 ]
 ```
 
-- `insert`: `kind` is `calc`, `python` or `prose`; `after` is the cell it follows (omit it for the start of the document). Prose is one paragraph, or a heading written `## Title`. Several new cells in a row: list them in reverse order with the same `after`, or propose the first, then use the ID the reply gives it.
+- `insert`: `kind` is `calc`, `python` or `prose`; `after` is the cell it follows (omit it for the start of the document). Prose is Markdown for **one block**: a paragraph, a heading (`## Title`), a bulleted or numbered list (`- item`, `1. item`, nested by indenting), a quote (`> text`) or a rule (`---`). Marks: `**bold**`, `*italic*`, `` `code` ``, `<sub>c</sub>`, `<sup>2</sup>`, and links `[text](https://…)` (http, https and mailto only). One line break is a space (CommonMark); end a line with `\` for a hard break. Two paragraphs, or a fenced calc or code block, are refused: propose each as its own cell. `read_doc` shows prose in the same Markdown, so you can copy it into a `modify`. Several new cells in a row: list them in reverse order with the same `after`, or propose the first, then use the ID the reply gives it.
 - `modify`: a new `source`, a new `description`, or both. Other attributes are kept.
 - Pass `base_version`, the version in `read_doc`'s header. A cell changed after it is refused, so you re-read instead of overwriting someone's edit.
 - The engine checks the combined document. A proposal that would define a name twice or make a cycle is refused, with the reason.

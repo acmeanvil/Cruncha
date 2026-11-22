@@ -4,6 +4,7 @@
 <script lang="ts">
   import type { CellResult, ProposalChange, ProposalView } from "./api";
   import { date } from "./format";
+  import { proseText } from "./editor/cells";
 
   let {
     proposals,
@@ -33,16 +34,7 @@
   /** A prose cell's ProseMirror JSON as its text; other sources as they are. */
   function shown(kind: string, src: string | null): string {
     if (src == null) return "";
-    if (kind !== "prose") return src;
-    try {
-      const node = JSON.parse(src);
-      const text = (node.content ?? [])
-        .map((n: { type: string; text?: string }) => (n.type === "hard_break" ? "\n" : (n.text ?? "")))
-        .join("");
-      return node.type === "heading" ? `${"#".repeat(node.attrs?.level ?? 1)} ${text}` : text;
-    } catch {
-      return src;
-    }
+    return kind === "prose" ? proseText(src) : src;
   }
 
   function line(r: CellResult | null, none: string): string {

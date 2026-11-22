@@ -102,34 +102,49 @@ pub fn content_hash(cells: &[Cell]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Prose (a ProseMirror paragraph or heading as JSON) as runs of marked text.
-fn prose(source: &str) -> (Option<u8>, Vec<Run>) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(source) else {
-        return (None, vec![Run { text: source.to_owned(), ..Default::default() }]);
-    };
-    let level = (v["type"] == "heading").then(|| v["attrs"]["level"].as_u64().unwrap_or(1).clamp(1, 6) as u8);
-    let mut runs = Vec::new();
-    for n in v["content"].as_array().into_iter().flatten() {
-        match n["type"].as_str() {
-            Some("text") => {
-                let marks: Vec<&str> = n["marks"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|m| m["type"].as_str())
-                    .collect();
-                runs.push(Run {
-                    text: n["text"].as_str().unwrap_or_default().to_owned(),
-                    bold: marks.contains(&"strong"),
-                    italic: marks.contains(&"em"),
-                    code: marks.contains(&"code"),
-                });
+/// A prose cell (ProseMirror JSON, read by cruncha-prose) as a report block; `None` for an
+/// empty paragraph.
+fn prose(source: &str) -> Option<Block> {
+    prose_block(&cruncha_prose::parse_json(source))
+}
+
+fn prose_block(b: &cruncha_prose::Block) -> Option<Block> {
+    use cruncha_prose::Block as P;
+    let blocks = |bs: &[P]| bs.iter().filter_map(prose_block).collect::<Vec<_>>();
+    Some(match b {
+        P::Heading { level, content } => Block::Heading { level: *level, text: runs(content) },
+        P::Paragraph(content) => {
+            let text = runs(content);
+            if text.iter().all(|r| r.text.trim().is_empty()) {
+                return None;
             }
-            Some("hard_break") => runs.push(Run { text: "\n".into(), ..Default::default() }),
-            _ => {}
+            Block::Paragraph { text }
         }
-    }
-    (level, runs)
+        P::BulletList(items) => Block::List { ordered: false, start: 1, items: items.iter().map(|i| blocks(i)).collect() },
+        P::OrderedList { start, items } => {
+            Block::List { ordered: true, start: *start, items: items.iter().map(|i| blocks(i)).collect() }
+        }
+        P::Quote(bs) => Block::Quote { blocks: blocks(bs) },
+        P::Rule => Block::Rule,
+    })
+}
+
+fn runs(content: &[cruncha_prose::Inline]) -> Vec<Run> {
+    content
+        .iter()
+        .map(|n| match n {
+            cruncha_prose::Inline::Break => Run { text: "\n".into(), ..Default::default() },
+            cruncha_prose::Inline::Text { text, marks } => Run {
+                text: text.clone(),
+                bold: marks.strong,
+                italic: marks.em,
+                code: marks.code,
+                sub: marks.sub,
+                sup: marks.sup,
+                link: marks.link.clone(),
+            },
+        })
+        .collect()
 }
 
 /// The formula of a calc that couldn't be evaluated: the prepared statement's TeX up to the
@@ -230,11 +245,7 @@ pub fn build(
         let r = results.get(&c.id).unwrap_or(&empty);
         match c.kind {
             CellKind::Meta => {}
-            CellKind::Prose => match prose(&c.source) {
-                (Some(level), text) => blocks.push(Block::Heading { level, text }),
-                (None, text) if text.iter().all(|r| r.text.trim().is_empty()) => {}
-                (None, text) => blocks.push(Block::Paragraph { text }),
-            },
+            CellKind::Prose => blocks.extend(prose(&c.source)),
             CellKind::Calc => {
                 let tex = if r.tex.is_empty() { formula_tex(&c.source).unwrap_or_default() } else { r.tex.clone() };
                 let math = if tex.is_empty() {
@@ -394,12 +405,28 @@ mod tests {
     fn dates_and_prose() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso_utc(1_795_183_770_909), "2026-11-20T14:09:30Z");
-        let (level, runs) = prose(r#"{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Loads"}]}"#);
-        assert_eq!(level, Some(2));
-        assert_eq!(runs[0].text, "Loads");
-        let (_, runs) = prose(
+        let Some(Block::Heading { level, text }) =
+            prose(r#"{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Loads"}]}"#)
+        else {
+            panic!("a heading")
+        };
+        assert_eq!((level, text[0].text.as_str()), (2, "Loads"));
+        let Some(Block::Paragraph { text }) = prose(
             r#"{"type":"paragraph","content":[{"type":"text","text":"a "},{"type":"text","marks":[{"type":"strong"}],"text":"b"}]}"#,
-        );
-        assert!(runs[1].bold && !runs[0].bold);
+        ) else {
+            panic!("a paragraph")
+        };
+        assert!(text[1].bold && !text[0].bold);
+        assert_eq!(prose(r#"{"type":"paragraph"}"#), None);
+        let md = "1. [AISC 360](https://www.aisc.org) table J3.2\n2. f<sub>c</sub>\n\n   > quoted";
+        let Some(cruncha_prose::Piece::Prose(list)) = cruncha_prose::from_markdown(md).into_iter().next() else {
+            panic!("prose")
+        };
+        let Some(Block::List { ordered: true, start: 1, items }) = prose(&cruncha_prose::to_json(&list)) else {
+            panic!("a list")
+        };
+        let Block::Paragraph { text } = &items[0][0] else { panic!() };
+        assert_eq!(text[0].link.as_deref(), Some("https://www.aisc.org"));
+        assert!(matches!(&items[1][1], Block::Quote { .. }));
     }
 }

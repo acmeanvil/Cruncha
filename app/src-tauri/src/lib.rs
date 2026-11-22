@@ -754,6 +754,53 @@ fn open_path(path: PathBuf) -> Result<()> {
         .map_err(|e| format!("couldn't open {}: {e}", path.display()))
 }
 
+/// Open a link from a prose cell in the system's browser (or mail app): http, https and
+/// mailto only, so a document can't make the app open a file or another scheme.
+#[tauri::command]
+fn open_url(url: String) -> Result<()> {
+    let url = cruncha_prose::safe_href(&url).ok_or_else(|| format!("not a web or mail link: {url}"))?;
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("couldn't open {url}: {e}"))
+}
+
+/// A cell made from pasted Markdown.
+#[derive(serde::Serialize)]
+struct PastedCell {
+    kind: &'static str,
+    source: String,
+}
+
+/// Pasted Markdown as cells: prose blocks (as the editor stores them), and fenced `calc`
+/// lines and `python`/`rust`/`tex` blocks as their own cells.
+#[tauri::command]
+fn markdown_cells(markdown: String) -> Vec<PastedCell> {
+    cruncha_prose::from_markdown(&markdown)
+        .into_iter()
+        .map(|p| match p {
+            cruncha_prose::Piece::Prose(b) => PastedCell { kind: "prose", source: cruncha_prose::to_json(&b) },
+            cruncha_prose::Piece::Calc(line) => PastedCell { kind: "calc", source: line },
+            cruncha_prose::Piece::Code { lang, source } => PastedCell {
+                kind: match lang.as_str() {
+                    "rust" => "rust",
+                    "tex" => "tex",
+                    _ => "python",
+                },
+                source,
+            },
+        })
+        .collect()
+}
+
 /// The open document's proposals (ADR-0016), newest first, with "if accepted" results.
 #[tauri::command]
 async fn proposals(s: State<'_, Shared>) -> Result<Vec<proposals::ProposalView>> {
@@ -884,6 +931,8 @@ pub fn run() {
             figures_to_render,
             put_figure,
             open_path,
+            open_url,
+            markdown_cells,
             agent_server_status,
             agent_server_start,
             agent_server_stop,

@@ -123,6 +123,17 @@ pub enum Block {
     Paragraph {
         text: Vec<Run>,
     },
+    /// A bulleted (`ordered: false`) or numbered list. Each item holds paragraphs, lists and
+    /// quotes (never headings, calcs or code).
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<Vec<Block>>,
+    },
+    Quote {
+        blocks: Vec<Block>,
+    },
+    Rule,
     Calc {
         id: String,
         /// Typst math code (converted from the engine's TeX).
@@ -163,6 +174,10 @@ pub struct Run {
     pub bold: bool,
     pub italic: bool,
     pub code: bool,
+    pub sub: bool,
+    pub sup: bool,
+    /// An http, https or mailto URL.
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

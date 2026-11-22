@@ -57,30 +57,23 @@ pub fn key_between(a: Option<&str>, b: Option<&str>) -> Result<String, String> {
     }
 }
 
-/// An agent's prose (one paragraph or heading, Markdown-ish) as the editor's ProseMirror
-/// JSON: `## Title` is a heading, line breaks are hard breaks, text is plain.
-pub fn prose_source(text: &str) -> String {
-    let text = text.trim();
-    let (node, body) = match text.find(' ') {
-        Some(n) if n <= 6 && text[..n].bytes().all(|c| c == b'#') => {
-            (json!({"type": "heading", "attrs": {"level": n}}), text[n + 1..].trim())
-        }
-        _ => (json!({"type": "paragraph"}), text),
-    };
-    let mut content = Vec::new();
-    for (i, line) in body.lines().enumerate() {
-        if i > 0 {
-            content.push(json!({"type": "hard_break"}));
-        }
-        if !line.is_empty() {
-            content.push(json!({"type": "text", "text": line}));
-        }
+/// An agent's prose, written as Markdown, as the editor's ProseMirror JSON (cruncha-prose).
+/// A prose cell is one block: a paragraph, a heading, a list, a quote or a rule.
+pub fn prose_source(text: &str) -> Result<String, String> {
+    use cruncha_prose::{Block, Piece};
+    let pieces = cruncha_prose::from_markdown(text);
+    match pieces.as_slice() {
+        [] => Ok(cruncha_prose::to_json(&Block::Paragraph(vec![]))),
+        [Piece::Prose(b)] => Ok(cruncha_prose::to_json(b)),
+        _ if pieces.iter().any(|p| !matches!(p, Piece::Prose(_))) => Err(
+            "a prose cell can't hold a fenced calc, python, rust or tex block: propose that as its own cell (kind calc or python)"
+                .into(),
+        ),
+        _ => Err(format!(
+            "a prose cell is one block (a paragraph, a heading, a list or a quote), and this text has {}: propose each as its own cell",
+            pieces.len()
+        )),
     }
-    let mut node = node;
-    if !content.is_empty() {
-        node["content"] = Value::Array(content);
-    }
-    node.to_string()
 }
 
 /// The kinds an agent may add.
@@ -150,7 +143,7 @@ pub fn to_changes(
                 if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
                     attrs["description"] = json!(d.trim());
                 }
-                let source = if kind == CellKind::Prose { prose_source(&source) } else { source };
+                let source = if kind == CellKind::Prose { prose_source(&source)? } else { source };
                 ProposedChange::Insert { after, cell: ProposedCell { id, kind, source, attrs } }
             }
             Edit::Modify { id, source, description } => {
@@ -159,7 +152,10 @@ pub fn to_changes(
                     return Err(format!("modify {id}: give a new source, a description, or both"));
                 }
                 let prose = by_id[id.as_str()].kind == CellKind::Prose;
-                let source = source.map(|s| if prose { prose_source(&s) } else { s });
+                let source = match source {
+                    Some(s) if prose => Some(prose_source(&s)?),
+                    s => s,
+                };
                 let attrs = description.map(|d| json!({"description": d.trim()}));
                 ProposedChange::Modify { id, base_rev, source, attrs }
             }
@@ -448,14 +444,21 @@ mod tests {
 
     #[test]
     fn prose_from_markdown() {
-        let h: Value = serde_json::from_str(&prose_source("## Loads")).unwrap();
+        let h: Value = serde_json::from_str(&prose_source("## Loads").unwrap()).unwrap();
         assert_eq!(h["type"], "heading");
         assert_eq!(h["attrs"]["level"], 2);
         assert_eq!(h["content"][0]["text"], "Loads");
-        let p: Value = serde_json::from_str(&prose_source("one\ntwo")).unwrap();
+        // CommonMark: one line break is a space; a backslash or two spaces make a hard break.
+        let p: Value = serde_json::from_str(&prose_source("one\ntwo\\\nthree").unwrap()).unwrap();
         assert_eq!(p["type"], "paragraph");
+        assert_eq!(p["content"][0]["text"], "one two");
         assert_eq!(p["content"][1]["type"], "hard_break");
-        let hash: Value = serde_json::from_str(&prose_source("#3 is a bolt")).unwrap();
+        let hash: Value = serde_json::from_str(&prose_source("#3 is a bolt").unwrap()).unwrap();
         assert_eq!(hash["type"], "paragraph");
+        let list: Value = serde_json::from_str(&prose_source("- **dead** load\n- live load").unwrap()).unwrap();
+        assert_eq!(list["type"], "bullet_list");
+        assert_eq!(list["content"][0]["content"][0]["content"][0]["marks"][0]["type"], "strong");
+        assert!(prose_source("one\n\ntwo").unwrap_err().contains("has 2"));
+        assert!(prose_source("```calc\nx = 1\n```").unwrap_err().contains("its own cell"));
     }
 }

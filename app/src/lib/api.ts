@@ -545,6 +545,11 @@ export const api = {
   /** The latest version, or (with `at`) a past version or snapshot from its stored results. */
   exportReport: (path: string, at?: At) => invoke<ExportView>("export_report", { path, at: at ?? null }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
+  /** Open an http, https or mailto link in the system's browser or mail app. */
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
+  /** Markdown as cells (cruncha-prose): prose blocks as ProseMirror JSON, fenced calc lines
+   *  and python/rust/tex blocks as their cells. */
+  markdownCells: (markdown: string) => invoke<{ kind: string; source: string }[]>("markdown_cells", { markdown }),
   agentServerStatus: () => invoke<AgentServerView | null>("agent_server_status"),
   agentServerStart: () => invoke<AgentServerView>("agent_server_start"),
   agentServerStop: () => invoke<void>("agent_server_stop"),

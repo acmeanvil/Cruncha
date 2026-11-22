@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+cruncha-prose = { path = "../cruncha-prose" }
 rmcp = { version = "3.11", features = ["server", "macros", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1", features = ["net", "rt", "macros", "sync", "time"] }
