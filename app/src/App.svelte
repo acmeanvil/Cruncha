@@ -569,6 +569,7 @@
             onproposal={showProposals}
             onfunctions={() => reference("functions")}
             onunits={() => reference("units")}
+            origin={doc ? `document:${doc.id}@v${selected.kind === "version" ? selected.version : doc.version}` : null}
           />
         </div>
       </main>

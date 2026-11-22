@@ -52,6 +52,9 @@ export interface CellContent {
   order_key: string;
   source: string;
   attrs: unknown;
+  /** A pasted cell's origin (`document:<id>@v<n>`, ADR-0024): a new cell with one is
+   *  committed as Imported. Not part of the stored cell. */
+  from?: string | null;
 }
 
 function parseAttrs(json: string): unknown {
@@ -64,6 +67,7 @@ function parseAttrs(json: string): unknown {
 
 export function nodeToContent(n: Node): CellContent {
   const base = { id: n.attrs.id as string, order_key: n.attrs.key as string };
+  const from = n.attrs.from ? { from: n.attrs.from as string } : {};
   switch (n.type.name) {
     case "paragraph":
     case "heading":
@@ -73,11 +77,11 @@ export function nodeToContent(n: Node): CellContent {
     case "horizontal_rule":
       return { ...base, kind: "prose", source: JSON.stringify(withoutCellAttrs(n.toJSON())), attrs: {} };
     case "calc":
-      return { ...base, kind: "calc", source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs) };
+      return { ...base, kind: "calc", source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs), ...from };
     case "code_block":
-      return { ...base, kind: n.attrs.lang, source: n.textContent, attrs: parseAttrs(n.attrs.cellAttrs) };
+      return { ...base, kind: n.attrs.lang, source: n.textContent, attrs: parseAttrs(n.attrs.cellAttrs), ...from };
     default:
-      return { ...base, kind: n.attrs.kind, source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs) };
+      return { ...base, kind: n.attrs.kind, source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs), ...from };
   }
 }
 

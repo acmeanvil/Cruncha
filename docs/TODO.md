@@ -8,7 +8,6 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 
 | ADR | Item | Status | What's left |
 | --- | --- | --- | --- |
-| 0024 | 1. Copy and paste of cells (whole cells, partial blocks per §1's table) | Not started | First: broken today even within one document |
 | 0024 | 2. `Session` with several documents; document IDs on commands and events | Not started | |
 | 0024 | 3. Tab bar, per-tab editor state, keys, reopen at launch | Not started | |
 | 0024 | 4. Workers per document, on demand, stopped after 10 minutes idle | Not started | |

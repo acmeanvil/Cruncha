@@ -129,15 +129,17 @@ export class DocSync {
 
   private toCell(c: CellContent): Cell {
     const prev = this.committed.get(c.id);
+    const { from, ...content } = c;
     return {
       parent_id: null,
       defines: [],
       reads: [],
-      provenance: { state: "human" },
+      // A new cell pasted from a document records where it came from (ADR-0024).
+      provenance: from ? { state: "imported", source: from } : { state: "human" },
       modified_by: "",
       modified_at_us: 0,
       ...prev,
-      ...c,
+      ...content,
     };
   }
 

@@ -141,7 +141,7 @@ Isolation is total, but every process loads the whole app and its own agent serv
 
 ## Action Items
 
-1. [ ] Copy and paste of cells: `data-cruncha-*` serialization and parsing, new IDs and order keys, `Imported` provenance, Markdown plain text; partial blocks per the table in §1 (into prose, into code cells and the calc editor, selections spanning blocks, cells pasted inside a block); tests for each row, within a document and between two editors.
+1. [x] Copy and paste of cells: `data-cruncha-*` serialization and parsing, new IDs and order keys, `Imported` provenance, Markdown plain text; partial blocks per the table in §1 (into prose, into code cells and the calc editor, selections spanning blocks, cells pasted inside a block); tests for each row, within a document and between two editors. Done 2026-11-22: `app/src/lib/editor/clipboard.ts`, schema `parseDOM` rules, `clipboard.test.ts` (seven cases through ProseMirror's own copy and paste).
 2. [ ] `Session` with several documents, and document IDs on commands and events; backend tests with two documents open (separate stores, engines, workers, proposals).
 3. [ ] Tab bar, per-tab editor state, keys, reopen at launch; the sidebar and panels follow the active tab.
 4. [ ] Workers per document, started on demand and stopped when idle.

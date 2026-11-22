@@ -81,7 +81,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src/App.svelte           shell: toolbar, history panel, cell view, dialogs
   src/lib/api.ts           typed wrappers for the backend's Tauri commands (keep in sync with lib.rs)
   src/lib/Editor.svelte    the document editor; src/lib/editor/: schema (one top-level block per cell), cells <-> blocks,
-                           Markdown input rules and list keys (plugins.ts), Markdown paste via the backend (paste.ts), cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
+                           Markdown input rules and list keys (plugins.ts), Markdown paste via the backend (paste.ts), copy and paste of cells (clipboard.ts, ADR-0024: `data-cruncha-*` HTML, new IDs, Imported provenance, partial blocks), cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
                            outline.ts and variables.ts (sidebar models), figures.ts (ADR-0017/0020: sanitizer, sandboxed FigureFrame, report drawing)
   src/lib/*.svelte         Sidebar (Outline, History tabs), HistoryPanel (versions grouped by snapshot, "Rev A · 3": history.ts), SnapshotDialog,
                            BottomPanel (full width, ⌘J: Variables = VariableTable + VariableInspector (head/tail of frames from the engine's `Preview`), Proposals = ProposalsPanel),

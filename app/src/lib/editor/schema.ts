@@ -3,6 +3,19 @@
 // cell's `id` and order `key`; the sync layer (sync.ts) diffs blocks against committed cells.
 import { Schema, type NodeSpec, type MarkSpec } from "prosemirror-model";
 
+/** A cell's attributes as clipboard HTML (ADR-0024): what pasting into a Cruncha document
+ *  reads back, so calc and code cells survive copy and paste. `from` is the document version
+ *  copied from (`document:<id>@v<n>`), set by the clipboard (clipboard.ts), never stored. */
+const dataAttrs = (n: { attrs: Record<string, unknown> }, kind: string, extra: Record<string, string> = {}) => {
+  const a: Record<string, string> = { "data-cruncha-kind": kind, "data-cruncha-attrs": String(n.attrs.cellAttrs ?? "{}"), ...extra };
+  if (n.attrs.from) a["data-cruncha-from"] = String(n.attrs.from);
+  return a;
+};
+const readAttrs = (d: HTMLElement) => ({
+  cellAttrs: d.getAttribute("data-cruncha-attrs") ?? "{}",
+  from: d.getAttribute("data-cruncha-from"),
+});
+
 /** Attributes every top-level block (cell) carries. */
 const cellAttrs = {
   id: { default: null as string | null },
@@ -81,8 +94,16 @@ const nodes: Record<string, NodeSpec> = {
       cellAttrs: { default: "{}" },
       /** Open the source editor as soon as the view exists (a freshly inserted calc). */
       editing: { default: false },
+      from: { default: null },
     },
-    toDOM: (n) => ["div", { class: "calc-cell" }, n.attrs.source],
+    parseDOM: [
+      {
+        tag: "div[data-cruncha-kind=calc]",
+        priority: 60,
+        getAttrs: (d) => ({ source: (d as HTMLElement).getAttribute("data-cruncha-source") ?? "", ...readAttrs(d as HTMLElement) }),
+      },
+    ],
+    toDOM: (n) => ["div", { class: "calc-cell", ...dataAttrs(n, "calc", { "data-cruncha-source": n.attrs.source }) }, n.attrs.source],
   },
 
   /** Python, Rust or TeX source. */
@@ -92,8 +113,17 @@ const nodes: Record<string, NodeSpec> = {
     marks: "",
     code: true,
     defining: true,
-    attrs: { ...cellAttrs, lang: { default: "python" }, cellAttrs: { default: "{}" } },
-    toDOM: (n) => ["pre", { class: "code-cell", "data-lang": n.attrs.lang }, ["code", 0]],
+    attrs: { ...cellAttrs, lang: { default: "python" }, cellAttrs: { default: "{}" }, from: { default: null } },
+    parseDOM: [
+      {
+        tag: "pre[data-cruncha-kind]",
+        priority: 60,
+        preserveWhitespace: "full",
+        contentElement: (d) => (d as HTMLElement).querySelector("code") ?? (d as HTMLElement),
+        getAttrs: (d) => ({ lang: (d as HTMLElement).getAttribute("data-lang") ?? "python", ...readAttrs(d as HTMLElement) }),
+      },
+    ],
+    toDOM: (n) => ["pre", { class: "code-cell", "data-lang": n.attrs.lang, ...dataAttrs(n, String(n.attrs.lang)) }, ["code", 0]],
   },
 
   /** A cell kind the editor can't edit yet (data, plot, drawing, …): kept verbatim. */
@@ -101,8 +131,24 @@ const nodes: Record<string, NodeSpec> = {
     group: "block",
     atom: true,
     selectable: true,
-    attrs: { ...cellAttrs, kind: { default: "data" }, source: { default: "" }, cellAttrs: { default: "{}" } },
-    toDOM: (n) => ["div", { class: "raw-cell" }, ["span", { class: "kind" }, n.attrs.kind], ["pre", n.attrs.source]],
+    attrs: { ...cellAttrs, kind: { default: "data" }, source: { default: "" }, cellAttrs: { default: "{}" }, from: { default: null } },
+    parseDOM: [
+      {
+        tag: "div[data-cruncha-raw]",
+        priority: 60,
+        getAttrs: (d) => ({
+          kind: (d as HTMLElement).getAttribute("data-cruncha-raw") ?? "data",
+          source: (d as HTMLElement).getAttribute("data-cruncha-source") ?? "",
+          ...readAttrs(d as HTMLElement),
+        }),
+      },
+    ],
+    toDOM: (n) => [
+      "div",
+      { class: "raw-cell", ...dataAttrs(n, "raw", { "data-cruncha-raw": n.attrs.kind, "data-cruncha-source": n.attrs.source }) },
+      ["span", { class: "kind" }, n.attrs.kind],
+      ["pre", n.attrs.source],
+    ],
   },
 
   text: { group: "inline" },

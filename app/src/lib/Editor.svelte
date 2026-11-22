@@ -12,6 +12,7 @@
   import { api } from "./api";
   import { cellToNode, docFromCells, withDescription } from "./editor/cells";
   import { markdownPaste } from "./editor/paste";
+  import { adaptPasted, plainText, stampOrigin } from "./editor/clipboard";
   import {
     currentBlock,
     editorPlugins,
@@ -41,6 +42,7 @@
     onproposal,
     onfunctions,
     onunits,
+    origin = null,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -58,6 +60,8 @@
     onfunctions?: () => void;
     /** The toolbar's units button. */
     onunits?: () => void;
+    /** The shown document version (`document:<id>@v<n>`): copied cells carry it (ADR-0024). */
+    origin?: string | null;
   } = $props();
 
   let host: HTMLDivElement;
@@ -296,6 +300,10 @@
           );
           return true;
         },
+        // Copy and paste of cells (ADR-0024; clipboard.ts).
+        transformCopied: (slice) => stampOrigin(slice, origin),
+        transformPasted: (slice, v) => adaptPasted(slice, v),
+        clipboardTextSerializer: (slice) => plainText(slice),
         handleDOMEvents: {
           // Links never navigate the app's page; ⌘-click opens one in the browser.
           click(v, e) {
