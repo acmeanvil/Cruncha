@@ -65,7 +65,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Duration>,
 {
-    let mut v = vec![ms(f().await), ms(f().await), ms(f().await)];
+    let mut v = [ms(f().await), ms(f().await), ms(f().await)];
     v.sort_by(f64::total_cmp);
     v[1]
 }

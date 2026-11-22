@@ -99,7 +99,7 @@ impl LogIndexStore {
                 if e.file_type().is_ok_and(|t| t.is_file())
                     && let Some(name) = e.file_name().to_str()
                 {
-                    names.insert(dir.child(name), None);
+                    names.insert(dir.clone().join(name), None);
                 }
             }
             self.index.lock().unwrap().entry(dir.clone()).or_insert(names);
@@ -284,7 +284,7 @@ mod tests {
     async fn listings_follow_writes_without_rereading() {
         let dir = tempfile::tempdir().unwrap();
         let root = Path::from_filesystem_path(dir.path()).unwrap();
-        let log = root.child(LOG_DIR);
+        let log = root.clone().join(LOG_DIR);
         std::fs::create_dir_all(dir.path().join(LOG_DIR)).unwrap();
         std::fs::write(dir.path().join("_delta_log/00000000000000000000.json"), "{}").unwrap();
         let store = LogIndexStore::new(Arc::new(LocalFileSystem::new()));
@@ -296,17 +296,17 @@ mod tests {
         // A file written behind its back isn't seen: the index is what this store wrote.
         std::fs::write(dir.path().join("_delta_log/stray.json"), "{}").unwrap();
         assert_eq!(list(&store).await.unwrap().len(), 1);
-        store.put(&log.child("00000000000000000001.json"), PutPayload::from("{}")).await.unwrap();
-        let mut up = store.put_multipart(&log.child("00000000000000000001.checkpoint.parquet")).await.unwrap();
+        store.put(&log.clone().join("00000000000000000001.json"), PutPayload::from("{}")).await.unwrap();
+        let mut up = store.put_multipart(&log.clone().join("00000000000000000001.checkpoint.parquet")).await.unwrap();
         up.put_part(PutPayload::from("x")).await.unwrap();
         up.complete().await.unwrap();
         assert_eq!(
             names(list(&store).await.unwrap()),
             ["00000000000000000000.json", "00000000000000000001.checkpoint.parquet", "00000000000000000001.json"]
         );
-        let after: Vec<_> = store.list_with_offset(Some(&log), &log.child("00000000000000000000.json")).try_collect().await.unwrap();
+        let after: Vec<_> = store.list_with_offset(Some(&log), &log.clone().join("00000000000000000000.json")).try_collect().await.unwrap();
         assert_eq!(after.len(), 2);
-        store.delete(&log.child("00000000000000000000.json")).await.unwrap();
+        store.delete(&log.clone().join("00000000000000000000.json")).await.unwrap();
         assert_eq!(list(&store).await.unwrap().len(), 2);
         // forget() reads the directory again (now with the stray file).
         store.forget();
