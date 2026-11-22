@@ -33,6 +33,7 @@
   import type { SaveState } from "./lib/editor/sync";
   import type { OutlineItem } from "./lib/editor/outline";
   import type { Variable } from "./lib/editor/variables";
+  import { drawForReport } from "./lib/editor/figures";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
   /** The open document's own type sizes (Document settings), if it sets them. */
@@ -288,7 +289,16 @@
       exported = null;
       exporting = true;
       try {
+        // Figures are drawn here (the backend has no renderer) and cached by content;
+        // the latest version may finish running while it exports, so draw what's new and
+        // export again once (ADR-0017 §4).
+        const draw = async () => drawForReport(await api.figuresToRender(at), api.putFigure);
+        await draw();
         exported = await api.exportReport(path, at);
+        if (exported.figuresMissing > 0 && (await api.figuresToRender(at)).length > 0) {
+          await draw();
+          exported = await api.exportReport(path, at);
+        }
       } finally {
         exporting = false;
       }
@@ -405,7 +415,7 @@
   {:else if exported}
     {@const e = exported}
     <div class="notice" role="status">
-      <span>Report saved: {e.pages} {e.pages === 1 ? "page" : "pages"}{#if e.problems} · <strong>{e.problems} {e.problems === 1 ? "cell needs" : "cells need"} attention</strong> (see its summary){/if}{#if e.timedOut} · Python was still running{/if}</span>
+      <span>Report saved: {e.pages} {e.pages === 1 ? "page" : "pages"}{#if e.problems} · <strong>{e.problems} {e.problems === 1 ? "cell needs" : "cells need"} attention</strong> (see its summary){/if}{#if e.timedOut} · Python was still running{/if}{#if e.figuresMissing} · {e.figuresMissing} {e.figuresMissing === 1 ? "figure" : "figures"} not rendered{/if}</span>
       <button onclick={() => void attempt(() => api.openPath(e.path))}>Open</button>
       <button class="link" onclick={() => (exported = null)}>Dismiss</button>
     </div>

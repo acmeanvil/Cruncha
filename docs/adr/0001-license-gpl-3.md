@@ -62,5 +62,5 @@ Engine availability (C) outweighs maximum downstream freedom (A). B gives neithe
 
 1. [x] Replace `LICENSE` with GPL-3.0; add the notice to the README.
 2. [ ] Decide on a contribution policy (DCO only, or a CLA that keeps the right to relicense) **before accepting the first outside PR**.
-3. [ ] Add `cargo-deny` license checks to CI. Deny GPL-2.0-only, proprietary and non-commercial licenses.
+3. [x] Add `cargo-deny` license checks to CI (`deny.toml`, `.github/workflows/ci.yml`; npm and Python locks checked too, 2026-11-21). Deny GPL-2.0-only, proprietary and non-commercial licenses.
 4. [ ] Verify the exact license wording ("or later"?) of Maxima, Giac, Octave and libqalculate before bundling any of them.

@@ -117,8 +117,8 @@ Proposals also need things `doc` rows don't have:
 
 ## Action Items
 
-1. [ ] `cruncha-store`: `proposals/` schema and table (lazy), `propose`, `decide`, `open_proposals`, recovery on open, format 4, prune support; tests including a crash between the accept commit and the status row.
-2. [ ] App: what-if evaluation on a scratch engine; staleness check; `accept_proposal` and `reject_proposal` commands.
-3. [ ] `cruncha-mcp`: `propose_edit(changes, message)` with validation, returning the proposal id and the "if accepted" results; `withdraw` for the agent's own open proposals.
-4. [ ] UI: a Proposals tab (cards with source and result diffs, Accept / Reject, stale warnings) and markers in the document next to affected cells.
-5. [ ] Update design 02 (D3), CLAUDE.md invariants, and `skills/cruncha-core`.
+1. [x] `cruncha-store`: `proposals/` schema and table (lazy), `propose`, `decide`, `open_proposals`, recovery on open, format 4, prune support; tests including a crash between the accept commit and the status row.
+2. [x] App: what-if evaluation on a scratch engine; staleness check; `accept_proposal` and `reject_proposal` commands.
+3. [x] `cruncha-mcp`: `propose_edit(changes, message)` with validation, returning the proposal id and the "if accepted" results; `withdraw` for the agent's own open proposals.
+4. [x] UI: a Proposals tab (cards with source and result diffs, Accept / Reject, stale warnings) and markers in the document next to affected cells.
+5. [x] Update design 02 (D3), CLAUDE.md invariants, and `skills/cruncha-core`.

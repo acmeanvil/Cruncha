@@ -41,7 +41,55 @@ fn output_summary(o: &OutputView) -> String {
             let first = text.lines().next().unwrap_or_default();
             format!("text: {}", first.chars().take(200).collect::<String>())
         }
+        OutputView::Figure { mime, summary, .. } => format!("figure ({}): {summary}", figure_library(mime)),
     }
+}
+
+/// `application/vnd.plotly.v1+json` → `plotly`.
+fn figure_library(mime: &str) -> &str {
+    match mime {
+        "application/vnd.plotly.v1+json" => "plotly",
+        "application/vnd.vegalite.v5+json" => "vega-lite",
+        m => m,
+    }
+}
+
+/// Each trace's data range, for `explain` (ADR-0017 §5): `M (scatter, 41 points): x 0 … 20 ft; y 0 … 100 ft·kip`.
+fn figure_ranges(o: &OutputView) -> Vec<String> {
+    let OutputView::Figure { ranges, .. } = o else { return vec![] };
+    let num = |v: &serde_json::Value| {
+        v.as_f64().map(|f| if f.fract() == 0.0 && f.abs() < 1e15 { format!("{f:.0}") } else { format!("{f}") }).unwrap_or_default()
+    };
+    ranges
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let mut line = format!(
+                "{} ({}, {} points)",
+                r["trace"].as_str().unwrap_or("trace"),
+                r["type"].as_str().unwrap_or("?"),
+                r["points"].as_u64().unwrap_or(0)
+            );
+            let mut axes = vec![];
+            for a in ["x", "y", "z"] {
+                if let Some([lo, hi]) = r[a].as_array().map(Vec::as_slice) {
+                    let unit = r[format!("{a}_unit")].as_str().map(|u| format!(" {u}")).unwrap_or_default();
+                    axes.push(format!("{a} {} … {}{unit}", num(lo), num(hi)));
+                }
+            }
+            if !axes.is_empty() {
+                line.push_str(": ");
+                line.push_str(&axes.join("; "));
+            }
+            line
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn result_view_for_tests(r: &CellResult) -> ResultView {
+    result_view(r)
 }
 
 fn result_view(r: &CellResult) -> ResultView {
@@ -81,6 +129,11 @@ fn result_view(r: &CellResult) -> ResultView {
                 }
                 o
             })
+            .unwrap_or_default(),
+        figure_data: r
+            .python
+            .as_ref()
+            .map(|p| p.outputs.iter().flat_map(figure_ranges).collect())
             .unwrap_or_default(),
     }
 }

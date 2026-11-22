@@ -6,6 +6,7 @@
 #   scripts/run-app.sh                # install front-end deps if needed, then run the app
 #   scripts/run-app.sh --check        # first run svelte-check and the backend tests
 #   scripts/run-app.sh --reset-prefs  # start with default preferences (old file kept as .bak)
+#   scripts/run-app.sh --open <doc>   # start with that .cruncha document open
 #
 # In the app: "New sample…" creates a small beam-check document with history and a named
 # version; "Open…" opens any existing .cruncha directory. The first build compiles DataFusion
@@ -20,11 +21,14 @@ prefs_dir="$HOME/Library/Application Support/io.github.acmeanvil.cruncha"
 
 check=false
 reset_prefs=false
-for arg in "$@"; do
+open_doc=""
+while [ $# -gt 0 ]; do
+  arg="$1"; shift
   case "$arg" in
+    --open) open_doc="${1:?--open needs a path}"; shift ;;
     --check) check=true ;;
     --reset-prefs) reset_prefs=true ;;
-    -h|--help) sed -n '4,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '4,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -71,4 +75,7 @@ else
 fi
 
 echo "==> Starting Cruncha (Vite on :$port + Rust backend). Close the window or press Ctrl-C to stop."
+if [ -n "$open_doc" ]; then
+  export CRUNCHA_OPEN="$(cd "$(dirname "$open_doc")" && pwd)/$(basename "$open_doc")"
+fi
 exec npm run tauri dev

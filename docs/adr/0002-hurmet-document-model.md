@@ -61,6 +61,6 @@ Option A is faster now and slower forever. Option B costs a parser port but unlo
 
 ## Action Items
 
-1. [ ] Spike S1: port the lexer and parser against Hurmet's 217 calc golden tests.
+1. [x] Spike S1: port the lexer and parser against Hurmet's 217 calc golden tests.
 2. [ ] Port the unit table, fixing the defects found in review (℉ gauge, `Å` exponent arity), and merge it with Numbat's units.
 3. [ ] Hurmet `.md` importer in `cruncha-store`.

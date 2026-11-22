@@ -164,6 +164,12 @@ impl<B: Backend> CrunchaTools<B> {
         }
         out.push_str(&format!("Source:\n```\n{}\n```\n", c.source.trim_end()));
         out.push_str(&format!("Result:\n{}", mirror::result_lines(r)));
+        if !r.figure_data.is_empty() {
+            out.push_str("Figure data (each trace's range):\n");
+            for line in &r.figure_data {
+                out.push_str(&format!("- {line}\n"));
+            }
+        }
         if !c.defines.is_empty() {
             out.push_str(&format!("Defines: {}\n", c.defines.join(", ")));
         }

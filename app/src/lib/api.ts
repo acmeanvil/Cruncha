@@ -197,6 +197,8 @@ export interface ExportView {
   problems: number;
   /** Python was still running when the wait ran out. */
   timedOut: boolean;
+  /** Figures printed as FIGURE NOT RENDERED. */
+  figuresMissing: number;
 }
 
 /** Editor type sizes in CSS pixels. Headings scale with `text` (H1 2×, H2 1.5×, …). */
@@ -322,7 +324,17 @@ export interface PyError {
 export type OutputView =
   | { kind: "image"; src: string; width: number; height: number }
   | { kind: "table"; columns: string[]; rows: (string | null)[][]; totalRows: number }
-  | { kind: "text"; text: string };
+  | { kind: "text"; text: string }
+  /** An interactive figure (ADR-0017): a JSON spec, drawn in a sandboxed frame. */
+  | { kind: "figure"; mime: string; spec: string; summary: string; ranges: unknown; staticSrc: string | null };
+
+/** A figure a report needs drawn before export (ADR-0017 §4). */
+export interface FigureJob {
+  key: string;
+  mime: string;
+  spec: string;
+  font: string;
+}
 
 export interface PyView {
   state: PyState;
@@ -498,6 +510,8 @@ export const api = {
   retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),
   pruneNow: () => invoke<PruneResult | null>("prune_now"),
   clearResults: () => invoke<DocInfo>("clear_results"),
+  figuresToRender: (at?: At) => invoke<FigureJob[]>("figures_to_render", { at: at ?? null }),
+  putFigure: (key: string, svg: string) => invoke<void>("put_figure", { key, svg }),
   /** The open document's proposals, newest first (open ones with "if accepted" results). */
   proposals: () => invoke<ProposalView[]>("proposals"),
   acceptProposal: (id: string, force: boolean) => invoke<CommitView>("accept_proposal", { id, force }),

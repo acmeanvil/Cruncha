@@ -23,7 +23,7 @@ import sys
 import time
 import traceback
 
-from . import PROTOCOL_VERSION, outputs, protocol, scan, values
+from . import PROTOCOL_VERSION, figures, outputs, protocol, scan, values
 
 STORE = {}
 MAX_CAPTURE = 200_000
@@ -74,6 +74,7 @@ def run(req, blobs_out):
     defines = req.get("defines", [])
     ns = {"__name__": "__cruncha__", "__builtins__": builtins}
     started = time.perf_counter()
+    figures.begin(cell)
     for name in req.get("python_inputs", []):
         if name not in STORE:
             return {"status": "error", "error": {"type": "NameError", "message": f"{name} hasn't been computed (its cell hasn't run)", "line": None, "traceback": ""}}
@@ -105,7 +106,10 @@ def run(req, blobs_out):
 
     shown = []
     try:
-        shown = outputs.figures(blobs_out) + (outputs.display(last, blobs_out) if status == "done" else [])
+        if status == "done" and last is not None and figures.offer(last):
+            last = None
+        shown = outputs.figures(blobs_out) + figures.collect(blobs_out)
+        shown += outputs.display(last, blobs_out) if status == "done" else []
     except Exception as e:
         shown.append({"kind": "text", "text": f"(couldn't show output: {e})"})
 
@@ -159,6 +163,7 @@ def handle(req, blobs_in):
 
 def main():
     outputs.setup()
+    figures.install()
     inp, out = _channels()
     signal.signal(signal.SIGINT, signal.default_int_handler)
     while True:

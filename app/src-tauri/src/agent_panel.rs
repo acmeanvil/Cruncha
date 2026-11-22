@@ -38,7 +38,8 @@ pub struct AgentDef {
 }
 
 /// Agents that speak ACP through their adapters (the same table as looking_glass's
-/// `config.example.toml`), plus looking_glass's own agent when it is installed.
+/// `config.example.toml`), plus Cruncha's built-in agent (`cruncha-agent`, ported from
+/// looking_glass's `lg-agent`), which this program runs when started with [`AGENT_FLAG`].
 pub fn catalog() -> Vec<AgentDef> {
     let npx = |id: &str, name: &str, args: &[&str], note: &str| AgentDef {
         id: id.into(),
@@ -54,21 +55,25 @@ pub fn catalog() -> Vec<AgentDef> {
         npx("gemini", "Gemini CLI", &["-y", "@google/gemini-cli", "--acp"], "your Google login"),
         npx("qwen-code", "Qwen Code", &["-y", "@qwen-code/qwen-code", "--acp"], "your Qwen login"),
     ];
-    if let Some(lg) = looking_glass_agent() {
+    if let Ok(exe) = std::env::current_exe() {
         list.push(AgentDef {
             id: BUILTIN_ID.into(),
-            name: "looking_glass agent".into(),
-            command: lg.display().to_string(),
-            args: vec![],
+            name: "Cruncha agent".into(),
+            command: exe.display().to_string(),
+            args: vec![AGENT_FLAG.into()],
             env: BTreeMap::new(),
-            note: "demo mode unless it has a connection in Settings; it can't use Cruncha's tools yet".into(),
+            note: "demo mode until it has a connection in Settings; uses the document's tools and skills".into(),
         });
     }
     list
 }
 
-/// The built-in agent (looking_glass's `lg-agent`).
+/// The built-in agent's id (kept from when it was looking_glass's `lg-agent`, so saved
+/// settings still apply).
 pub const BUILTIN_ID: &str = "looking-glass";
+
+/// `cruncha-app --acp-agent [flags]` runs the built-in agent on stdin/stdout.
+pub const AGENT_FLAG: &str = "--acp-agent";
 
 /// A model provider: `(id, label, API key variable)`. The ids are lg-agent's `--provider`
 /// names (ported from looking_glass's `settings.rs`); local servers need no key.
@@ -163,7 +168,7 @@ pub fn launch_def(mut def: AgentDef, settings: &AgentSettings) -> AgentDef {
     if def.id == BUILTIN_ID
         && let Some(c) = conn
     {
-        def.args = vec!["--provider".into(), c.provider.clone()];
+        def.args.extend(["--provider".into(), c.provider.clone()]);
         if !c.base_url.trim().is_empty() {
             def.args.extend(["--base-url".into(), c.base_url.trim().to_owned()]);
         }
@@ -226,18 +231,12 @@ pub async fn probe_models(def: &AgentDef, cwd: &Path, timeout: std::time::Durati
     out
 }
 
-/// `lg-agent` on `PATH`, or in a looking_glass checkout next to this one.
-fn looking_glass_agent() -> Option<PathBuf> {
-    let on_path = std::env::var_os("PATH").and_then(|p| {
-        std::env::split_paths(&p).map(|d| d.join("lg-agent")).find(|c| c.is_file())
-    });
-    on_path.or_else(|| {
-        let home = std::env::var_os("HOME")?;
-        ["release", "debug"]
-            .iter()
-            .map(|p| PathBuf::from(&home).join(format!("Developer/looking_glass/target/{p}/lg-agent")))
-            .find(|c| c.is_file())
-    })
+/// The `cruncha-agent` program Cargo builds next to this one (tests run from `deps/`).
+#[cfg(test)]
+fn built_agent() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [dir.join("cruncha-agent"), dir.parent()?.join("cruncha-agent")].into_iter().find(|p| p.is_file())
 }
 
 /// What the panel shows, entry by entry.
@@ -349,9 +348,10 @@ You are helping with an engineering calculation document open in the Cruncha app
 - To change the document, use `propose_edit`: the user accepts or rejects it in the app, and
   nothing changes until they accept. Never write the change into your reply for the user to paste,
   and never say a proposal was applied.
-- Plots are matplotlib figures in a Python cell; Cruncha shows them as images in the cell's output
-  and in the report. Python cells only get the packages in `cruncha-code-cells` (no Plotly or other
-  HTML/JavaScript output). Don't install packages.
+- Plots go in a Python cell: matplotlib (shown as images) or Plotly for interactive figures (zoom,
+  hover), as `cruncha-code-cells` describes. You see a figure as its summary in `read_doc` and its
+  data ranges in `explain`; quote those, not what a plot looks like. Python cells only get the
+  packages in `cruncha-code-cells`; never HTML or JavaScript output. Don't install packages.
 - Don't create files or run commands in this folder; it only holds these instructions.
 
 Load the `cruncha-core` skill before anything else; `cruncha-calc-authoring`, `cruncha-calc-review`,
@@ -429,6 +429,8 @@ impl Panel {
             name: "cruncha".into(),
             url: server.url.clone(),
             headers: vec![("Authorization".into(), format!("Bearer {}", server.token))],
+            // Agents without HTTP MCP reach it through this program's stdio bridge.
+            bridge: std::env::current_exe().ok(),
         };
         let dir = data_dir.join("agents").join(doc_id);
         prepare_dir(&dir, skills).map_err(|e| format!("couldn't prepare the agent's folder: {e}"))?;
@@ -716,8 +718,8 @@ mod tests {
 
     #[tokio::test]
     async fn models_are_probed_from_the_demo_agent() {
-        let Some(lg) = looking_glass_agent() else {
-            eprintln!("skipping: lg-agent isn't built");
+        let Some(lg) = built_agent() else {
+            eprintln!("skipping: cruncha-agent isn't built (cargo build -p cruncha-agent)");
             return;
         };
         let def = AgentDef {
@@ -737,15 +739,15 @@ mod tests {
     fn launch_settings_for_the_builtin_agent_and_adapters() {
         let builtin = AgentDef {
             id: BUILTIN_ID.into(),
-            name: "lg".into(),
-            command: "lg-agent".into(),
-            args: vec![],
+            name: "Cruncha agent".into(),
+            command: "cruncha-app".into(),
+            args: vec![AGENT_FLAG.into()],
             env: BTreeMap::new(),
             note: String::new(),
         };
         let mut settings = AgentSettings::default();
         // No connection: demo mode, unchanged.
-        assert!(launch_def(builtin.clone(), &settings).args.is_empty());
+        assert_eq!(launch_def(builtin.clone(), &settings).args, [AGENT_FLAG]);
         settings.connections.push(Connection {
             id: "ollama".into(),
             provider: "ollama".into(),
@@ -757,7 +759,7 @@ mod tests {
             AgentPref { model: Some("qwen3".into()), connection: Some("ollama".into()), known_models: vec![] },
         );
         let d = launch_def(builtin, &settings);
-        assert_eq!(d.args, ["--provider", "ollama", "--base-url", "http://localhost:11434/v1", "--model", "qwen3"]);
+        assert_eq!(d.args, [AGENT_FLAG, "--provider", "ollama", "--base-url", "http://localhost:11434/v1", "--model", "qwen3"]);
         assert!(d.env.is_empty(), "a local server needs no key");
         // An adapter only takes keys of its own provider.
         assert_eq!(compatible_providers("claude"), Some(&["anthropic"][..]));

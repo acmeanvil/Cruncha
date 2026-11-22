@@ -577,6 +577,11 @@
   .editor :global(.code-wrap.has-output .code-out) { display: grid; gap: 8px; }
   .editor :global(.code-wrap.stale .code-out) { opacity: 0.55; }
   .editor :global(.code-figure) { display: block; background: white; border-radius: 4px; }
+  /* The fixed output containers lay out as if their children were the grid's own. */
+  .editor :global(.code-out-note), .editor :global(.code-outputs), .editor :global(.code-out-rest) { display: contents; }
+  .editor :global(.code-plot) { display: grid; gap: 2px; min-width: 0; }
+  .editor :global(.code-plot iframe.figure-frame) { width: 100%; height: 384px; border: 0; background: transparent; display: block; }
+  .editor :global(.code-plot-summary) { color: var(--muted); font-size: 0.85em; }
   .editor :global(.code-out pre) { margin: 0; font: 0.96em/1.45 var(--mono); white-space: pre-wrap; }
   .editor :global(.code-stderr) { color: var(--warn); }
   .editor :global(.code-error) { color: var(--danger); }

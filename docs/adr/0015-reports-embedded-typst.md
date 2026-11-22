@@ -1,6 +1,6 @@
 # ADR-0015: Reports are typeset by an embedded Typst, from the evaluated document
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-20
 **Deciders:** acmeanvil
 
@@ -102,6 +102,6 @@ That points to a real typesetter fed with data, not a print of the screen. Conve
 
 1. [x] `crates/cruncha-report`: model, `World`, template, TeX converter, corpus test, demo.
 2. [x] App: Export report (PDF), Report settings (title block in the meta cell), house style in Preferences.
-3. [ ] Bundle a report font (OFL) for machine-independent output.
+3. [x] Bundle a report font (OFL) for machine-independent output: Inter 4.1 (regular, italic, bold, bold italic; `crates/cruncha-report/fonts`), loaded before system fonts and first in the default house style (2026-11-21).
 4. [ ] User templates (ADR-0014) and a report preview in the app.
 5. [x] Print past versions and snapshots once results are stored (`results/` table).

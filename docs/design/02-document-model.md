@@ -114,7 +114,7 @@ A calc's **description** (`attrs.description`, one line of text) says what the q
   | Function | a callable (Python functions can be called from calc cells) |
 
   Frames and arrays travel as **Arrow IPC through shared memory**, so we don't copy large data.
-- **Outputs:** the assigned names, plus the value of the last expression. Rich output (matplotlib or plotly figures, Polars tables, `_repr_html_`) is captured as display artifacts.
+- **Outputs:** the assigned names, plus the value of the last expression. Rich output is captured as data, never HTML: matplotlib figures as PNG, Polars tables, and interactive figures as JSON specs of allowlisted MIME types (Plotly, Vega-Lite), drawn in sandboxed frames (ADR-0017, ADR-0020).
 - **When cells run:** only in documents this computer trusts. A cell re-runs on its own when its inputs change; an edited cell waits for Run (Shift+Enter). Each cell runs in a fresh namespace holding only what it reads, and imports are local to the cell. Results are memoized by source and inputs; a slow cell can be stopped (SIGINT, then a kill).
 - **Reproducibility:** the document records its environment (a lockfile of package versions), which is stored in the doc. *Today:* one app-wide environment from `python/requirements.lock` (hashed, installed by uv); the per-document lockfile is still to do.
 

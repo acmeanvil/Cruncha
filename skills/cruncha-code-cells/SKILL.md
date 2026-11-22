@@ -53,8 +53,8 @@ plt.plot(x.magnitude, moment.magnitude)
 **Rules**
 - Assign results to top-level names. Those are what other cells can read.
 - Don't mutate a value that came from another cell (for example, `shapes` in place). Values are shared by reference, so a mutation would change it for its other readers. Make a new name instead.
-- Don't do network or file I/O, except through a `data` cell, which records the source and its version.
-- `import` only what the environment has: NumPy, SciPy, Polars, PyArrow, pint, SymPy, matplotlib (pinned in `python/requirements.lock`). Propose adding a package rather than installing it ad hoc.
+- Don't do network or file I/O, except through a `data` cell, which records the source and its version. On macOS the worker is sandboxed, so this is enforced: opening the user's files, sockets or subprocesses fails (typically with `PermissionError`). Python's temp files (`tempfile`) work; they go to the worker's scratch directory.
+- `import` only what the environment has: NumPy, SciPy, Polars, PyArrow, pandas, pint, SymPy, matplotlib, Plotly (pinned in `python/requirements.lock`). Propose adding a package rather than installing it ad hoc.
 
 **Value conversion**
 
@@ -71,7 +71,33 @@ Build quantities with Cruncha's registry so they combine with calc values: `from
 
 **In the PDF report** a Python cell prints its source (unless Report settings turn that off), its figures, tables (first 50 rows), printed text, and the names it defines. A cell that hasn't run with its current source and has no stored result for its inputs (Python not set up, not trusted, edited and not run) is printed as NOT CALCULATED, with the reason. Output from a stored result computed on another computer prints with that note, and the summary counts such cells. Export waits up to two minutes for cells that are running.
 
-**Output:** every matplotlib figure the cell left open (as an image; figures are closed afterwards), then the value of the last expression (Polars frames as a table of the first 50 rows, other values as their `repr`), then what it printed. Output is shown as data, never as HTML, so `_repr_html_` isn't used. Calling Python functions from calc cells is planned, not available yet.
+**Output**, in this order:
+1. every matplotlib figure the cell left open, as an image (the figures are closed afterwards);
+2. interactive figures (ADR-0017);
+3. the value of the last expression: Polars frames as a table of the first 50 rows, other values as their `repr`;
+4. what the cell printed.
+
+Output is shown as data, never as HTML, so `_repr_html_` isn't used. Calling Python functions from calc cells is planned, not available yet.
+
+**Interactive figures (Plotly):** use these for plots the reader should zoom, pan or hover, such as a moment diagram where hovering shows the value at a station.
+
+```python
+import plotly.graph_objects as go
+
+# Reads x and moment (quantities). Units go into the axis titles.
+fig = go.Figure(go.Scatter(x=x, y=moment, name="M"))
+fig.update_layout(title="Bending moment")
+fig          # or fig.show(), or cruncha.show(fig, other_fig)
+```
+
+- A figure is shown when it is the cell's last expression, when you call `fig.show()` (it never opens a browser), or through `cruncha.show(*figs)` for several in one cell. Each figure shows once, however many of these you use.
+- **Units:** pint quantities are unwrapped to magnitudes. An axis without a title gets the unit (`ft`; `M (ft·kip)` for a named trace). With Plotly Express, `px.line(x=x, y=moment)` labels the axes `x (ft)` and `y (ft·kip)`. Set your own titles to override.
+- Figures use Cruncha's look (the `plotly_white+cruncha` template) unless you set a template.
+- **Limits:** a figure's spec may be up to 8 MB. Over that, it isn't shown, and the cell says why: downsample, or use `go.Scattergl` with fewer points. Use `Scattergl` for more than about 10,000 points; it is ten times faster to draw.
+- Only Plotly figures and objects whose `_repr_mimebundle_` offers Plotly or Vega-Lite JSON are figures. Vega-Lite isn't drawn yet; it shows its summary. HTML, JavaScript and Bokeh output are refused: `cruncha.show` raises `TypeError`, and a last expression shows as its `repr`.
+- **Agents** see a figure as its summary in `read_doc`: `figure (plotly): Bending moment: M (ft·kip) vs ft; 1 trace: M (scatter, 41 points)`. `explain` adds each trace's data range (`M (scatter, 41 points): x 0 … 20 ft; y 0 … 100 ft·kip`). Quote ranges from there; don't read values off a picture.
+- **In the report**, a figure prints as vector graphics in the report's fonts, drawn by the app when the report is exported. A figure the app couldn't draw prints as FIGURE NOT RENDERED with the reason; it is never left out. `cruncha.show(fig, static=png_or_svg_bytes)` gives the report your own image instead.
+- Zoom and hidden traces aren't saved; a re-run draws the figure from its spec again.
 
 ## Rust
 

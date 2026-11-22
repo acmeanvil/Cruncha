@@ -280,6 +280,8 @@ pub struct Session {
     prefs_path: Option<PathBuf>,
     /// Where Python environments live, and the worker package.
     python_base: PathBuf,
+    /// Static renderings of figures for reports (ADR-0017).
+    figures: crate::figures::Cache,
     worker_dir: PathBuf,
     /// Receives results computed in the background.
     on_results: Option<Arc<dyn Fn(ResultsEvent) + Send + Sync>>,
@@ -301,9 +303,27 @@ impl Session {
             prefs_path,
             python_base: std::env::temp_dir().join("cruncha-no-python"),
             worker_dir: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python")),
+            figures: crate::figures::Cache::new(std::env::temp_dir().join("cruncha-figures")),
             on_results: None,
             on_proposals: None,
         }
+    }
+
+    /// Keep figures' static renderings (ADR-0017 §4) in `dir`.
+    pub fn with_figure_cache(mut self, dir: PathBuf) -> Session {
+        self.figures = crate::figures::Cache::new(dir);
+        self
+    }
+
+    /// The figures a report of `at` needs drawn by the app before export (none cached).
+    pub async fn figures_to_render(&mut self, at: &At) -> Result<Vec<crate::figures::FigureJob>> {
+        let results = self.results(at).await?;
+        Ok(crate::figures::missing(&results, &self.figures))
+    }
+
+    /// Keep the app's static rendering of a figure.
+    pub fn put_figure(&self, key: &str, svg: &str) -> Result<()> {
+        self.figures.put(key, svg)
     }
 
     /// Use the Python environments under `base` and the worker package in `worker_dir`.
@@ -1094,7 +1114,9 @@ impl Session {
             refs: info.refs.into_iter().filter(|r| r.version <= version).collect(),
             python_env,
         };
-        Ok(report::build(&cells, &results, &facts, &self.prefs.report_style))
+        let fonts = crate::figures::report_fonts();
+        let figure_svg = |mime: &str, spec: &str| self.figures.get(&crate::figures::static_key(mime, spec, &fonts));
+        Ok(report::build(&cells, &results, &facts, &self.prefs.report_style, &figure_svg))
     }
 
     pub fn prefs(&self) -> &Prefs {
@@ -1341,6 +1363,64 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no results in time");
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn plotly_figures_print_once_the_app_has_drawn_them() {
+        use cruncha_report::{Block, Output};
+        let Some(base) = python_base() else {
+            eprintln!("no Python environment; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let worker = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python"));
+        let mut session = Session::new(None)
+            .with_python(base, worker)
+            .with_figure_cache(dir.path().join("figures"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        session.on_results(move |ev| {
+            let _ = tx.send(ev);
+        });
+        session.create(&dir.path().join("fig.cruncha")).await.unwrap();
+        let mut c = Cell::new(CellKind::Python, "a0", "import plotly.graph_objects as go\ngo.Figure(go.Bar(x=[1, 2], y=[3, 4], name='load'))");
+        c.id = "FIG".into();
+        session.commit(vec![ChangeView::Upsert { cell: c }], "a figure").await.unwrap();
+        session.run_python(Some(vec!["FIG".into()])).await.unwrap();
+        let ev = wait_for(&rx, |ev| {
+            ev.results.get("FIG").and_then(|r| r.python.as_ref()).is_some_and(|p| p.state == crate::engine::PyState::Done)
+        })
+        .await;
+        let py = ev.results["FIG"].python.as_ref().unwrap();
+        assert!(matches!(&py.outputs[0], crate::engine::OutputView::Figure { summary, .. } if summary.contains("load (bar, 2 points)")));
+
+        let figure_of = |r: &cruncha_report::Report| {
+            r.blocks.iter().find_map(|b| match b {
+                Block::Code { outputs, .. } => outputs.iter().find_map(|o| match o {
+                    Output::Figure { path, reason, .. } => Some((path.clone(), reason.clone())),
+                    _ => None,
+                }),
+                _ => None,
+            })
+        };
+        // Not drawn yet: the report says so rather than leaving it out.
+        let (report, _) = session.report_at(&At::default()).await.unwrap();
+        let (path, reason) = figure_of(&report).expect("a figure block");
+        assert!(path.is_none() && reason.is_some());
+        let jobs = session.figures_to_render(&At::default()).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].mime, "application/vnd.plotly.v1+json");
+        assert!(session.put_figure(&jobs[0].key, "<html/>").is_err());
+        session.put_figure(&jobs[0].key, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>").unwrap();
+        assert!(session.figures_to_render(&At::default()).await.unwrap().is_empty(), "drawn once");
+        let (report, files) = session.report_at(&At::default()).await.unwrap();
+        let (path, _) = figure_of(&report).unwrap();
+        let path = path.expect("the drawn SVG");
+        assert!(path.ends_with(".svg") && files.iter().any(|(p, _)| *p == path));
+        cruncha_report::render(&report, files).expect("typesets");
+        // The agent's view: the summary in the mirror, the ranges in explain.
+        let r = crate::agents::result_view_for_tests(&ev.results["FIG"]);
+        assert!(r.outputs[0].starts_with("figure (plotly): Figure; 1 trace: load (bar, 2 points)"), "{:?}", r.outputs);
+        assert_eq!(r.figure_data, vec!["load (bar, 2 points): x 1 … 2; y 3 … 4".to_string()]);
     }
 
     #[tokio::test]

@@ -155,6 +155,17 @@
     #for o in b.outputs {
       if o.type == "image" {
         block(breakable: false, above: 0.6em, align(center, image(o.path, width: 85%)))
+      } else if o.type == "figure" {
+        if o.path != none {
+          block(breakable: false, above: 0.6em, align(center, image(o.path, width: 85%)))
+        } else {
+          block(breakable: false, above: 0.6em, width: 100%, inset: 8pt, radius: 3pt, stroke: 0.7pt + warn-color, {
+            badge(warn-color)[FIGURE NOT RENDERED]
+            h(6pt)
+            if o.reason != none { text(size: 0.85em, fill: warn-color, o.reason) }
+            if o.summary != "" { linebreak(); text(size: 0.85em, fill: muted, o.summary) }
+          })
+        }
       } else if o.type == "table" {
         let n = o.columns.len()
         block(above: 0.6em, {

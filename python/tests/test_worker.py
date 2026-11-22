@@ -14,7 +14,7 @@ from fractions import Fraction
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
-from cruncha_worker import main, protocol, values  # noqa: E402
+from cruncha_worker import figures, main, protocol, values  # noqa: E402
 from cruncha_worker.scan import scan  # noqa: E402
 
 
@@ -168,6 +168,89 @@ class Run(unittest.TestCase):
         self.assertEqual(kinds, ["image", "table"])
         self.assertTrue(blobs[0].startswith(b"\x89PNG"))
         self.assertEqual((len(r["outputs"][1]["rows"]), r["outputs"][1]["total_rows"]), (50, 100))
+
+
+class Figures(unittest.TestCase):
+    """ADR-0017: Plotly figures become JSON specs (never HTML), with units, uids and a summary."""
+
+    @classmethod
+    def setUpClass(cls):
+        figures.install()
+
+    def run_cell(self, source, cell="F"):
+        blobs = []
+        r = main.run({"cell": cell, "source": source, "defines": []}, blobs)
+        self.assertEqual(r["status"], "done", r.get("error"))
+        return r, blobs
+
+    BEAM = (
+        "import numpy as np\nimport plotly.graph_objects as go\nfrom cruncha import Q_\n"
+        "x = Q_(np.linspace(0, 20, 41), 'ft')\nM = (x * (Q_(20, 'ft') - x) * Q_(1, 'kip/ft')).to('kip*ft')\n"
+    )
+
+    def test_last_expression_is_a_figure_with_units_and_stable_uids(self):
+        import json
+        r, blobs = self.run_cell(self.BEAM + "fig = go.Figure(go.Scatter(x=x, y=M, name='M'))\nfig.update_layout(title='Bending moment')\nfig")
+        figs = [o for o in r["outputs"] if o["kind"] == "figure"]
+        self.assertEqual(len(figs), 1, r["outputs"])
+        f = figs[0]
+        self.assertEqual(f["mime"], figures.PLOTLY)
+        spec = json.loads(blobs[f["blob"]])
+        self.assertEqual(spec["layout"]["xaxis"]["title"]["text"], "ft")
+        self.assertEqual(spec["layout"]["yaxis"]["title"]["text"], "M (ft·kip)")
+        self.assertEqual(spec["data"][0]["uid"], "F-0-0")
+        self.assertNotIn("meta", spec["data"][0])
+        self.assertEqual(spec["layout"]["template"]["layout"]["font"]["family"], figures.FONT, "the cruncha template")
+        self.assertEqual(f["summary"], "Bending moment: M (ft·kip) vs ft; 1 trace: M (scatter, 41 points)")
+        self.assertEqual(f["ranges"][0]["x"], [0.0, 20.0])
+        self.assertEqual(f["ranges"][0]["y"], [0.0, 100.0])
+        self.assertEqual(r["stderr"], "", "no unit-stripped warnings")
+        # The same cell gives the same spec.
+        r2, blobs2 = self.run_cell(self.BEAM + "fig = go.Figure(go.Scatter(x=x, y=M, name='M'))\nfig.update_layout(title='Bending moment')\nfig")
+        self.assertEqual(blobs2[r2["outputs"][0]["blob"]], blobs[f["blob"]])
+
+    def test_show_express_and_several_figures(self):
+        r, blobs = self.run_cell(
+            self.BEAM + "import plotly.express as px\nimport cruncha\n"
+            "a = px.line(x=x, y=M, title='px')\na.show()\nb = go.Figure(go.Bar(x=[1, 2], y=[3, 4]))\n"
+            "cruncha.show(b, a)\na"
+        )
+        figs = [o for o in r["outputs"] if o["kind"] == "figure"]
+        self.assertEqual(len(figs), 2, "a shown once despite show(), cruncha.show and the last expression")
+        self.assertTrue(figs[0]["summary"].startswith("px: y (ft·kip) vs x (ft)"), figs[0]["summary"])
+        self.assertEqual(figs[1]["ranges"][0]["points"], 2)
+
+    def test_show_never_opens_a_browser_and_plotly_io_show_is_captured(self):
+        r, _ = self.run_cell("import plotly.io as pio\npio.show({'data': [{'type': 'bar', 'y': [1, 2]}], 'layout': {}})")
+        self.assertEqual([o["kind"] for o in r["outputs"]], ["figure"])
+
+    def test_html_and_unknown_objects_are_refused(self):
+        blobs = []
+        src = ("import cruncha\nclass H:\n    def _repr_mimebundle_(self, include=None, exclude=None):\n"
+               "        return {'text/html': '<script>alert(1)</script>'}\ncruncha.show(H())")
+        r = main.run({"cell": "H", "source": src, "defines": []}, blobs)
+        self.assertEqual(r["status"], "error")
+        self.assertIn("text/html", r["error"]["message"])
+        self.assertFalse(any(o["kind"] == "figure" for o in r["outputs"]))
+        # Left as the last expression, an HTML-only object is shown as its repr, not as HTML.
+        r = main.run({"cell": "H", "source": src.replace("cruncha.show(H())", "H()"), "defines": []}, [])
+        self.assertEqual([o["kind"] for o in r["outputs"]], ["text"])
+
+    def test_allowlisted_mimebundle_and_static(self):
+        import json
+        src = ("import cruncha\nclass V:\n    def _repr_mimebundle_(self, include=None, exclude=None):\n"
+               "        return {'application/vnd.vegalite.v5+json': {'mark': 'bar', 'title': 'Loads'}, 'text/html': '<b>x</b>'}\n"
+               "cruncha.show(V(), static=b'\\x89PNG....')")
+        r, blobs = self.run_cell(src)
+        f = r["outputs"][0]
+        self.assertEqual((f["mime"], f["summary"], f["static_mime"]), (figures.VEGALITE, "Loads (bar)", "image/png"))
+        self.assertEqual(json.loads(blobs[f["blob"]])["mark"], "bar")
+
+    def test_specs_over_8_mb_are_refused(self):
+        r, blobs = self.run_cell("import numpy as np\nimport plotly.graph_objects as go\n"
+                                 "go.Figure(go.Scatter(x=np.arange(600_000).astype(str), y=np.arange(600_000)))")
+        self.assertEqual(blobs, [])
+        self.assertIn("over the 8 MB limit", r["outputs"][0]["text"])
 
 
 class Protocol(unittest.TestCase):

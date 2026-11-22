@@ -22,6 +22,7 @@ cruncha-mcp = { path = "../../crates/cruncha-mcp" }
 ulid = "3"
 keyring = "4.2"
 cruncha-acp = { path = "../../crates/cruncha-acp" }
+cruncha-agent = { path = "../../crates/cruncha-agent" }
 futures = "0.3"
 sha2 = "0.10"
 base64 = "0.22"

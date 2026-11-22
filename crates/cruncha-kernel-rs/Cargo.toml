@@ -1,0 +1,13 @@
+[package]
+name = "cruncha-kernel-rs"
+description = "Rust cells as WASM components in wasmtime (ADR-0006; spike S5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wasmtime = { version = "51", default-features = false, features = ["component-model", "cranelift", "runtime", "cache", "std", "parallel-compilation"] }
+wasmtime-wasi = "51"
+
+[dev-dependencies]
+tempfile = "3"

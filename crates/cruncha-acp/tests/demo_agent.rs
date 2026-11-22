@@ -40,6 +40,7 @@ fn a_turn_with_the_demo_agent() {
             name: "cruncha".into(),
             url: "http://127.0.0.1:9/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer x".into())],
+            bridge: None,
         }],
     });
     let start = Instant::now();

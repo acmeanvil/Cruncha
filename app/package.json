@@ -28,6 +28,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "fractional-indexing": "^4.0.0",
     "markdown-it": "^15.0.3",
+    "plotly.js-dist-min": "4.2.0",
     "prosemirror-commands": "^1.7.2",
     "prosemirror-dropcursor": "^1.8.4",
     "prosemirror-gapcursor": "^1.4.1",

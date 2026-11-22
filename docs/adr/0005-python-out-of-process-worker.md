@@ -64,7 +64,7 @@ From [docs/spikes/S4-python-worker.md](../spikes/S4-python-worker.md):
 ## Action Items
 
 1. [x] Spike S4: an Arrow IPC round trip of a 1M-row Polars frame with units; reliability of the AST dependency scan.
-2. [ ] Sandbox the worker (macOS App Sandbox / `sandbox-exec`, seccomp on Linux).
+2. [x] Sandbox the worker (macOS App Sandbox / `sandbox-exec`, seccomp on Linux). Done on macOS 2026-11-21 (`cruncha-kernel-py/src/sandbox.rs`): deny-by-default `sandbox-exec` profile; reads only the environment, the worker package and system libraries and fonts; writes only a scratch directory; no network or subprocesses. Seccomp on Linux remains.
 3. [ ] User environments with extra packages; the lockfile stored in the document.
 4. [ ] Column units for Polars frames on the Python side; calling Python functions from calcs; SymPy as the symbolic engine.
-5. [ ] Keep Python results with the history (the `results/` table).
+5. [x] Keep Python results with the history (the `results/` table).

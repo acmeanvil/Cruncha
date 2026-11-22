@@ -178,3 +178,72 @@ async fn errors_figures_and_interrupts() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!k.is_alive());
 }
+
+#[tokio::test]
+async fn plotly_figures_arrive_as_json_specs() {
+    let Some(mut k) = kernel().await else { return };
+    let r = k
+        .run(
+            &RunRequest {
+                cell: "P".into(),
+                source: "import plotly.graph_objects as go\nfig = go.Figure(go.Bar(x=[1, 2], y=[3, 4], name='load'))\nfig.show()".into(),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status, Status::Done, "{:?}", r.error);
+    let Some(Output::Figure { mime, spec, summary, ranges, static_image }) = r.outputs.first() else {
+        panic!("{:?}", r.outputs)
+    };
+    assert_eq!(mime, "application/vnd.plotly.v1+json");
+    let v: serde_json::Value = serde_json::from_str(spec).unwrap();
+    assert_eq!(v["data"][0]["uid"], "P-0-0");
+    assert_eq!(summary, "Figure; 1 trace: load (bar, 2 points)");
+    assert_eq!(ranges[0]["y"], json!([3.0, 4.0]));
+    assert!(static_image.is_none());
+}
+
+#[tokio::test]
+async fn the_sandboxed_worker_computes_but_reaches_nothing() {
+    use cruncha_kernel_py::sandbox::{self, Sandbox};
+    let Some(py) = python() else { return };
+    if sandbox::program().is_none() {
+        eprintln!("no sandbox on this system; skipping");
+        return;
+    }
+    let scratch = tempfile::tempdir().unwrap();
+    let base = py.ancestors().find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "python")).unwrap().to_path_buf();
+    let mut c = Config::new(py, worker_dir());
+    c.sandbox = Some(Sandbox { read: vec![base, worker_dir()], scratch: scratch.path().join("w") });
+    let mut k = Kernel::start(c).await.expect("the sandboxed worker starts");
+    let run = |src: &str| RunRequest { cell: "S".into(), source: src.into(), defines: vec!["r".into()], ..Default::default() };
+    let value = |r: &cruncha_kernel_py::RunResult| r.defines.first().map(|d| d.summary.clone()).unwrap_or_default();
+
+    // Numeric work, plots and figures still work.
+    let r = k
+        .run(&run("import numpy as np, scipy.linalg as la, polars as pl\nimport matplotlib.pyplot as plt\nimport plotly.graph_objects as go\nfrom cruncha import Q_\nplt.plot([1, 2]); go.Figure(go.Bar(y=[1])).show()\nr = float(la.det(np.eye(3) * 2)) + pl.DataFrame({'a': [1]}).height + Q_(1, 'kip').to('lbf').magnitude"), None)
+        .await
+        .unwrap();
+    assert_eq!(r.status, Status::Done, "{:?} {}", r.error, r.stderr);
+    assert_eq!(value(&r), "1009.0");
+    assert_eq!(r.outputs.len(), 2, "a PNG and a figure");
+
+    // The user's files, the network and other programs are out of reach.
+    let home = std::env::var("HOME").unwrap();
+    for (what, src) in [
+        ("home", format!("import os\nr = str(len(os.listdir({home:?})))")),
+        ("file", "r = open('/etc/hosts').read()".to_string()),
+        ("write", format!("open({:?}, 'w').write('x'); r = 'wrote'", format!("{home}/cruncha-sandbox-probe.txt"))),
+        ("net", "import socket\ns = socket.create_connection(('1.1.1.1', 443), timeout=3)\nr = 'connected'".to_string()),
+        ("exec", "import subprocess\nr = subprocess.run(['/bin/echo', 'hi'], capture_output=True).stdout.decode()".to_string()),
+    ] {
+        let r = k.run(&run(&src), None).await.unwrap();
+        assert_eq!(r.status, Status::Error, "{what}: {:?}", r.defines);
+    }
+    assert!(!std::path::Path::new(&format!("{home}/cruncha-sandbox-probe.txt")).exists());
+    // Its scratch directory is writable.
+    let r = k.run(&run("import tempfile\nwith tempfile.NamedTemporaryFile() as f:\n    f.write(b'ok')\nr = 'ok'"), None).await.unwrap();
+    assert_eq!(r.status, Status::Done, "{:?}", r.error);
+}

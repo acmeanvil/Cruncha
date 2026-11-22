@@ -11,6 +11,7 @@
 //! binary blobs. [`env`] sets up the interpreter and packages.
 
 pub mod env;
+pub mod sandbox;
 pub mod protocol;
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,8 @@ pub struct Config {
     pub worker_dir: PathBuf,
     /// Grace period between an interrupt and a kill.
     pub kill_after: Duration,
+    /// Run the worker in this sandbox (macOS; see [`sandbox`]). `None`: unsandboxed.
+    pub sandbox: Option<sandbox::Sandbox>,
 }
 
 impl Config {
@@ -70,6 +73,7 @@ impl Config {
             python: python.into(),
             worker_dir: worker_dir.into(),
             kill_after: Duration::from_secs(3),
+            sandbox: None,
         }
     }
 }
@@ -152,7 +156,23 @@ pub enum Output {
     Text {
         text: String,
     },
+    /// An interactive figure (ADR-0017): a JSON spec of an allowlisted MIME type, drawn by the
+    /// app's sandboxed renderer. `ranges` holds each trace's data range; `static_image` is a
+    /// PNG or SVG the cell supplied for reports.
+    Figure {
+        mime: String,
+        spec: String,
+        summary: String,
+        ranges: Json,
+        static_image: Option<(String, Vec<u8>)>,
+    },
 }
+
+/// The figure formats the app can draw (ADR-0017). Anything else is dropped.
+pub const FIGURE_MIMES: [&str; 2] = ["application/vnd.plotly.v1+json", "application/vnd.vegalite.v5+json"];
+
+/// Largest figure spec accepted (the worker refuses bigger ones first).
+pub const MAX_FIGURE_SPEC: usize = 8 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunResult {
@@ -204,8 +224,22 @@ impl Kernel {
     /// Start a worker and wait for its greeting.
     pub async fn start(config: Config) -> Result<Kernel> {
         let boot = "import sys; sys.path.insert(0, sys.argv[1]); from cruncha_worker.main import main; main()";
-        let mut cmd = Command::new(&config.python);
-        cmd.args(["-E", "-s", "-c", boot])
+        let mut cmd = match (&config.sandbox, sandbox::program()) {
+            (Some(sb), Some(exec)) => {
+                std::fs::create_dir_all(&sb.scratch)
+                    .map_err(|e| Error::Start(format!("{}: {e}", sb.scratch.display())))?;
+                let mut c = Command::new(exec);
+                c.arg("-p").arg(sb.profile()).arg(&config.python);
+                // Everything the worker writes goes to its scratch directory.
+                c.env("HOME", &sb.scratch).env("TMPDIR", &sb.scratch).env("MPLCONFIGDIR", sb.scratch.join("matplotlib"));
+                c.current_dir(&sb.scratch);
+                c
+            }
+            _ => Command::new(&config.python),
+        };
+        // -I: isolated (no PYTHON* variables, user site or current directory on the path);
+        // -B: no bytecode written next to the worker's sources.
+        cmd.args(["-I", "-B", "-c", boot])
             .arg(&config.worker_dir)
             .env("MPLBACKEND", "Agg")
             .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -393,6 +427,38 @@ fn parse_run(h: Json, mut blobs: Vec<Vec<u8>>) -> Result<RunResult> {
             Some("text") => outputs.push(Output::Text {
                 text: o["text"].as_str().unwrap_or("").to_owned(),
             }),
+            Some("figure") => {
+                let mime = o["mime"].as_str().unwrap_or_default();
+                if !FIGURE_MIMES.contains(&mime) {
+                    continue; // never shown: not an allowlisted figure type
+                }
+                let mut blob = |key: &str| -> Result<Option<Vec<u8>>> {
+                    match o.get(key).and_then(Json::as_u64) {
+                        None => Ok(None),
+                        Some(i) => blobs.get_mut(i as usize).map(std::mem::take).map(Some).ok_or_else(|| bad("missing blob")),
+                    }
+                };
+                let spec = blob("blob")?.ok_or_else(|| bad("figure without blob"))?;
+                let static_image = blob("static")?.and_then(|data| {
+                    let m = o["static_mime"].as_str().unwrap_or("image/png");
+                    matches!(m, "image/png" | "image/svg+xml").then(|| (m.to_owned(), data))
+                });
+                if spec.len() > MAX_FIGURE_SPEC {
+                    outputs.push(Output::Text { text: "(figure not shown: its spec is over the 8 MB limit)".into() });
+                    continue;
+                }
+                let Ok(spec) = String::from_utf8(spec) else { return Err(bad("figure spec isn't UTF-8")) };
+                if serde_json::from_str::<serde::de::IgnoredAny>(&spec).is_err() {
+                    return Err(bad("figure spec isn't JSON"));
+                }
+                outputs.push(Output::Figure {
+                    mime: mime.to_owned(),
+                    spec,
+                    summary: o["summary"].as_str().unwrap_or("").to_owned(),
+                    ranges: o.get("ranges").cloned().unwrap_or(json!([])),
+                    static_image,
+                });
+            }
             _ => {}
         }
     }

@@ -12,17 +12,18 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0006](0006-rust-cells-wasm.md) | Rust cells compile to WASM and run in wasmtime | Proposed |
 | [0007](0007-always-unit-aware.md) | Calculations are always unit-aware | Accepted |
 | [0008](0008-app-shell-tauri-web.md) | App shell: Tauri with a web UI (not GPUI) | Accepted |
-| [0009](0009-agent-interface-acp-mcp.md) | Agent interface: ACP client, Cruncha MCP server, built-in agent from looking_glass | Proposed |
+| [0009](0009-agent-interface-acp-mcp.md) | Agent interface: ACP client, Cruncha MCP server, built-in agent from looking_glass | Accepted |
 | [0010](0010-doc-table-append-only-log.md) | The `doc` table is an append-only revision log with periodic squash (refines 0003) | Accepted |
 | [0011](0011-user-configurable-history-retention.md) | User-configurable history retention: saves, size and activity-relative limits; dormant documents are never pruned | Accepted |
 | [0012](0012-ui-framework-svelte.md) | UI framework for the app shell: Svelte 5 with Vite and TypeScript (resolves 0008 item 2) | Accepted |
 | [0013](0013-out-of-line-cell-content.md) | Large cell sources are stored out of line in content-addressed blobs (refines 0010, 0011; ground for deletion vectors) | Accepted |
 | 0014 | *Reserved:* calculation templates (to be written after S6 and the agent, results, Rust-cell and polish work) | — |
-| [0015](0015-reports-embedded-typst.md) | Reports are typeset by an embedded Typst, from the evaluated document | Proposed |
+| [0015](0015-reports-embedded-typst.md) | Reports are typeset by an embedded Typst, from the evaluated document | Accepted |
 | [0016](0016-agent-proposals-table.md) | Agent proposals live in a `proposals/` table, applied by a human's commit (supersedes design 02 D3) | Accepted |
-| [0017](0017-interactive-figures.md) | Interactive figures are JSON specs keyed by MIME type, drawn by sandboxed renderers (refines 0005) | Proposed |
+| [0017](0017-interactive-figures.md) | Interactive figures are JSON specs keyed by MIME type, drawn by sandboxed renderers (refines 0005) | Accepted |
 | [0018](0018-results-table.md) | Code-cell results are kept in a `results/` table, keyed by what produced them | Accepted |
 | [0019](0019-results-from-other-environments.md) | Stored results from another Python environment are found by an environment-free hash (refines 0018) | Accepted |
+| [0020](0020-figure-frames-own-scheme.md) | Figure frames are served from their own scheme, with their own CSP; the renderer arrives by `postMessage` (refines 0017) | Proposed |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

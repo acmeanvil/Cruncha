@@ -35,4 +35,10 @@ Users want Rust blocks for performance-critical or reusable logic, and functions
 
 ## Action Items
 
-1. [ ] Spike S5: compile time and call overhead for a prelude-based cell.
+1. [x] Spike S5: compile time and call overhead for a prelude-based cell. **Done 2026-11-21** ([S5](../spikes/S5-rust-cells.md)):
+   - an edited cell rebuilds in 0.5–0.8 s, plus 52 ms of Cranelift;
+   - the one-time cold build (prelude and dependencies) takes 30 s;
+   - a call costs about 1 µs, 100k `f64` 0.16 ms, a small JSON call 7 µs;
+   - an empty WASI context denies files, environment and network; epoch deadlines stop runaway cells;
+   - Cruncha uses its own rustup home (1.99.1 plus `wasm32-wasip2`) under the app's data, not Homebrew's Rust.
+2. [ ] App: Rust setup (rustup-init, checksum-verified), `#[cruncha::export]` and the define/read scan, prelude `Quantity` and arrays with units, engine jobs and stored results, compile errors mapped to cell lines.

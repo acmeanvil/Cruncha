@@ -59,5 +59,5 @@ Delta deletion vectors would avoid the rewrite while keeping the one-row-per-cel
 
 1. [x] Implement in `cruncha-store`: log schema, append commit with the `rev` assertion, reduction, squash in `compact` and every N commits, and the format-version-2 migration.
 2. [x] Re-run `tests/crash.rs` and `store_variants` against the new `Store`. Add a test that squash leaves every earlier version readable and identical.
-3. [ ] Follow-up spike: tombstone retention versus time-travel and reopen latency at 10,000 versions.
+3. [x] Follow-up spike: tombstone retention versus time-travel and reopen latency at 10,000 versions. **Done 2026-11-21** ([S3c](../spikes/S3c-history-scale.md)): tombstones are *not* the cause. Dropping them all leaves the timings unchanged. The cost is delta-rs listing and stat-ing every file in `_delta_log`, on each commit and each time travel: 66 ms at 10,000 versions, so commit p50 is 84–99 ms (20 ms at 1,000), and time travel 170–375 ms. A pruned log (1,016 files) is back to 23 ms commits. The remedy is the subject of a new decision.
 4. [ ] Python `read_doc` helper and the DuckDB recipe in the docs.

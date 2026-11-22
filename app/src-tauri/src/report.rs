@@ -205,12 +205,21 @@ fn python_status(r: &CellResult) -> Status {
     }
 }
 
+/// `data:<mime>;base64,<data>` → (mime, bytes).
+fn decode_data_url(url: &str) -> Option<(String, Vec<u8>)> {
+    let (head, data) = url.strip_prefix("data:")?.split_once(";base64,")?;
+    Some((head.to_owned(), base64::engine::general_purpose::STANDARD.decode(data).ok()?))
+}
+
 /// The report, and the files it refers to (figures, the logo).
+///
+/// `figure_svg` gives a figure's cached static rendering (ADR-0017 §4) by MIME type and spec.
 pub fn build(
     cells: &[Cell],
     results: &HashMap<String, CellResult>,
     facts: &DocFacts,
     style: &ReportStyle,
+    figure_svg: &dyn Fn(&str, &str) -> Option<Vec<u8>>,
 ) -> (Report, Vec<(String, Vec<u8>)>) {
     let settings = settings_of(cells);
     let mut files = Vec::new();
@@ -268,6 +277,26 @@ pub fn build(
                             }),
                             OutputView::Text { text } => {
                                 outputs.push(Output::Text { text: text.clone(), stream: "result".into() })
+                            }
+                            OutputView::Figure { mime, spec, summary, static_src, .. } => {
+                                // The cell's own static image, else the app's rendering; never left out.
+                                let own = static_src.as_deref().and_then(decode_data_url);
+                                let (ext, bytes) = match own {
+                                    Some((m, b)) => (if m == "image/svg+xml" { "svg" } else { "png" }, Some(b)),
+                                    None => ("svg", figure_svg(mime, spec)),
+                                };
+                                match bytes {
+                                    Some(bytes) => {
+                                        let path = format!("/img/{}-{i}.{ext}", c.id);
+                                        files.push((path.clone(), bytes));
+                                        outputs.push(Output::Figure { path: Some(path), summary: summary.clone(), reason: None });
+                                    }
+                                    None => outputs.push(Output::Figure {
+                                        path: None,
+                                        summary: summary.clone(),
+                                        reason: Some("the app hasn't drawn it for a report yet (export the report from the app)".into()),
+                                    }),
+                                }
                             }
                         }
                     }

@@ -16,13 +16,30 @@ use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::FontStore;
 
-/// Fonts: Typst's bundled ones plus the system's, scanned once per process.
+/// The report's own fonts (SIL OFL 1.1, `fonts/LICENSE-Inter-OFL.txt`): Inter in four styles.
+/// The default house style uses them, so the same version prints the same on any computer.
+pub const BUNDLED_FONTS: [&[u8]; 4] = [
+    include_bytes!("../fonts/Inter-Regular.ttf"),
+    include_bytes!("../fonts/Inter-Italic.ttf"),
+    include_bytes!("../fonts/Inter-Bold.ttf"),
+    include_bytes!("../fonts/Inter-BoldItalic.ttf"),
+];
+
+/// Fonts: the bundled ones first (so they win over a system copy of the same family), then
+/// Typst's (math, code), then the system's for house styles that name other fonts. Scanned
+/// once per process.
 pub(crate) fn fonts() -> &'static FontStore {
     static FONTS: OnceLock<FontStore> = OnceLock::new();
     FONTS.get_or_init(|| {
         let mut store = FontStore::new();
-        store.extend(typst_kit::fonts::system());
+        store.extend(BUNDLED_FONTS.iter().flat_map(|data| {
+            Font::iter(Bytes::new(*data)).map(|font| {
+                let info = font.info().clone();
+                (font, info)
+            })
+        }));
         store.extend(typst_kit::fonts::embedded());
+        store.extend(typst_kit::fonts::system());
         store
     })
 }

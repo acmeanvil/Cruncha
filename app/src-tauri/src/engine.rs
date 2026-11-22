@@ -207,6 +207,23 @@ pub enum OutputView {
     Text {
         text: String,
     },
+    /// An interactive figure (ADR-0017): the spec (JSON text) of an allowlisted MIME type,
+    /// drawn in a sandboxed frame; `staticSrc` is a PNG or SVG the cell supplied (data URL).
+    #[serde(rename_all = "camelCase")]
+    Figure {
+        mime: String,
+        spec: String,
+        summary: String,
+        #[serde(default)]
+        ranges: serde_json::Value,
+        #[serde(default)]
+        static_src: Option<String>,
+    },
+}
+
+/// `data:<mime>;base64,…`
+fn data_url(mime: &str, data: &[u8]) -> String {
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data))
 }
 
 impl From<&Output> for OutputView {
@@ -218,10 +235,7 @@ impl From<&Output> for OutputView {
                 width,
                 height,
             } => OutputView::Image {
-                src: format!(
-                    "data:{mime};base64,{}",
-                    base64::engine::general_purpose::STANDARD.encode(data)
-                ),
+                src: data_url(mime, data),
                 width: *width,
                 height: *height,
             },
@@ -243,6 +257,13 @@ impl From<&Output> for OutputView {
                 total_rows: *total_rows,
             },
             Output::Text { text } => OutputView::Text { text: text.clone() },
+            Output::Figure { mime, spec, summary, ranges, static_image } => OutputView::Figure {
+                mime: mime.clone(),
+                spec: spec.clone(),
+                summary: summary.clone(),
+                ranges: ranges.clone(),
+                static_src: static_image.as_ref().map(|(m, d)| data_url(m, d)),
+            },
         }
     }
 }

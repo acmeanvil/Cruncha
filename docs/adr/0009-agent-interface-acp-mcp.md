@@ -1,6 +1,6 @@
 # ADR-0009: Agent interface: ACP client, Cruncha MCP server, and a built-in agent from looking_glass
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Deciders:** acmeanvil
 
@@ -78,7 +78,7 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
 3. [x] Port `lg-acp` with the `mcpServers` and capability changes (2026-11-20):
    - `crates/cruncha-acp` keeps the MIT notice in `LICENSE-LOOKING-GLASS`.
    - The client advertises no fs or terminal; there are no remote agents.
-   - Sessions get `cruncha` as an HTTP MCP server. Agents that don't support HTTP MCP get an explicit error (a stdio bridge is a follow-up).
+   - Sessions get `cruncha` as an HTTP MCP server. Agents that don't support HTTP MCP get an explicit error (a stdio bridge is a follow-up). *Follow-up done 2026-11-21:* they get it as a stdio server instead, `cruncha-app --mcp-stdio <url>` (the token in the bridge's environment); the error remains only when no bridge is available.
    - Tested against looking_glass's `lg-agent` in demo mode.
    - The in-app **agent panel** follows looking_glass's session view:
      - agent picker (Claude Code, Codex, Gemini CLI, Qwen Code through their `npx` adapters; looking_glass's agent when installed);
@@ -88,5 +88,11 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
      - the agent's model and mode menus, a usage pill;
      - saved conversations per document.
    - Each agent gets its own MCP server and token. It works in `agents/<doc id>/` in the app's data, which holds the skills (`.claude/skills/…`, `AGENTS.md`, `CLAUDE.md`).
-4. [ ] lg-agent: MCP client (check the license of an MCP crate such as `rmcp`), skills loader, per-session cancellation.
+4. [x] lg-agent: MCP client (check the license of an MCP crate such as `rmcp`), skills loader, per-session cancellation. Done 2026-11-21 as a port, `crates/cruncha-agent` (MIT notice kept), so looking_glass is unchanged:
+   - a small Streamable-HTTP MCP client on `ureq` (no second async runtime), JSON and SSE answers;
+   - its tools are the session's MCP tools plus `load_skill`; the coding tools are gone;
+   - the system prompt is Cruncha's rules, `AGENTS.md` and the skills index; skill bodies load on demand;
+   - cancellation is per session; the demo mode reads the document;
+   - the app runs it as `cruncha-app --acp-agent`, listed as "Cruncha agent";
+   - tests drive it through `cruncha-acp` against a real `cruncha-mcp` server (demo, OpenAI-style and Claude loops).
 5. [ ] Consider upstreaming MCP and skills support to looking_glass.

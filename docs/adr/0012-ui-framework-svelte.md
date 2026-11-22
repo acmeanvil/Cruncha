@@ -61,4 +61,4 @@ The hard UI parts (editor, math, plots, PDF) are framework-independent, so the f
 
 1. [x] Skeleton in `app/` (Svelte 5, Vite, TypeScript) with a typed command layer (`src/lib/api.ts`).
 2. [x] Owner: accepted 2026-11-19.
-3. [ ] Add the front-end check and build to CI when CI exists.
+3. [x] Add the front-end check and build to CI when CI exists (2026-11-21).

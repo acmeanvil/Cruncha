@@ -9,9 +9,23 @@ Python cells combine::
     stress = F / A          # A came from a calc cell, e.g. `A = 3.5 in²`
 
 Only quantities built with this registry can go back to calc cells with their units.
+
+``show(fig, ...)`` shows figures (Plotly, or anything with an allowlisted
+``_repr_mimebundle_``), several per cell; a figure left as the last expression, or
+``fig.show()``, is shown too. ``static=`` gives the report a PNG or SVG of your own.
 """
 
-__all__ = ["ureg", "Q_", "Quantity"]
+__all__ = ["ureg", "Q_", "Quantity", "show"]
+
+
+def show(*figs, static=None):
+    """Show each figure under the cell (ADR-0017). Outside Cruncha, does nothing."""
+    try:
+        from cruncha_worker import figures
+    except ImportError:
+        return
+    for f in figs:
+        figures.offer(f, static=static, explicit=True)
 
 _ureg = None
 

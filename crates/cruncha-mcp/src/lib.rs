@@ -56,8 +56,10 @@ pub struct ResultView {
     pub python_note: Option<String>,
     /// Each defined name with its value as text (or what the Python object is).
     pub values: Vec<(String, String)>,
-    /// Python output, summarized (`figure 1`, `table 51 × 2`, printed text).
+    /// Python output, summarized (`figure (plotly): …`, `table 51 × 2`, printed text).
     pub outputs: Vec<String>,
+    /// Each figure trace's data range, for `explain` (ADR-0017 §5).
+    pub figure_data: Vec<String>,
 }
 
 /// The latest version of the open document with its results.

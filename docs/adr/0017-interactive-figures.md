@@ -1,6 +1,6 @@
 # ADR-0017: Interactive figures are JSON specs keyed by MIME type, drawn by sandboxed renderers (refines 0005)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-21
 **Deciders:** acmeanvil
 
@@ -143,7 +143,7 @@ It stays the long-term shape of the `plot` cell, which can still target Vega-Lit
 
 ## Action Items
 
-1. [ ] **Spike S7** (macOS WKWebView in Tauri):
+1. [x] **Spike S7** (macOS WKWebView in Tauri):
    - plotly.js in a `srcdoc` sandboxed iframe under the strict CSP (does it need `unsafe-eval`? does `scattergl` work?);
    - `postMessage` round trip;
    - first-load time;
@@ -151,9 +151,18 @@ It stays the long-term shape of the `plot` cell, which can still target Vega-Lit
    - SVG determinism with fixed `uid`s;
    - Typst placing Plotly's SVG with our fonts.
    Record the numbers here.
-2. [ ] Worker: `figure` output, Plotly adapter (last expression, `fig.show()` renderer, template, pint unwrapping, uids, summary), `cruncha.show`, MIME allowlist, 8 MB cap; tests.
-3. [ ] Add `plotly` to `requirements.in` and recompile the lock.
-4. [ ] App: `FigureFrame.svelte` (iframe host), renderer registry with Plotly, sanitizer, light/dark theme; vitest for the sanitizer and the message checks.
-5. [ ] Reports: SVG `Output`, a static-render request from export, the cache, FIGURE NOT RENDERED.
-6. [ ] Mirror and `explain`: the figure summary and data ranges.
-7. [ ] Update `skills/cruncha-code-cells`, the agent instructions in `agent_panel.rs`, and CLAUDE.md.
+
+   **Done 2026-11-21** ([S7](../spikes/S7-figures.md)):
+   - Timings:
+     - first load ≈ 300 ms;
+     - `postMessage` round trip < 0.1 ms;
+     - 200-point line 66–123 ms;
+     - 100k points 2.0 s as `scatter`, 0.2 s as `scattergl`.
+   - **`scattergl` needs `'unsafe-eval'`,** so it can't draw in a `srcdoc` frame, which inherits the app's CSP. Figures are therefore served from their own scheme, with their own CSP (ADR-0020).
+   - SVG is deterministic once Plotly's random plot id is replaced, and Typst places it as vector graphics with identical PDFs.
+2. [x] Worker: `figure` output, Plotly adapter (last expression, `fig.show()` renderer, template, pint unwrapping, uids, summary), `cruncha.show`, MIME allowlist, 8 MB cap; tests.
+3. [x] Add `plotly` to `requirements.in` and recompile the lock. (Also `pandas`: Plotly Express needs it for `px.line(x=…, y=…)`.)
+4. [x] App: `FigureFrame` (iframe host; a TypeScript class in `editor/figures.ts`, since code cells are ProseMirror node views), renderer registry with Plotly, sanitizer, light/dark theme; vitest for the sanitizer and the message checks.
+5. [x] Reports: SVG `Output`, a static-render request from export, the cache, FIGURE NOT RENDERED.
+6. [x] Mirror and `explain`: the figure summary and data ranges.
+7. [x] Update `skills/cruncha-code-cells`, the agent instructions in `agent_panel.rs`, and CLAUDE.md.

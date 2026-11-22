@@ -76,7 +76,14 @@ impl Python {
             let python = self
                 .interpreter()
                 .ok_or_else(|| KernelError::Start("Python isn't set up".into()))?;
-            *slot = Some(Kernel::start(Config::new(python, &self.worker_dir)).await?);
+            let mut config = Config::new(python, &self.worker_dir);
+            // ADR-0005: on macOS the worker reads only its environment and package, writes
+            // only its scratch directory, and has no network or subprocesses.
+            config.sandbox = Some(cruncha_kernel_py::sandbox::Sandbox {
+                read: vec![self.base.clone(), self.worker_dir.clone()],
+                scratch: std::env::temp_dir().join(format!("cruncha-worker-{}", std::process::id())),
+            });
+            *slot = Some(Kernel::start(config).await?);
         }
         Ok(slot.as_mut().expect("just started"))
     }

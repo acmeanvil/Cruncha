@@ -8,3 +8,5 @@ pyarrow
 pint
 sympy
 matplotlib
+plotly
+pandas

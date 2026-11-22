@@ -2,7 +2,7 @@
 
 An AI-forward engineering calculation and report tool. It combines Mathcad-style live, unit-aware, reviewable math with Jupyter-style Python (NumPy, SciPy, Polars) and Rust code blocks in one reactive document. Licensed GPL-3.0-or-later.
 
-Status: early. `crates/cruncha-store` (the container, with retention and out-of-line content), the Tauri app in `app/` (a ProseMirror editor that commits as you work, typeset calcs, history and retention settings), `crates/cruncha-lang` (spike S1: Hurmet's lexer and parser ported, TeX + RPN output), `crates/cruncha-graph` (dependency graph), and `crates/cruncha-units` + `crates/cruncha-eval` (spike S2b: Hurmet's units and evaluator ported; `prepare`/`evaluate` give values, TeX and plain-text results), Python cells (spike S4: `python/` worker, `crates/cruncha-kernel-py`, the app's `python.rs`), and PDF reports (spike S6: `crates/cruncha-report`, embedded Typst; the app's `report.rs`) exist. Everything else is design.
+Status: early. `crates/cruncha-store` (the container, with retention and out-of-line content), the Tauri app in `app/` (a ProseMirror editor that commits as you work, typeset calcs, history and retention settings), `crates/cruncha-lang` (spike S1: Hurmet's lexer and parser ported, TeX + RPN output), `crates/cruncha-graph` (dependency graph), and `crates/cruncha-units` + `crates/cruncha-eval` (spike S2b: Hurmet's units and evaluator ported; `prepare`/`evaluate` give values, TeX and plain-text results), Python cells (spike S4: `python/` worker, `crates/cruncha-kernel-py`, the app's `python.rs`), PDF reports (spike S6: `crates/cruncha-report`, embedded Typst; the app's `report.rs`; any version or snapshot), agents (ADR-0009: `crates/cruncha-mcp`, `crates/cruncha-acp`, the in-app agent panel) with proposals (ADR-0016), and stored code-cell results (ADR-0018, ADR-0019) exist. Everything else is design.
 
 ## Read first
 
@@ -29,19 +29,26 @@ crates/cruncha-lang/       Hurmet lexer + parser port (spike S1; MIT notice in L
   tests/golden.rs          Hurmet's golden TeX/RPN tests (tests/fixtures/*.json); keep green when adding an AST
   src/lib.rs `hurmet`      helpers shared with cruncha-eval (doc-hidden, not a stable API)
 crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluation order, duplicate names, cycles, use-above-definition lint, affected cells
-crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing,
+crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing, sandbox.rs (macOS profile),
                            env.rs (uv + python-build-standalone environment per lockfile); examples/setup_env.rs, examples/py_bench.rs (S4)
 python/                    the worker (stdlib-only protocol; numeric packages only when cells import them)
   cruncha_worker/          main.py loop (fresh namespace per cell, STORE of Python values), scan.py (ast/symtable), values.py (Plain <-> pint/NumPy/Polars),
-                           outputs.py (PNG figures, tables, text; never HTML), protocol.py, bench.py (S4)
-  cruncha/                 what cells import: `ureg`, `Q_` (the shared pint registry)
+                           outputs.py (PNG figures, tables, text; never HTML), figures.py (ADR-0017: Plotly adapter installed on import,
+                           `figure` outputs as JSON specs of allowlisted MIME types, units into axis titles, stable uids, summary + ranges), protocol.py, bench.py (S4)
+  cruncha/                 what cells import: `ureg`, `Q_` (the shared pint registry), `show` (figures)
   requirements.in/.lock    the packages Python cells get (lock compiled by uv with hashes; a new lock means a new environment)
   tests/test_worker.py     unittest; tools/scan_check.py (scan vs bytecode, S4)
+crates/cruncha-kernel-rs/  Rust cells (spike S5, ADR-0006 proposed): wit/cell.wit (the cell world), guest/cruncha-prelude (built only for wasm32-wasip2; not a workspace member),
+                           src/lib.rs (Toolchain: Cruncha's rustup home; build with a shared target dir; Runtime/Cell: wasmtime, empty WASI context, epoch timeouts),
+                           examples/rs_bench.rs (S5), tests/cell.rs (sandbox and timeout; skips without the toolchain)
 crates/cruncha-report/     reports (spike S6, ADR-0015): model.rs (Report, blocks, statuses), world.rs (in-memory Typst World: no files, network or packages),
                            tex.rs (the engine's TeX -> Typst math; unknown commands are errors), templates/calc-package.typ (cover, summary, calcs, provenance),
-                           tests/tex_corpus.rs (every golden TeX string compiles), examples/report_demo.rs
+                           tests/tex_corpus.rs (every golden TeX string compiles), tests/figures.rs (Plotly SVG, FIGURE NOT RENDERED), examples/report_demo.rs
 crates/cruncha-mcp/        the MCP server agents use (ADR-0009): lib.rs (Backend trait + view types; no cruncha-store dependency), mirror.rs (text mirror),
                            tools.rs (read_doc, run, explain, check, history, propose_edit, proposals, withdraw; rmcp), http.rs (Streamable HTTP on 127.0.0.1, bearer token, Host/Origin checks)
+crates/cruncha-agent/      the built-in agent, ported from looking_glass's lg-agent (MIT notice in LICENSE-LOOKING-GLASS): providers (anthropic.rs, llm.rs), mcp.rs (Streamable-HTTP MCP
+                           client: its tools are the session's MCP servers'), skills.rs (system prompt, AGENTS.md, skills index, load_skill), demo.rs; the app runs it as
+                           `cruncha-app --acp-agent`; tests/ drive it through cruncha-acp against a real cruncha-mcp
 crates/cruncha-acp/        ACP client for the agent panel, ported from looking_glass's lg-acp (MIT notice in LICENSE-LOOKING-GLASS): no fs/terminal, sessions get MCP servers;
                            tests/demo_agent.rs runs looking_glass's lg-agent demo when it is built (CRUNCHA_TEST_ACP_AGENT)
 crates/cruncha-units/      units and numbers (spike S2b; MIT notice in LICENSE-HURMET)
@@ -65,7 +72,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src/lib/api.ts           typed wrappers for the backend's Tauri commands (keep in sync with lib.rs)
   src/lib/Editor.svelte    the document editor; src/lib/editor/: schema (one top-level block per cell), cells <-> blocks,
                            cell identity plugin (ULIDs, fractional order keys), calc node view (Temml), DocSync (commit on submit/idle),
-                           outline.ts and variables.ts (sidebar models)
+                           outline.ts and variables.ts (sidebar models), figures.ts (ADR-0017/0020: sanitizer, sandboxed FigureFrame, report drawing)
   src/lib/*.svelte         Sidebar (Outline, Variables, Proposals, History tabs), ProposalsPanel, VariableBrowser, HistoryPanel (snapshots), SnapshotDialog,
                            RetentionControl, SettingsPage (this computer: agents, connections, agents outside Cruncha, defaults, report style,
                            Python, trusted documents; ⌘,), DocumentSettings (tabs: Document, Report, History; kept in the document), …
@@ -74,11 +81,13 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/stored.rs stored results (ADR-0018): look up before running, flush finished runs, trim after a prune,
                            src/report.rs a version (latest, past or snapshot) as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),
+                           src/figures.rs figures' static SVG cache for reports (keyed by spec, renderer, fonts) and the `cruncha-figure` scheme (frame page in figure/, its own CSP),
                            src/agents.rs the session as cruncha-mcp's Backend; the external server starts only from Settings → Agents outside Cruncha,
                            src/agent_panel.rs the in-app agent (catalog, transcript, permissions, saved conversations; its own MCP server per agent;
                            AgentSettings and launch_def: default agent, per-agent model and connection, provider accounts),
-                           src/secrets.rs API keys in the Keychain (`keyring`, service "cruncha"; ported from looking_glass)
-docs/spikes/               spike write-ups with measured numbers
+                           src/secrets.rs API keys in the Keychain (`keyring`, service "cruncha"; ported from looking_glass),
+                           src/login_path.rs the login shell's PATH when opened from Finder (ported from looking_glass); src/main.rs also runs `--acp-agent` and `--mcp-stdio`
+docs/spikes/               spike write-ups with measured numbers (s7/: the WKWebView figure harness)
 docs/adr/  docs/design/  docs/research/
 skills/                    Agent Skills (SKILL.md) for AI agents working inside Cruncha documents
 scripts/run-app.sh         launch the app for review (deps check, npm ci if needed, tauri dev)
@@ -102,9 +111,12 @@ cargo test  -p cruncha-graph                   # graph rules; fast
 cargo test  -p cruncha-report                  # TeX -> Typst corpus (371 strings) and converter tests
 cargo test  -p cruncha-mcp                     # MCP tools over real HTTP with rmcp's client; auth guard
 cargo test  -p cruncha-acp                     # ACP client against looking_glass's lg-agent demo (skips without it)
+cargo test  -p cruncha-agent                   # the built-in agent end to end (mock model APIs, real cruncha-mcp)
 cargo run   -p cruncha-report --release --example report_demo -- <out dir> 5   # spike S6: PDF + PNG pages, timings, determinism
 cargo run   -p cruncha-kernel-py --example setup_env   # set up the Python environment (uv, Python 3.13, packages) where the app looks
 cargo test  -p cruncha-kernel-py               # the real worker (skips without the environment)
+cargo run   -p cruncha-kernel-rs --release --example rs_bench -- <work dir>   # spike S5 (needs Cruncha's Rust toolchain)
+cargo test  -p cruncha-kernel-rs               # a sandboxed Rust cell (skips without the toolchain)
 cargo run   -p cruncha-kernel-py --release --example py_bench -- 1000000   # spike S4
 <env>/bin/python python/tests/test_worker.py   # worker unit tests; <env> = ~/Library/Application Support/io.github.acmeanvil.cruncha/python/env-*
 cargo clippy -p cruncha-units -p cruncha-eval -p cruncha-lang --all-targets -- -D warnings   # fast: no DataFusion
@@ -117,7 +129,7 @@ npm test                                       # vitest: editor model + calc nod
 npm run build                                  # front end to app/dist
 ```
 
-The first build compiles DataFusion and takes about 10 minutes on this machine. Dependencies are built at `opt-level = 2`, even in dev builds. Rust here comes from Homebrew (no `rustup`), so extra targets such as `wasm32-wasip2` aren't installed yet. Don't `brew install uv` here: there's no bottle for this macOS, so Homebrew builds and relinks Rust from source. The app (and `setup_env`) installs uv from PyPI into its own venv instead.
+The first build compiles DataFusion and takes about 10 minutes on this machine. Dependencies are built at `opt-level = 2`, even in dev builds. Rust on PATH comes from Homebrew (no `rustup`). Rust cells use Cruncha's own toolchain instead: a rustup home with `wasm32-wasip2` under `~/Library/Application Support/io.github.acmeanvil.cruncha/rust` (`rustup/`, `cargo/`; spike S5). MacPorts' rustc in `/opt/local/bin` is unused. Don't `brew install uv` here: there's no bottle for this macOS, so Homebrew builds and relinks Rust from source. The app (and `setup_env`) installs uv from PyPI into its own venv instead.
 
 ## Conventions
 
@@ -139,9 +151,10 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
 - One `Store::commit` is one atomic Delta version (a squash, when due, adds a second, maintenance version). Batch changes (on cell submit or idle), never per keystroke.
 - A calc cell's `defines` and `reads` are always recomputed by the backend (`cruncha_eval::prepare`) when it is committed; the editor's values are ignored. A Python cell's come from the worker's scan when Python is set up. Other kinds keep what they were given.
-- Python runs only in documents this computer trusts (`Prefs.trusted`: created here or confirmed by the user), and an edited Python cell runs only on an explicit Run; after that it re-runs when its inputs change. Never run a document's code at open without trust. Worker output is shown as data (text, PNG, table rows), never as HTML.
+- Python runs only in documents this computer trusts (`Prefs.trusted`: created here or confirmed by the user), and an edited Python cell runs only on an explicit Run; after that it re-runs when its inputs change. Never run a document's code at open without trust. On macOS the worker runs under `sandbox-exec` (`cruncha_kernel_py::sandbox`): it reads only its environment, the worker package and system libraries and fonts, writes only its scratch directory, and has no network or subprocesses; keep new worker needs inside that profile rather than widening it. Worker output is shown as data (text, PNG, table rows, figure specs), never as HTML.
+- Interactive figures (ADR-0017, ADR-0020) are JSON specs of allowlisted MIME types (`FIGURE_MIMES`), at most 8 MB. They are drawn only inside `<iframe sandbox="allow-scripts">` frames served by the `cruncha-figure` scheme (its own CSP: eval allowed there, no network); never in the app's page, whose CSP stays without `unsafe-eval` and gains only `frame-src` for that scheme. Specs are sanitized before they're posted (no `config`, no links, data-URI images only), and the page accepts only checked messages from its own frame. Reports place the app's SVG rendering (cached by `figures::static_key`, the plot id made stable) or print FIGURE NOT RENDERED; bump `figures::PLOTLY_JS` with the npm pin.
 - A calc's description is `attrs.description` (a string) on its cell, not part of its source; the UI shows it beside the result and in the variable browser. "Snapshots" in the UI are store tags (refs): unique names, kept through pruning, restorable from their pin (`Store::restore_ref`).
-- Agents touch a document only through `cruncha-mcp`, served by the app (the single writer). The server is off until the user allows it, binds 127.0.0.1 only, needs a fresh bearer token, and refuses browser origins. Tools return the engine's results verbatim; edits are proposals, never direct writes.
+- Agents touch a document only through `cruncha-mcp`, served by the app (the single writer). The server is off until the user allows it, binds 127.0.0.1 only, needs a fresh bearer token, and refuses browser origins. Agents without HTTP MCP reach it through the stdio bridge (`cruncha-app --mcp-stdio <url>`, token in `CRUNCHA_MCP_AUTH`, never on the command line). Tools return the engine's results verbatim; edits are proposals, never direct writes.
 - Proposals (ADR-0016, container format 4) live in the append-only `proposals/` table (created by the first one), never in `doc/`: one row per state change, folded by `proposal_id` and highest `seq`. Accepting is one human commit (`Store::accept`) carrying `cruncha.proposal`, then an `accepted` row; `Store::open` finishes an accept interrupted between the two. Each modify/delete records the cell's `base_rev`; a changed cell makes the proposal stale, accepted only with `force`. "If accepted" results come from `Engine::what_if` on a scratch copy (no commit, the document's memo untouched). Prune drops decided proposals older than the cutoff, except those accepted into a pinned version.
 - API keys live only in the OS credential store (`secrets.rs`): never in `preferences.json`, never sent to the web UI, read only when an agent starts and passed in its environment. Prefs hold connections without keys.
 - A document's own settings (type sizes `attrs.textSizes`, report `attrs.report`) live in its meta cell and are versioned; app-wide settings (defaults, agents, report style) live in `preferences.json`.

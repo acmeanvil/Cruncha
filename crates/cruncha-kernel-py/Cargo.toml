@@ -13,4 +13,5 @@ libc = "0.2"
 sha2 = "0.10"
 
 [dev-dependencies]
+tempfile = "3"
 deltalake = { version = "1.1.2", default-features = false, features = ["datafusion", "native-tls"] }

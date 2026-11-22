@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package cruncha:cell@0.1.0;
+
+/// A Rust cell, compiled to a WASI 0.2 component (ADR-0006).
+world cell {
+  /// Evaluate the cell. `inputs` is a JSON object of name -> Plain value (the same exchange
+  /// format as Python cells); the result is the JSON object of the names it defines.
+  export run: func(inputs: string) -> result<string, string>;
+  /// Spike S5: the cost of a call with no data.
+  export scalar: func(x: f64) -> f64;
+  /// Spike S5: the cost of passing an array.
+  export sum: func(xs: list<f64>) -> f64;
+}

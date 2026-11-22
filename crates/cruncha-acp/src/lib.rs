@@ -39,6 +39,9 @@ pub struct McpServerSpec {
     pub name: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
+    /// For agents without HTTP MCP: a program that serves this server over stdio, run as
+    /// `<bridge> --mcp-stdio <url>` with the `Authorization` header in `CRUNCHA_MCP_AUTH`.
+    pub bridge: Option<PathBuf>,
 }
 
 /// How to launch an agent.
@@ -91,6 +94,22 @@ pub fn connect(spec: AgentSpec) -> (AgentHandle, mpsc::UnboundedReceiver<Event>)
         })
         .expect("spawn ACP thread");
     (AgentHandle { commands: cmd_tx }, ev_rx)
+}
+
+/// The servers through their stdio bridges, for agents without HTTP MCP.
+fn mcp_bridged(spec: &AgentSpec) -> Vec<acp::McpServer> {
+    spec.mcp_servers
+        .iter()
+        .filter_map(|m| {
+            let bridge = m.bridge.as_ref()?;
+            let auth = m.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("authorization")).map(|(_, v)| v.clone());
+            Some(acp::McpServer::Stdio(
+                acp::McpServerStdio::new(m.name.clone(), bridge.clone())
+                    .args(vec!["--mcp-stdio".into(), m.url.clone()])
+                    .env(auth.map(|a| vec![acp::EnvVariable::new("CRUNCHA_MCP_AUTH", a)]).unwrap_or_default()),
+            ))
+        })
+        .collect()
 }
 
 fn mcp_servers(spec: &AgentSpec) -> Vec<acp::McpServer> {
@@ -185,8 +204,8 @@ async fn run(
             let _ = events.unbounded_send(Event::Connected { agent_name, agent_version, images, mcp_http });
             // Without HTTP MCP the agent can't reach the document; say so instead of starting a
             // session that can only guess.
-            let servers = if mcp_http { mcp_servers(&spec) } else { Vec::new() };
-            if !mcp_http && !spec.mcp_servers.is_empty() {
+            let servers = if mcp_http { mcp_servers(&spec) } else { mcp_bridged(&spec) };
+            if !mcp_http && !spec.mcp_servers.is_empty() && servers.is_empty() {
                 let _ = events.unbounded_send(Event::Error(
                     "This agent doesn't support MCP servers over HTTP, so it can't read the document.".into(),
                 ));

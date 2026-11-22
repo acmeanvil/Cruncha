@@ -2,11 +2,13 @@
 // A Python (or Rust, TeX) cell: an editable code block with a header (language, run state,
 // Run/Stop) and, below, what it produced: figures, tables, printed text, errors and the
 // names it defined. Output is built from structured data with textContent and <img> data
-// URLs, never as HTML from the worker.
+// URLs, never as HTML from the worker. Interactive figures are drawn in sandboxed frames
+// (figures.ts); the outputs are rebuilt only when they change, so a frame isn't reloaded.
 import type { Node } from "prosemirror-model";
 import type { EditorView, NodeView, ViewMutationRecord } from "prosemirror-view";
 import type { CellResult, OutputView, PyState, StoredFrom } from "../api";
 import type { Results } from "./results";
+import { FigureFrame, figureElement } from "./figures";
 
 const STATE_LABEL: Record<PyState, string> = {
   no_python: "Python isn't set up",
@@ -83,7 +85,25 @@ export function renderOutput(o: OutputView): HTMLElement {
     }
     case "text":
       return el("pre", "code-text", o.text);
+    case "figure":
+      return figureElement(o);
   }
+}
+
+/** Two output lists show the same thing (so their DOM, and figure frames, can stay). */
+export function sameOutputs(a: readonly OutputView[], b: readonly OutputView[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((o, i) => {
+    const p = b[i];
+    if (o.kind !== p.kind) return false;
+    if (o.kind === "figure" && p.kind === "figure") return o.mime === p.mime && o.spec === p.spec && o.summary === p.summary;
+    if (o.kind === "image" && p.kind === "image") return o.src === p.src;
+    return JSON.stringify(o) === JSON.stringify(p);
+  });
+}
+
+function destroyFigures(root: HTMLElement) {
+  for (const box of root.querySelectorAll(".code-plot")) (box as HTMLElement & { figureFrame?: FigureFrame }).figureFrame?.destroy();
 }
 
 export class CodeView implements NodeView {
@@ -91,6 +111,10 @@ export class CodeView implements NodeView {
   contentDOM: HTMLElement;
   private head: HTMLElement;
   private out: HTMLElement;
+  private note: HTMLElement;
+  private shown: HTMLElement;
+  private rest: HTMLElement;
+  private lastOutputs: OutputView[] = [];
   private unsubscribe: () => void;
 
   constructor(
@@ -108,6 +132,11 @@ export class CodeView implements NodeView {
     pre.append(this.contentDOM);
     this.out = el("div", "code-out");
     this.out.contentEditable = "false";
+    // Fixed children: moving a figure's iframe in the DOM would reload it.
+    this.note = el("div", "code-out-note");
+    this.shown = el("div", "code-outputs");
+    this.rest = el("div", "code-out-rest");
+    this.out.append(this.note, this.shown, this.rest);
     this.dom.append(this.head, pre, this.out);
     this.unsubscribe = results.subscribe(() => this.render());
     this.render();
@@ -154,9 +183,14 @@ export class CodeView implements NodeView {
 
   private renderOutput(r: CellResult | undefined) {
     const py = r?.python;
+    this.note.replaceChildren(...(py?.note ? [el("div", "code-note", py.note)] : []));
+    const outputs = py?.outputs ?? [];
+    if (!sameOutputs(outputs, this.lastOutputs)) {
+      destroyFigures(this.shown);
+      this.shown.replaceChildren(...outputs.map(renderOutput));
+      this.lastOutputs = outputs;
+    }
     const parts: HTMLElement[] = [];
-    if (py?.note) parts.push(el("div", "code-note", py.note));
-    for (const o of py?.outputs ?? []) parts.push(renderOutput(o));
     if (py?.stdout) parts.push(el("pre", "code-stdout", py.stdout));
     if (py?.stderr) parts.push(el("pre", "code-stderr", py.stderr));
     if (py?.error) {
@@ -178,8 +212,8 @@ export class CodeView implements NodeView {
       }
       parts.push(defs);
     }
-    this.out.replaceChildren(...parts);
-    this.dom.classList.toggle("has-output", parts.length > 0);
+    this.rest.replaceChildren(...parts);
+    this.dom.classList.toggle("has-output", parts.length > 0 || outputs.length > 0 || !!py?.note);
     this.dom.classList.toggle("stale", py?.state === "edited");
   }
 
@@ -202,5 +236,6 @@ export class CodeView implements NodeView {
 
   destroy() {
     this.unsubscribe();
+    destroyFigures(this.shown);
   }
 }

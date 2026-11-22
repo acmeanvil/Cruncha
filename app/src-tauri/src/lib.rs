@@ -15,6 +15,8 @@
 mod agent_panel;
 mod agents;
 mod engine;
+mod figures;
+mod login_path;
 mod proposals;
 mod python;
 mod report;
@@ -555,6 +557,8 @@ struct ExportView {
     problems: usize,
     /// Python cells were still running when the wait ran out.
     timed_out: bool,
+    /// Figures printed as FIGURE NOT RENDERED (the app hadn't drawn them; ADR-0017 §4).
+    figures_missing: usize,
 }
 
 /// Typeset a version to a PDF at `path`: the latest (`at` absent), a past version or a
@@ -591,6 +595,15 @@ async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> R
             _ => false,
         })
         .count();
+    let figures_missing = report
+        .blocks
+        .iter()
+        .flat_map(|b| match b {
+            cruncha_report::Block::Code { outputs, .. } => outputs.as_slice(),
+            _ => &[],
+        })
+        .filter(|o| matches!(o, cruncha_report::Output::Figure { path: None, .. }))
+        .count();
     let rendered = tokio::task::spawn_blocking(move || cruncha_report::render(&report, files))
         .await
         .map_err(|e| e.to_string())?
@@ -603,7 +616,20 @@ async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> R
         ms: start.elapsed().as_secs_f64() * 1e3,
         problems,
         timed_out,
+        figures_missing,
     })
+}
+
+/// The figures a report of `at` needs drawn first (ADR-0017 §4): the front end draws each in
+/// a figure frame and hands back its SVG with `put_figure`.
+#[tauri::command]
+async fn figures_to_render(at: Option<At>, s: State<'_, Shared>) -> Result<Vec<figures::FigureJob>> {
+    s.lock().await.figures_to_render(&at.unwrap_or_default()).await
+}
+
+#[tauri::command]
+async fn put_figure(key: String, svg: String, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.put_figure(&key, &svg)
 }
 
 /// Open a file with the system's default application (the exported PDF).
@@ -652,6 +678,8 @@ async fn clear_results(s: State<'_, Shared>) -> Result<DocInfo> {
 }
 
 pub fn run() {
+    // Opened from Finder: take the login shell's PATH, so agents and tools are found.
+    login_path::adopt_login_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -659,7 +687,9 @@ pub fn run() {
             std::thread::spawn(cruncha_report::warm_up);
             let prefs = app.path().app_config_dir()?.join("preferences.json");
             let python = app.path().app_data_dir()?.join("python");
-            let mut session = Session::new(Some(prefs)).with_python(python, worker_dir(app));
+            let mut session = Session::new(Some(prefs))
+                .with_python(python, worker_dir(app))
+                .with_figure_cache(app.path().app_cache_dir()?.join("figures"));
             let handle = app.handle().clone();
             session.on_results(move |ev| {
                 let _ = handle.emit("results", ev);
@@ -677,10 +707,27 @@ pub fn run() {
             session.on_proposals(move |doc_id| {
                 let _ = handle.emit("proposals", doc_id);
             });
+            // For review (`scripts/run-app.sh --open <doc>`): start with that document open.
+            if let Some(path) = std::env::var_os("CRUNCHA_OPEN")
+                && let Err(e) = tauri::async_runtime::block_on(session.open(std::path::Path::new(&path)))
+            {
+                eprintln!("cruncha: couldn't open {}: {e}", PathBuf::from(&path).display());
+            }
             app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
             app.manage(AgentServer::default());
             app.manage::<PanelState>(Default::default());
             Ok(())
+        })
+        // Figure frames (ADR-0020): their own origin and CSP, sandboxed by the page.
+        .register_uri_scheme_protocol("cruncha-figure", |_ctx, req| {
+            let (status, mime, body) = figures::frame_file(req.uri().path());
+            tauri::http::Response::builder()
+                .status(status)
+                .header("Content-Type", mime)
+                .header("Content-Security-Policy", figures::FRAME_CSP)
+                .header("X-Content-Type-Options", "nosniff")
+                .body(body.to_vec())
+                .unwrap()
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
@@ -725,6 +772,8 @@ pub fn run() {
             report_settings,
             set_report_settings,
             export_report,
+            figures_to_render,
+            put_figure,
             open_path,
             agent_server_status,
             agent_server_start,

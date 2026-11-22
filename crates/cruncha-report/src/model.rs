@@ -55,7 +55,8 @@ pub struct HouseStyle {
     pub logo: Option<String>,
     /// Accent color for rules and headings, `#RRGGBB`.
     pub accent: String,
-    /// Body font names, tried in order; the bundled Libertinus Serif is the last resort.
+    /// Body font names, tried in order. Inter is bundled (the default, the same on every
+    /// computer); others come from the system; the bundled Libertinus Serif is the last resort.
     pub fonts: Vec<String>,
     /// Body size in points.
     pub font_size: f64,
@@ -69,7 +70,7 @@ impl Default for HouseStyle {
             company: String::new(),
             logo: None,
             accent: "#1f4e79".into(),
-            fonts: vec!["Helvetica Neue".into(), "Helvetica".into(), "Arial".into(), "Libertinus Serif".into()],
+            fonts: vec!["Inter".into(), "Libertinus Serif".into()],
             font_size: 10.0,
             paper: "us-letter".into(),
         }
@@ -185,8 +186,11 @@ pub enum Status {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Output {
-    /// A figure: path of a PNG inside the report's files.
+    /// A figure: path of a PNG or SVG inside the report's files.
     Image { path: String },
+    /// An interactive figure (ADR-0017): its static rendering (`path`, SVG or PNG) when the
+    /// app could draw one, otherwise FIGURE NOT RENDERED with the `reason`. Never left out.
+    Figure { path: Option<String>, summary: String, reason: Option<String> },
     Table { columns: Vec<String>, rows: Vec<Vec<String>>, total_rows: usize },
     Text { text: String, stream: String },
 }
