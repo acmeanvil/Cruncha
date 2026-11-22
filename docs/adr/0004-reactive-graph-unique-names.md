@@ -47,5 +47,5 @@ B is the only option whose results don't depend on where cells sit. The cost of 
 
 ## Action Items
 
-1. [ ] Spike S2: a graph over mixed calc and Python cells, with rename invalidation and cancellation.
+1. [ ] Spike S2: a graph over mixed calc and Python cells, with rename invalidation and cancellation. *(Review 2026-11-22: partial. Built without a spike write-up: `cruncha-graph` orders calc, Python and Rust cells, the engine re-runs code cells when their inputs change, and runs can be interrupted or time out (`python.rs`). Rename invalidation has no dedicated test.)*
 2. [ ] Decide on section scopes after user testing.

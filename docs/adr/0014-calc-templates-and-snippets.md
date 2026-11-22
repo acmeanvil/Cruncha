@@ -1,6 +1,6 @@
 # ADR-0014: Calculation templates and snippets are one system: Markdown files with a manifest, inserted as cells
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Date:** 2026-11-22
 **Deciders:** acmeanvil
 **Builds on:** ADR-0002 (Hurmet's `_` placeholders), ADR-0004 (one definition per name), ADR-0009 and ADR-0016 (agents edit through proposals)

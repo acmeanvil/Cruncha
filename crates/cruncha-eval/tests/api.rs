@@ -140,7 +140,8 @@ fn hurmet_quirks() {
         calc("[2; 3] [4, 5, 6] = @"),
         "Error. Mis-matched number of elements"
     );
-    assert_eq!(calc("round(-0.7) = @"), "1");
+    // round(-0.7) was 1 in Hurmet (sign lost; fixed by ADR-0022 item 10).
+    assert_eq!(calc("round(-0.7) = @"), "-1");
     assert_eq!(calc("(\"a\" ∉ \"xyz\") = @"), "false");
     assert_eq!(calc("|(2, 0; 0, 4)| = @"), "0.125");
 }

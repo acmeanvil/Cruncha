@@ -135,3 +135,23 @@ fn unit_names_and_dimensions() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// ADR-0022 item 10: a fixed format kept the digits of a value between −1 and 0 but dropped
+/// its sign (Hurmet printed −0.25 as 0.25), in results, `roundn`, `round` and `string`.
+#[test]
+fn fixed_format_keeps_the_sign() {
+    let fixed = |lines: &[&str]| calc(lines);
+    assert_eq!(fixed(&["format = \"f2\"", "a = -0.25 = ?"]), "-0.25");
+    assert_eq!(fixed(&["format = \"f2\"", "a = -0.004 = ?"]), "0.00");
+    assert_eq!(fixed(&["format = \"f2\"", "a = -0.006 = ?"]), "-0.01");
+    assert_eq!(fixed(&["format = \"f1\"", "a = -0.96 = ?"]), "-1.0");
+    assert_eq!(fixed(&["format = \"f2\"", "a = -1.25 = ?"]), "-1.25");
+    assert_eq!(fixed(&["format = \"f0\"", "a = -0.7 = ?"]), "-1");
+    check(&[
+        ("roundn(-0.256, \"f2\")", "-0.26"),
+        ("round(-0.7)", "-1"),
+        ("round(-0.4)", "0"),
+        ("round(-1.5)", "-2"),
+        ("round(2.5)", "3"),
+    ]);
+}

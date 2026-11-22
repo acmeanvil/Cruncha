@@ -115,5 +115,5 @@ A crash at any point leaves a readable container. Before step 4, nothing is lost
    - a crash (SIGKILL) during prune leaves a readable container.
 3. [x] Tauri Preferences and document-settings controls, and the confirmation dialog backed by `retention_preview`.
 4. [ ] `data/*` tables follow the same policy (once those tables exist), and pins carry the referenced `data/*` versions.
-5. [ ] Follow-up spike: reopen and time-travel latency at 10,000 versions, comparing "Keep everything" with a saves limit. It must cover the tombstone growth described under Consequences.
+5. [x] Follow-up spike: reopen and time-travel latency at 10,000 versions, comparing "Keep everything" with a saves limit. It must cover the tombstone growth described under Consequences. *(Review 2026-11-22: done: spike S3c, `docs/spikes/S3c-history-scale.md`, which led to ADR-0021. Recent-version time travel continues as ADR-0021 item 5.)*
 6. [x] Blob cleanup (step 7) in `prune()`, with tests (ADR-0013).

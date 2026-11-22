@@ -22,6 +22,7 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | `trace` | Not implemented (missing `Matrix.trace`). | The sum of a square matrix's diagonal. |
 | `Char` | Not found when unit-aware. | Works. |
 | `roundSig(x, n)` | Known to the parser, not to the evaluator. | x rounded to n significant digits. |
+| Fixed format (`format = "f2"`, `roundn(x, "f2")`, `string(x, "f2")`, `round`) | A value between −1 and 0 loses its minus sign: −0.25 shows as 0.25, `round(-0.7)` is 1. | The sign is kept: −0.25, `round(-0.7)` = −1. A value that rounds to zero shows as 0, without a sign. |
 | `e` | Not a constant ("Variable e not found"). | Euler's number unless the document defines `e`; a definition wins and gets a warning (as for `j`). |
 
 ## Units (ADR-0022)

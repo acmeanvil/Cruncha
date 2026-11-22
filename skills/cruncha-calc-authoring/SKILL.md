@@ -86,7 +86,6 @@ Where Cruncha differs from Hurmet (ADR-0022, `docs/design/03-hurmet-differences.
 - `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work.
 - Unit names: a unit's full name works as written (`Celsius`, `gauss`, `kilogram`, `mas` for milliarcsecond). Tesla and gauss are kg·s⁻²·A⁻¹; ampere-turn and gilbert are currents. Every unit, with its aliases and size in SI, is in the app's Units palette (`cruncha_units::catalog`).
 - **Not fixed yet (ADR-0022, second set). Avoid or check these:**
-  - With a fixed format (`format = "f2"`, `roundn(x, "f2")`), a value between −1 and 0 displays **without its minus sign**. Use `"r…"` (significant digits) for such values.
   - The cross product `×` gives `[]`. Write it by components.
   - `sum`, `product`, `mean`, `min`, `max`, `range` and `median` of a *matrix* give 0. Use `sum(A, 1)` or `sum(A, 2)`, or a Python cell.
   - `product` of quantities has the wrong unit; `zeros(m, 1)` and `ones(m, 1)` give one element; `[a, b]^2` is read as a complex number.

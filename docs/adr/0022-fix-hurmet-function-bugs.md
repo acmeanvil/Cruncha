@@ -1,6 +1,6 @@
 # ADR-0022: Fix the built-in function bugs inherited from Hurmet
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Date:** 2026-11-22
 **Deciders:** acmeanvil
 **Refines:** ADR-0002 (where Cruncha deliberately differs from Hurmet)
@@ -150,9 +150,10 @@ A sweep of the port's "Hurmet bug, reproduced" comments, each probed in a calc (
 | Matrix literal of column vectors, inside a larger expression | `2 + sum([x, y])` → "does not understand" | 2 + the sum | The vectors are read from the bottom of the stack, not from the first argument. Loud, not silent. |
 | Data frames | to probe | — | Three reproduced bugs in `dataframe.rs`: a row range "all" uses the number of columns; a column range looks up `columnMap[NaN]`; a selection's column keys are the source's k-th headings. |
 
-10. [ ] Fix the sign of fixed-format values between −1 and 0 (`to_fixed`), in results, `roundn` and `string`. This is the most urgent: it changes what a report prints.
+10. [x] Fix the sign of fixed-format values between −1 and 0 (`to_fixed`), in results, `roundn` and `string`. This is the most urgent: it changes what a report prints. Done 2026-11-22: `to_fixed` works on the magnitude and restores the sign (a value that rounds to zero prints unsigned); `round(-0.7)` is now −1 too. `tests/functions.rs` `fixed_format_keeps_the_sign`.
 11. [ ] Fix the cross product, and the reducers over a matrix (`sum`, `product`, `mean`, `min`, `max`, `range`, `median`).
 12. [ ] Fix `product`'s unit, offset units on vectors, `zeros`/`ones` columns, and `[a, b]^n`.
 13. [ ] Check units in every two-argument function that requires one unit (`atan2`, `gcd`, …), as `mod` does.
 14. [ ] Fix the column-vector matrix literal, and probe and fix the three data-frame bugs.
+   *(Found 2026-11-22, belongs with item 11: `|A|` of a square matrix gives 1/det(A), e.g. `|[1, 2; 3, 4]|` = −0.5, not −2. Hurmet behaves the same; `tests/api.rs` had pinned it as a quirk.)*
 15. [ ] For each: a case in `tests/functions.rs`, the caution removed from the reference, the skill and `docs/design/03-hurmet-differences.md` updated.

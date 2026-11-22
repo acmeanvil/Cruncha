@@ -1,6 +1,6 @@
 # ADR-0020: Figure frames are served from their own scheme, with their own CSP; the renderer arrives by `postMessage`
 
-**Status:** Proposed
+**Status:** Accepted (2026-11-22)
 **Date:** 2026-11-21
 **Deciders:** acmeanvil
 **Refines:** ADR-0017 §3

@@ -24,4 +24,4 @@ All Cruncha calculations are unit-aware. Selectors control **display only** (ech
 
 ## Action Items
 
-1. [ ] Implement it in `cruncha-eval`; add the import-report rule to the Hurmet importer.
+1. [ ] Implement it in `cruncha-eval`; add the import-report rule to the Hurmet importer. *(Review 2026-11-22: partial. The engine always evaluates unit-aware (`UnitAware::Always`, app `engine.rs`); the import rule waits for the Hurmet importer (ADR-0002 item 3).)*

@@ -492,43 +492,34 @@ impl Rational {
                 .to_fixed(0);
             return format!("{sig}{}", "0".repeat(n as usize));
         }
+        // Work on the magnitude and put the sign back at the end: the integer quotient of a
+        // value between −1 and 0 is 0, which has no sign (Hurmet printed −0.25 as 0.25,
+        // ADR-0022 item 10). A result that rounds to zero prints without a sign.
         let r = self.normalize();
-        let quotient = idiv(&r.num, &r.den);
-        let remainder = irem(&r.num, &r.den);
-        let mut result = quotient.to_string();
-        if remainder.is_zero() && digits > 0 {
-            result.push('.');
-            result.push_str(&"0".repeat(digits as usize));
-        } else if !remainder.is_zero() {
-            let remainder = remainder.abs();
-            let scale = pow10(digits);
-            let new_num = &remainder * &scale;
-            let mut fractus = idiv(&new_num, &r.den);
-            let residue = irem(&new_num, &r.den);
-            let rounds_up = (BigInt::from(2) * &residue).abs() >= r.den.abs();
-            let int_sign = BigInt::from(if quotient >= BigInt::zero() { 1 } else { -1 });
-            if digits == 0 {
-                return if rounds_up {
-                    ((quotient.abs() + BigInt::one()) * &int_sign).to_string()
-                } else {
-                    result
-                };
+        let negative = r.num.is_negative() != r.den.is_negative();
+        let (num, den) = (r.num.abs(), r.den.abs());
+        let mut int = idiv(&num, &den);
+        let remainder = irem(&num, &den);
+        let scale = pow10(digits);
+        let mut fractus = idiv(&(&remainder * &scale), &den);
+        let residue = irem(&(&remainder * &scale), &den);
+        if BigInt::from(2) * &residue >= den {
+            fractus += 1;
+            if fractus == scale {
+                int += 1;
+                fractus = BigInt::zero();
             }
-            if rounds_up {
-                fractus += 1;
-                if fractus == scale {
-                    return format!(
-                        "{}.{}",
-                        (quotient.abs() + BigInt::one()) * &int_sign,
-                        "0".repeat(digits as usize)
-                    );
-                }
-            }
-            // Hurmet bug, reproduced: for -1 < r < 0 the quotient is 0, so the sign is lost.
-            result.push('.');
+        }
+        let mut result = int.to_string();
+        if digits > 0 {
             let f = fractus.to_string();
-            result.push_str(&"0".repeat((digits as usize).saturating_sub(f.len())));
+            result.push('.');
+            result.push_str(&"0".repeat(digits as usize - f.len()));
             result.push_str(&f);
+        }
+        let zero = int.is_zero() && fractus.is_zero();
+        if negative && !zero {
+            result.insert(0, '-');
         }
         result
     }
