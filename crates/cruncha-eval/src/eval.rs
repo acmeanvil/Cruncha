@@ -392,6 +392,9 @@ pub(crate) fn eval_rpn(
                     OUnit::zeros(),
                     dt::COMPLEX,
                 ));
+            } else if var_name == "e" && scope.get("e").is_none() {
+                // Euler's number unless the document defines `e` (ADR-0022), like `j`.
+                stack.push(Operand::rational(Rational::e()));
             } else {
                 let Some(cell) = scope.get(var_name) else {
                     return err("V_NAME", var_name);
@@ -423,6 +426,9 @@ pub(crate) fn eval_rpn(
                 }
                 if name == "j" && scope.get("j").is_none() {
                     return Ok("j".into());
+                }
+                if name == "e" && scope.get("e").is_none() {
+                    return Ok(cruncha_units::jsnum::to_string(std::f64::consts::E));
                 }
                 let cell = scope.get(name).ok_or_else(|| err("V_NAME", name))?;
                 let o = from_assignment(cell, false);
@@ -627,20 +633,28 @@ pub(crate) fn eval_rpn(
                     stack.push(Operand::new(value, unit, dtype));
                 }
                 "modulo" => {
-                    if unit_aware {
-                        return err("UNIT_UN", "modulo");
-                    }
                     let o2 = pop!();
                     let o1 = pop!();
                     if o1.dtype & dt::RATIONAL == 0 || o2.dtype & dt::RATIONAL == 0 {
                         return err0("NAN_OP");
                     }
+                    // Hurmet refuses `mod` when unit-aware, which Cruncha always is (ADR-0007).
+                    // The operands share a unit and the result is in it (ADR-0022).
+                    let unit = if unit_aware {
+                        let x = o1.unit.get_expos().copied();
+                        if x != o2.unit.get_expos().copied() {
+                            return err("UNIT_ARG", "mod");
+                        }
+                        expos_unit(x)
+                    } else {
+                        OUnit::Bare
+                    };
                     let (s1, s2, _) = binary_shapes(&o1, &o2);
                     let Some(dtype) = ops::op_dtype(s1, s2, o1.dtype, o2.dtype, "modulo") else {
                         return err0("ERROR");
                     };
                     let value = tryv!(ops::binary(s1, s2, "modulo", &o1.value, &o2.value));
-                    stack.push(Operand::new(value, OUnit::Bare, dtype));
+                    stack.push(Operand::new(value, unit, dtype));
                 }
                 "&" | "hcat" | "vcat" => {
                     let o2 = pop!();
@@ -1043,7 +1057,7 @@ pub(crate) fn eval_rpn(
                     }
                     stack.push(Operand::new(value, unit, dtype));
                 }
-                "logn" | "atan2" | "gcd" | "rms" | "binomial" | "ones" | "zeros" | "mod"
+                "logn" | "atan2" | "gcd" | "binomial" | "ones" | "zeros" | "mod"
                 | "rem" => {
                     let a2 = pop!();
                     let a1 = pop!();
@@ -1052,7 +1066,11 @@ pub(crate) fn eval_rpn(
                         return err0("");
                     }
                     let expos = if unit_aware {
-                        functions::function_expos(tkn, &[&args[0], &args[1]]).unwrap_or(None)
+                        match functions::function_expos(tkn, &[&args[0], &args[1]]) {
+                            // mod and rem need one unit (ADR-0022); Hurmet ignores the others' checks.
+                            Err(e) if tkn == "mod" || tkn == "rem" => return e,
+                            r => r.unwrap_or(None),
+                        }
                     } else {
                         Some(ALL_ZEROS)
                     };
@@ -1233,6 +1251,27 @@ pub(crate) fn eval_rpn(
                     };
                     stack.push(Operand::new(value, OUnit::zeros(), dtype));
                 }
+                // Hurmet's parser knows roundSig but its evaluator has none (ADR-0022): x rounded
+                // to n significant digits, as roundn(x, "rn").
+                "roundSig" => {
+                    let digits = pop!();
+                    let num = pop!();
+                    if num.dtype & dt::RATIONAL == 0 || digits.dtype & dt::RATIONAL == 0 {
+                        return err0("");
+                    }
+                    let n = digits.value.r();
+                    if !n.is_integer() || n.less_than(&Rational::one()) || n.greater_than(&Rational::int(21)) {
+                        return err("ROUND_SIG", "roundSig");
+                    }
+                    let n = n.to_f64() as i64;
+                    fn round(v: &V, n: i64) -> V {
+                        match v {
+                            V::A(a) => V::A(a.iter().map(|e| round(e, n)).collect()),
+                            other => V::R(Rational::from_str_or_zero(&other.r().to_string_significant(n))),
+                        }
+                    }
+                    stack.push(Operand::new(round(&num.value, n), num.unit.clone(), num.dtype));
+                }
                 "roundn" | "string" => {
                     let spec = pop!();
                     let num = pop!();
@@ -1289,7 +1328,7 @@ pub(crate) fn eval_rpn(
                     stack.push(o);
                 }
                 "dataframe" | "max" | "min" | "sum" | "product" | "range" | "mean" | "median"
-                | "variance" | "stddev" | "accumulate" => {
+                | "variance" | "stddev" | "rms" | "accumulate" => {
                     let num_args = next_num(i);
                     i += 1;
                     if stack.len() < num_args {
@@ -1437,8 +1476,22 @@ pub(crate) fn eval_rpn(
                     let o = pop!();
                     stack.push(matrix::transpose(&o));
                 }
-                // Hurmet calls the non-existent Matrix.trace.
-                "trace" => return err("NOT_SUPPORTED", "trace"),
+                // Hurmet calls the non-existent Matrix.trace; the sum of the diagonal (ADR-0022).
+                "trace" => {
+                    let o = pop!();
+                    if o.dtype & dt::MATRIX == 0 || o.dtype & dt::RATIONAL == 0 {
+                        return err("NOT_SQUARE", "trace");
+                    }
+                    let rows = o.value.arr();
+                    if rows.iter().any(|r| r.len() != rows.len()) {
+                        return err("NOT_SQUARE", "trace");
+                    }
+                    let sum = rows
+                        .iter()
+                        .enumerate()
+                        .fold(Rational::zero(), |acc, (i, r)| acc.add(&r.get(i).r()));
+                    stack.push(Operand::new(V::R(sum), o.unit.clone(), dt::RATIONAL));
+                }
                 "fetch" => return err0("FETCH"),
                 "function" => {
                     let name = tokens.get(i + 1).copied().unwrap_or("");

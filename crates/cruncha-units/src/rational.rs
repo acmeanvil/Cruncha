@@ -298,8 +298,13 @@ impl Rational {
         if self.is_positive() || b.greater_than(&Rational::one()) || b.less_than(&Rational::int(-1))
         {
             Some(Rational::from_number(js_pow(self.to_f64(), b.to_f64())))
-        } else if b.modulo(&Rational::two()) == Rational::one() {
-            Some(Rational::from_number(-js_pow(-self.to_f64(), b.to_f64())))
+        } else if !irem(&b.den, &BigInt::from(2)).is_zero() {
+            // A negative base and p/q (lowest terms) with q odd: the real root, negative when p
+            // is odd (ADR-0022). Hurmet tested `Rnl.mod(b, 2) == 1`, which held by accident:
+            // (−4)^(1/2) was −2 and (−8)^(2/3) an error.
+            let r = js_pow(-self.to_f64(), b.to_f64());
+            let odd = !irem(&b.num, &BigInt::from(2)).is_zero();
+            Some(Rational::from_number(if odd { -r } else { r }))
         } else {
             None
         }
@@ -327,25 +332,38 @@ impl Rational {
         Rational::from_number(jsmath::exp(self.to_f64()))
     }
 
-    /// `Rnl.hypot`.
+    /// `Rnl.hypot`: √(a² + b²) of the absolute values; 0 when both are 0.
     pub fn hypot(&self, b: &Self) -> Self {
         let a = self.abs();
         let b = b.abs();
         let maximum = a.max(&b);
+        if maximum.is_zero() {
+            return Rational::zero();
+        }
         let minimum = a.min(&b);
         let r = minimum.divide(&maximum);
         maximum.multiply(&r.multiply(&r).increment().sqrt())
     }
 
-    /// `Rnl.mod`: |remainder| of the normalized quotient, as an integer.
+    /// Floored modulo, `a − b·⌊a/b⌋`: the sign of `b`, exact for any rationals (ADR-0022;
+    /// Hurmet's `Rnl.mod` was |rem| and wrong for non-integers). `b = 0` gives zero here;
+    /// the evaluator reports it.
     pub fn modulo(&self, b: &Self) -> Self {
-        let q = self.normalize().divide(&b.normalize());
-        Rational::new(irem(&q.num, &q.den).abs(), BigInt::one())
+        if b.is_zero() {
+            return Rational::zero();
+        }
+        let (a, b) = (self.normalize(), b.normalize());
+        a.subtract(&b.multiply(&a.divide(&b).floor())).normalize()
     }
-    /// `Rnl.rem`.
+    /// Truncated remainder, `a − b·trunc(a/b)`: the sign of `a` (ADR-0022). `b = 0` gives zero.
     pub fn rem(&self, b: &Self) -> Self {
-        let q = self.normalize().divide(&b.normalize());
-        Rational::new(irem(&q.num, &q.den), BigInt::one())
+        if b.is_zero() {
+            return Rational::zero();
+        }
+        let (a, b) = (self.normalize(), b.normalize());
+        let q = a.divide(&b).normalize();
+        let t = Rational::new(idiv(&q.num, &q.den), BigInt::one());
+        a.subtract(&b.multiply(&t)).normalize()
     }
     /// `Rnl.gcd`; `None` unless both are integers.
     pub fn gcd(&self, b: &Self) -> Option<Self> {
@@ -847,18 +865,11 @@ mod tests {
             Rational::int(2).power(&Rational::int(-2)).unwrap(),
             Rational::new(big(1), big(4))
         );
-        // Hurmet quirk: mod(1/2, 2) is 1, so this takes the odd-root branch.
-        assert_eq!(
-            Rational::int(-4)
-                .power(&Rational::new(big(1), big(2)))
-                .unwrap(),
-            Rational::int(-2)
-        );
-        assert!(
-            Rational::int(-4)
-                .power(&Rational::new(big(2), big(3)))
-                .is_none()
-        );
+        // A negative base: an even root has no real value; an odd root is real (ADR-0022).
+        assert!(Rational::int(-4).power(&Rational::new(big(1), big(2))).is_none());
+        assert_eq!(Rational::int(-8).power(&Rational::new(big(1), big(3))).unwrap().to_f64(), -2.0);
+        assert_eq!(Rational::int(-8).power(&Rational::new(big(2), big(3))).unwrap().to_f64(), 4.0);
+        assert_eq!(Rational::int(-8).power(&Rational::new(big(2), big(6))).unwrap().to_f64(), -2.0);
         assert_eq!(
             Rational::int(30).double_factorial().to_fixed(0),
             "42849873690624000"

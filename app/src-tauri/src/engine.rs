@@ -26,6 +26,9 @@ use cruncha_kernel_py::Defined;
 use cruncha_store::{Cell, CellKind, RunRecord, RunStatus};
 use serde::{Deserialize, Serialize};
 
+/// Built-in calc names that a document can define (and so replace): name, what it was.
+const SHADOWED: [(&str, &str); 2] = [("e", "Euler's number"), ("j", "the imaginary unit")];
+
 /// What a cell shows.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -877,6 +880,12 @@ impl Engine {
                 .filter(|i| !i.is_error())
                 .map(Issue::to_string)
                 .collect();
+            // Built-in names a definition replaces in every calc that reads it (ADR-0022).
+            for (name, what) in SHADOWED {
+                if node.defines.iter().any(|d| d == name) {
+                    warnings.push(format!("{name} here is this document's value, not {what}"));
+                }
+            }
             let mut result = CellResult {
                 defines: node.defines.clone(),
                 reads: node
@@ -1445,6 +1454,17 @@ mod tests {
             "{:?}",
             r["M"]
         );
+    }
+
+    #[test]
+    fn defining_e_replaces_eulers_number_with_a_warning() {
+        let mut e = Engine::new();
+        let r = e.run(&[calc("A", "a", "y = 2 e = ?")]);
+        assert!(r["A"].text.contains("5.43656"), "{:?}", r["A"]);
+        let r = e.run(&[calc("E", "a", "e = 0.5"), calc("A", "b", "y = 2 e = ?")]);
+        assert!(r["E"].warnings.iter().any(|w| w.contains("Euler's number")), "{:?}", r["E"].warnings);
+        assert!(r["A"].warnings.is_empty(), "{:?}", r["A"].warnings);
+        assert!(r["A"].text.ends_with("= 1"), "{:?}", r["A"]);
     }
 
     #[test]

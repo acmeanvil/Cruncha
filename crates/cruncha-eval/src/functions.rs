@@ -35,7 +35,9 @@ pub(crate) fn function_expos(name: &str, args: &[&Operand]) -> Result<Option<Dim
         | "binomial" | "gamma" | "Γ" | "lgamma" | "lfact" | "factorial" => dimensionless(),
         "sqrt" => Ok(expos.map(|e| e.map(|x| x / 2.0))),
         "gcd" | "mht" => dimensionless(),
-        "atan2" | "hypot" | "rms" | "ceil" | "floor" | "sum" | "mean" | "median" | "min"
+        // ADR-0022: Char wasn't listed, so unit-aware it was "not found".
+        "Char" => dimensionless(),
+        "atan2" | "hypot" | "rms" | "mod" | "rem" | "ceil" | "floor" | "sum" | "mean" | "median" | "min"
         | "max" | "range" | "stddev" | "variance" => {
             let x = args.first().and_then(|a| a.unit.get_expos().copied());
             for a in &args[1..] {
@@ -43,7 +45,12 @@ pub(crate) fn function_expos(name: &str, args: &[&Operand]) -> Result<Option<Dim
                     return Err(err("UNIT_ARG", name));
                 }
             }
-            Ok(if name == "atan2" { Some(ALL_ZEROS) } else { x })
+            Ok(match name {
+                "atan2" => Some(ALL_ZEROS),
+                // The variance is in the square of the arguments' unit (ADR-0022).
+                "variance" => x.map(|e| e.map(|v| v * 2.0)),
+                _ => x,
+            })
         }
         "real" | "imag" | "angle" | "conj" => Ok(Some(ALL_ZEROS)),
         // Hurmet bug, reproduced: the sum of exponents is computed and thrown away.
@@ -148,18 +155,22 @@ fn real_fn(name: &str, x: &Rational) -> Result<Rational, Operand> {
             }
             f(1.0 / jsmath::tan(n()))
         }
-        "asec" | "acot" => {
-            if x.abs().greater_than_or_equal(&Rational::one()) {
-                return Err(err(
-                    "ASEC",
-                    if name == "asec" { "arcecant" } else { "acot" },
-                ));
+        // ADR-0022: Hurmet inverted this range check and then called a missing `Math.atn`.
+        "asec" | "arcsec" | "acsc" | "arccsc" => {
+            if x.abs().less_than(&Rational::one()) {
+                let label = if name.ends_with("sec") { "asec" } else { "acsc" };
+                return Err(err("ASEC", label));
             }
-            // Hurmet calls the non-existent `Math.atn` here (a TypeError).
-            return Err(err("NOT_SUPPORTED", name));
+            let inv = 1.0 / n();
+            f(if name.ends_with("sec") { jsmath::acos(inv) } else { jsmath::asin(inv) })
         }
-        // Hurmet calls the non-existent `Math.atn` here (a TypeError).
-        "acsc" => return Err(err("NOT_SUPPORTED", name)),
+        "acot" | "arccot" => {
+            if x.is_zero() {
+                Rational::pi().divide(&Rational::two())
+            } else {
+                f(jsmath::atan(1.0 / n()))
+            }
+        }
         "exp" => x.exp(),
         "log" | "ln" => {
             if x.is_zero() {
@@ -210,8 +221,13 @@ fn real_fn(name: &str, x: &Rational) -> Result<Rational, Operand> {
             let v = n();
             f(jsmath::log(((-v * v + 1.0).sqrt() + 1.0) / v))
         }
-        // Hurmet's table spells this "ascsh", so `acsch` of a real is a TypeError there.
-        "acsch" => return Err(err("NOT_SUPPORTED", name)),
+        // Hurmet's table spells this "ascsh" (a TypeError there); asinh(1/x) (ADR-0022).
+        "acsch" => {
+            if x.is_zero() {
+                return Err(err0("DIV"));
+            }
+            real_fn("asinh", &x.reciprocal())?
+        }
         "acoth" => {
             if x.is_zero() {
                 return Err(err0("DIV"));
@@ -413,17 +429,22 @@ fn binary_fn(name: &str, list: &[V]) -> Result<V, Operand> {
             jsmath::log(y.to_f64()) / jsmath::log(x.to_f64()),
         )),
         "atan2" => V::R(Rational::from_number(jsmath::atan2(y.to_f64(), x.to_f64()))),
-        "hypot" | "rms" => {
-            // Not Rnl.hypot: this version does not take absolute values.
-            let max = x.max(&y);
-            let r = x.min(&y).divide(&max);
-            V::R(max.multiply(&r.multiply(&r).increment().sqrt()))
-        }
+        // ADR-0022: Rnl.hypot, with absolute values (Hurmet's copy here had none).
+        "hypot" => V::R(x.hypot(&y)),
         "gcd" => V::R(x.gcd(&y).ok_or_else(|| err("INT_ARG", "gcd"))?),
         "binomial" => V::R(binomial(&x, &y)?),
+        "mod" | "rem" if y.is_zero() => return Err(err0("DIV")),
         "mod" => V::R(x.modulo(&y)),
         "rem" => V::R(x.rem(&y)),
         _ => return Err(err0("ERROR")),
+    })
+}
+
+/// Σ (x − about)², exactly.
+fn squares(rs: &[Rational], about: &Rational) -> Rational {
+    rs.iter().fold(Rational::zero(), |acc, x| {
+        let d = x.subtract(about);
+        acc.add(&d.multiply(&d))
     })
 }
 
@@ -450,10 +471,37 @@ fn reduce_fn(name: &str, list: &[V]) -> Result<V, Operand> {
         "sum" => sum(),
         "product" => fold(&|a, b| a.multiply(b)),
         "mean" => sum().divide(&Rational::int(rs.len() as i64)),
-        "median" => max().add(&min()).divide(&Rational::two()),
+        // ADR-0022: Hurmet's median was the midrange, (max + min) / 2.
+        "median" => {
+            let mut sorted = rs.clone();
+            sorted.sort_by(|a, b| {
+                if a.less_than(b) {
+                    std::cmp::Ordering::Less
+                } else if b.less_than(a) {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            });
+            let m = sorted.len() / 2;
+            if sorted.len() % 2 == 1 {
+                sorted[m].clone()
+            } else {
+                sorted[m - 1].add(&sorted[m]).divide(&Rational::two())
+            }
+        }
+        // ADR-0022: the root mean square (Hurmet's rms was hypot).
+        "rms" => squares(&rs, &Rational::zero()).divide(&Rational::int(rs.len() as i64)).sqrt(),
         "range" => max().subtract(&min()),
-        // Hurmet calls the non-existent Rnl.pow in variance (a TypeError).
-        "variance" | "stddev" => return Err(err("NOT_SUPPORTED", name)),
+        // Sample statistics, n − 1 (ADR-0022; Hurmet called a missing Rnl.pow).
+        "variance" | "stddev" => {
+            if rs.len() < 2 {
+                return Err(err("STAT_N", name));
+            }
+            let mean = sum().divide(&Rational::int(rs.len() as i64));
+            let var = squares(&rs, &mean).divide(&Rational::int(rs.len() as i64 - 1));
+            if name == "variance" { var } else { var.sqrt() }
+        }
         "accumulate" => {
             let mut v = Vec::with_capacity(rs.len());
             let mut acc = rs[0].clone();

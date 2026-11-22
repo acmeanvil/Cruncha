@@ -181,6 +181,7 @@ fn rop(op: &str, a: &V, b: &V) -> Result<V, Operand> {
         "multiply" | "circ" => x.multiply(&y),
         "divide" => x.divide(&y),
         "power" => x.power(&y).ok_or_else(|| err0("BAD_ROOT"))?,
+        "modulo" | "mod" | "rem" if y.is_zero() => return Err(err0("DIV")),
         "modulo" | "mod" => x.modulo(&y),
         "rem" => x.rem(&y),
         "hypot" => x.hypot(&y),

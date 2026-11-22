@@ -76,14 +76,15 @@ end
 
 ## Built-in functions
 
-The full list, each with an example whose result is checked by a test, is `crates/cruncha-eval/reference/functions.json` (the app's ƒx Functions palette). Units inside an expression are quoted: `hypot(3 'm', 4 'm')`. Watch for these, inherited from Hurmet (ADR-0022 proposes fixing them):
+The full list, each with an example whose result is checked by a test, is `crates/cruncha-eval/reference/functions.json` (the app's ƒx Functions palette). Units inside an expression are quoted: `hypot(3 'm', 4 'm')`.
 
-- `median` is the midrange, `(max + min) / 2`: `median(1, 2, 10)` is 5.5, not 2. Don't use it; use a Python cell.
-- `mod(a, b)` is `|rem(a, b)|`: `mod(-7, 3)` is 1, not 2. `mod` and `rem` are wrong for non-integers (`mod(7.5, 2)` is 3).
-- `hypot` doesn't take absolute values: `hypot(-3, -4)` is -5.
-- `rms(a, b)` is `√(a² + b²)` (the same as `hypot`), not the root mean square.
-- Not evaluated yet: `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `variance`, `stddev`, `Char`, `trace`, `roundSig`. Use `acos(1/x)`, `asin(1/x)`, `atan(1/x)`, `asinh(1/x)`, or a Python cell for statistics.
-- `e` isn't a constant: write `exp(1)`. `π` and `j` (the imaginary unit) work.
+Where Cruncha differs from Hurmet (ADR-0022, `docs/design/03-hurmet-differences.md`):
+
+- `mod(a, b)` (and `a mod b`) is floored modulo with the sign of `b`, as Excel's `MOD`: `mod(-7, 3)` is 2. `rem(a, b)` has the sign of `a`. Both work for non-integers and units (`mod(7.5 'm', 2 'm')` is 1.5 m).
+- `rms(v)` is the root mean square of its arguments or a vector's elements; for √(a² + b²) use `hypot`.
+- `median` is the true median; `variance` and `stddev` are sample statistics (n − 1); the variance is in the unit squared.
+- `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work.
+- `e` is Euler's number unless the document defines `e` (an eccentricity, say); a definition wins and gets a warning. `j` works the same way for the imaginary unit.
 
 ## Checklist before proposing a calc
 

@@ -86,6 +86,10 @@ pub(crate) fn plug_vals_into_echo(
         {
             s = format!("{}e{}", &s[..pos], &s[pos + match_len..]);
             continue;
+        } else if var_name == "e" && scope.get("e").is_none() {
+            // Euler's number (ADR-0022): echoed as e.
+            s = format!("{}e{}", &s[..pos], &s[pos + match_len..]);
+            continue;
         } else if var_name == "j" {
             s = format!("{}j{}", &s[..pos], &s[pos + match_len..]);
             continue;

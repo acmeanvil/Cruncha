@@ -123,6 +123,9 @@ fn message(code: &str) -> Option<&'static str> {
         "UNIT_IN_EL" => "Error. Use a non-unit-aware calculation to construct matrix elements.",
         // Not in Hurmet: the port reports these where JavaScript would throw a TypeError.
         "NOT_FINITE" => "Error. The result is not a finite number.",
+        "NOT_SQUARE" => "Error. @ needs a square matrix.",
+        "ROUND_SIG" => "Error. The number of significant digits must be a whole number from 1 to 21.",
+        "STAT_N" => "Error. @ needs at least two values.",
         "NOT_SUPPORTED" => "Error. Cruncha does not support “@” yet.",
         _ => return None,
     })

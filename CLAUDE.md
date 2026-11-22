@@ -8,6 +8,7 @@ Status: early. `crates/cruncha-store` (the container, with retention and out-of-
 
 - `docs/adr/`: accepted and proposed decisions. **Check these before proposing an architectural change.**
 - `docs/design/02-document-model.md`: the document, execution and storage model. Planned crates are listed in §7, spikes in §8.
+- `docs/design/03-hurmet-differences.md`: where the calc language deliberately differs from Hurmet.
 - `docs/research/01-landscape-survey.md`: why we use which open-source pieces.
 
 ## Layout
@@ -67,7 +68,8 @@ crates/cruncha-eval/       Hurmet's evaluator over cruncha-lang's RPN (spike S2b
   src/value.rs             operand model (Hurmet's dtype flags and JS-shaped values), public Value/Kind
   src/dataframe.rs  matrix.rs  complex.rs  format.rs  literal.rs  module.rs  echo.rs  error.rs
   src/exchange.rs          Value <-> Plain (serde) for the Python worker: exact numbers, UnitView, arrays, frames, SI fallback
-  tests/golden.rs          Hurmet's assignment + calc golden tests (250/250); tests/robustness.rs, tests/api.rs, tests/exchange.rs
+  tests/golden.rs          Hurmet's assignment + calc golden tests (250/250); tests/robustness.rs, tests/api.rs, tests/exchange.rs,
+                           tests/functions.rs (ADR-0022: where built-ins differ from Hurmet, docs/design/03-hurmet-differences.md)
   reference/functions.json the function reference the app shows (`REFERENCE`): every built-in, operator and constant with an example;
                            tests/reference.rs evaluates each example and checks every built-in the parser knows is listed
   examples/eval_bench.rs   spike S2b throughput; examples/eval_demo.rs prints TeX/results in both modes

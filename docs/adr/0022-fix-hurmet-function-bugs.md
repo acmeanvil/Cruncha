@@ -24,7 +24,7 @@ Writing the function reference (`reference/functions.json`, the ƒx Functions pa
 | `trace` | "not supported" | the sum of the diagonal | Not implemented in Hurmet. |
 | `Char` | "Function Char not found" (unit-aware) | `Char(65)` = "A" | Hurmet's golden `Char(87)` passes; the unit-aware path doesn't reach it. To be diagnosed. |
 | `e` | "Variable e not found" | Euler's number | The evaluator has a branch for `e`, but the parser emits it as a variable. |
-| `roundSig` | "does not understand the expression" | — | The parser doesn't know it; `roundn(x, "r3")` already rounds to significant figures. |
+| `roundSig` | "does not understand the expression" | `roundSig(3.14159, 3)` = 3.14 | The parser knows it; the evaluator has no case for it. |
 
 The worst row is `median`: it silently gives a plausible wrong answer. The reference's example happened to hide it (`median(5, 1, 3)` is 3 either way). The non-integer `mod`/`rem` and the negative `hypot` are also silent. The rest fail loudly.
 
@@ -41,7 +41,7 @@ What makes this a decision rather than a bug fix:
 ## Decision
 
 1. **Fix them in the engine, in place, and say so.** The table's "Correct" column is the target. Specifically:
-   - **`mod(a, b)`** is floored modulo, `a − b·⌊a/b⌋`, with the sign of `b` (as in Excel `MOD`, Python `%` and Mathcad `mod`). **`rem(a, b)`** is truncated, with the sign of `a`.
+   - **`mod(a, b)`** (and the operator `a mod b`, which Hurmet refuses when unit-aware) is floored modulo, `a − b·⌊a/b⌋`, with the sign of `b` (as in Excel `MOD`, Python `%` and Mathcad `mod`). **`rem(a, b)`** is truncated, with the sign of `a`.
      - Both are exact on rationals, including non-integers. `b = 0` is an error.
      - The arguments share a unit, and the result is in that unit.
    - **`hypot(a, b, …)`** takes absolute values, any number of arguments, and is 0 when all are 0.
@@ -56,7 +56,7 @@ What makes this a decision rather than a bug fix:
      - All of them go through `cruncha_units::jsmath`.
    - **`trace(M)`** is the sum of a square matrix's diagonal. **`Char(n)`** works unit-aware.
    - **`e`** is Euler's number unless the document defines `e`; engineers often use `e` for eccentricity. A definition wins, as it does for any built-in name. The variable browser marks the name as shadowing a constant.
-   - **`roundSig`** is dropped from the reference, which points to `roundn(x, "r3")` instead.
+   - **`roundSig(x, n)`** rounds to n significant digits, as `roundn(x, "rn")` does. (An earlier draft dropped it, thinking the parser didn't know it; it does.)
 2. **Tests guard each fix.**
    - Each fix gets a test in `cruncha-eval`, with negative, non-integer, unit and empty-argument cases.
    - The reference's examples are changed to inputs that tell the right answer from the wrong one: `median(1, 2, 10)`, `mod(-7, 3)`, `mod(7.5, 2)`, `hypot(-3, -4)`. Their cautions are removed.
@@ -115,16 +115,18 @@ A per-document semantics level (Option B) is the right tool once that changes. I
 
 ## Action Items
 
-1. [ ] Fix `mod` and `rem` (exact floored and truncated remainders on rationals, units, `b = 0`) in `cruncha-units` and `cruncha-eval`.
-2. [ ] Fix `hypot` (absolute values, n arguments, all zero) and make `rms` the root mean square, a reducer.
-3. [ ] Fix `median`; implement `variance` and `stddev` (sample; unit²).
-4. [ ] Implement `asec`, `acsc`, `acot`, their degree forms and `acsch` for real arguments, and fix the error name.
-5. [ ] Implement `trace`. Diagnose and fix `Char` on the unit-aware path.
-6. [ ] Make `e` Euler's number when the document doesn't define it, and mark the shadowing in the variable browser.
-7. [ ] Update `reference/functions.json`:
+1. [x] Fix `mod` and `rem` (exact floored and truncated remainders on rationals, units, `b = 0`) in `cruncha-units` and `cruncha-eval`.
+2. [x] Fix `hypot` (absolute values, n arguments, all zero) and make `rms` the root mean square, a reducer.
+3. [x] Fix `median`; implement `variance` and `stddev` (sample; unit²).
+4. [x] Implement `asec`, `acsc`, `acot`, their degree forms and `acsch` for real arguments, and fix the error name.
+5. [x] Implement `trace`. Diagnose and fix `Char` on the unit-aware path.
+6. [x] Make `e` Euler's number when the document doesn't define it, and mark the shadowing in the variable browser.
+7. [x] Update `reference/functions.json`:
    - examples that distinguish right from wrong;
    - cautions removed;
-   - `roundSig` dropped, pointing to `roundn`.
+   - `roundSig` implemented.
 
    Then update the skill and write `docs/design/03-hurmet-differences.md`.
-8. [ ] Keep Hurmet's goldens green, and mark any changed expectation with this ADR.
+8. [x] Keep Hurmet's goldens green, and mark any changed expectation with this ADR.
+
+Done 2026-11-22. Each change is covered by `crates/cruncha-eval/tests/functions.rs`, the reference's examples and an engine test for `e`. Hurmet's goldens needed no changes. Found along the way: `mod` dropped units, and `Rational::power` used the broken `mod` to detect odd roots; both are fixed and noted in `docs/design/03-hurmet-differences.md`.
