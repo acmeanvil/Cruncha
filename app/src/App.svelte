@@ -26,6 +26,9 @@
   import DocumentSettings, { type DocTab } from "./lib/DocumentSettings.svelte";
   import Editor from "./lib/Editor.svelte";
   import Sidebar, { type SidebarTab } from "./lib/Sidebar.svelte";
+  import BottomPanel, { type BottomTab } from "./lib/BottomPanel.svelte";
+  import FunctionReference from "./lib/FunctionReference.svelte";
+  import { groupHistory, labelOf } from "./lib/history";
   import SettingsPage, { type SettingsSection } from "./lib/SettingsPage.svelte";
   import SnapshotDialog from "./lib/SnapshotDialog.svelte";
   import AgentPanel from "./lib/AgentPanel.svelte";
@@ -71,6 +74,14 @@
   const cellIds = $derived(new Set([...cells.map((c) => c.id), ...variables.map((v) => v.id)]));
   let sidebar = $state(true);
   let sidebarTab = $state<SidebarTab>("outline");
+  let bottomTab = $state<BottomTab>("variables");
+  let bottomOpen = $state(false);
+  let functions = $state(false);
+  const columns = $derived(
+    [sidebar && "300px", "minmax(0, 1fr)", agentPanel && "minmax(320px, 400px)", functions && "minmax(300px, 380px)"]
+      .filter(Boolean)
+      .join(" "),
+  );
   /** Agents' proposals for the open document (ADR-0016), newest first. */
   let proposals = $state.raw<ProposalView[]>([]);
   let proposalTimer: ReturnType<typeof setTimeout> | undefined;
@@ -103,8 +114,8 @@
     });
 
   function showProposals() {
-    sidebar = true;
-    sidebarTab = "proposals";
+    bottomOpen = true;
+    bottomTab = "proposals";
   }
 
   // Markers in the document for open proposals (latest version only).
@@ -350,7 +361,12 @@
 
   const heading = $derived.by(() => {
     if (!doc) return "";
-    if (selected.kind === "latest") return `Version ${doc.version}`;
+    const groups = groupHistory(history, doc.refs, doc.earliestVersion);
+    const named = (v: number) => {
+      const l = labelOf(groups, v);
+      return l ? `${l} · ` : "";
+    };
+    if (selected.kind === "latest") return `${named(doc.version)}Version ${doc.version}`;
     if (selected.kind === "ref") {
       const name = selected.name;
       const r = doc.refs.find((x) => x.name === name);
@@ -358,7 +374,7 @@
     }
     const v = (selected as { version: number }).version;
     const info = history.find((h) => h.version === v);
-    return `Version ${v}${info ? ` · ${date(info.timestampMs)}` : ""}`;
+    return `${named(v)}Version ${v}${info ? ` · ${date(info.timestampMs)}` : ""}`;
   });
 
   const saveLabel = $derived(
@@ -372,6 +388,14 @@
     if (e.key === "," && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       settingsPage = settingsPage ?? "agents";
+    }
+    if (e.key.toLowerCase() === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
+      e.preventDefault();
+      functions = !functions;
+    }
+    if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && doc) {
+      e.preventDefault();
+      bottomOpen = !bottomOpen;
     }
   }}
 />
@@ -442,12 +466,11 @@
   {/if}
 
   {#if doc}
-    <div class="main" class:nosidebar={!sidebar} class:withagent={agentPanel}>
+    <div class="workspace">
+    <div class="main" style="grid-template-columns: {columns}">
       {#if sidebar}
         <Sidebar
           {outline}
-          {variables}
-          {editable}
           {history}
           refs={doc.refs}
           latest={doc.version}
@@ -455,12 +478,7 @@
           {selected}
           onselect={show}
           onjump={(pos) => editor?.jumpTo(pos)}
-          onjumpcell={(id) => editor?.jumpToCell(id)}
-          ondescribe={(id, d) => editor?.setDescription(id, d)}
           onsnapshot={() => (modal = "snapshot")}
-          {proposals}
-          onaccept={acceptProposal}
-          onreject={rejectProposal}
           bind:tab={sidebarTab}
         />
       {/if}
@@ -527,6 +545,7 @@
             onvariables={(v) => (variables = v)}
             onerror={(m) => (error = m)}
             onproposal={showProposals}
+            onfunctions={() => (functions = !functions)}
           />
         </div>
       </main>
@@ -538,6 +557,21 @@
           onsettings={(section) => (settingsPage = section)}
         />
       {/if}
+      {#if functions}
+        <FunctionReference {editable} oninsert={(t, back) => editor?.insertInCalc(t, back)} onclose={() => (functions = false)} />
+      {/if}
+    </div>
+    <BottomPanel
+      {variables}
+      {editable}
+      {proposals}
+      onjumpcell={(id) => editor?.jumpToCell(id)}
+      ondescribe={(id, d) => editor?.setDescription(id, d)}
+      onaccept={acceptProposal}
+      onreject={rejectProposal}
+      bind:tab={bottomTab}
+      bind:open={bottomOpen}
+    />
     </div>
   {:else}
     <div class="welcome">
@@ -595,7 +629,9 @@
 {/if}
 
 <style>
-  .app { display: grid; grid-template-rows: auto auto 1fr; height: 100%; }
+  .app { display: flex; flex-direction: column; height: 100%; }
+  .app > :global(*) { flex: none; }
+  .app > .workspace { flex: 1; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
   .bar {
     display: flex; align-items: center; gap: 8px; padding: 6px 10px;
     background: var(--panel); border-bottom: 1px solid var(--border);
@@ -630,10 +666,7 @@
     background: var(--panel); border-bottom: 1px solid var(--border);
   }
   .notice span:first-child { flex: 1; }
-  .main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
-  .main.nosidebar { grid-template-columns: 1fr; }
-  .main.withagent { grid-template-columns: 300px 1fr minmax(320px, 400px); }
-  .main.nosidebar.withagent { grid-template-columns: 1fr minmax(320px, 400px); }
+  .main { display: grid; min-height: 0; }
   /* Layers: the document is its own stacking context, so its flyouts (block menu, z 5) stay
      under the sticky version bar (z 10); app menus (z 20) and dialogs (Modal, z 30) are above it. */
   main { overflow: auto; min-width: 0; background: var(--bg); isolation: isolate; }
@@ -678,6 +711,6 @@
     .page { --pad-t: 20px; --pad-l: 96px; --pad-r: 24px; --gutter: 94px; padding: var(--pad-t) var(--pad-r) 20px var(--pad-l); margin: 0; border-radius: 0; border-left: none; border-right: none; }
   }
   @media (max-width: 760px) {
-    .main { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; }
+    .main { grid-template-columns: 1fr !important; grid-template-rows: 40% 1fr; }
   }
 </style>

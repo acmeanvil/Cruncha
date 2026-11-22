@@ -392,6 +392,43 @@ export interface ValueView {
   summary?: string | null;
   /** Vectors, matrices, frames: their size ("3 × 4 matrix"), shown while collapsed. */
   shape?: string | null;
+  /** The same: columns and the first and last rows, for the inspector. */
+  preview?: Preview | null;
+}
+
+/** The calc language's functions, operators and constants (cruncha-eval reference/functions.json). */
+export interface FunctionReference {
+  categories: string[];
+  entries: FunctionEntry[];
+}
+
+export interface FunctionEntry {
+  name: string;
+  category: string;
+  signature: string;
+  summary: string;
+  /** Lines evaluated in turn; the last one's result is `result` (checked by a test). */
+  example?: string[];
+  result?: string;
+  /** Works, but not as the name suggests. */
+  caution?: string;
+  /** false: parsed but not evaluated yet (`note` says what to use). */
+  available?: boolean;
+  note?: string;
+  /** What Insert types (default: `name()` with the cursor inside). */
+  insert?: string;
+}
+
+/** The start and end of a vector, matrix or data frame (engine.rs `Preview`). */
+export interface Preview {
+  rows: number;
+  columns: { name: string; unit: string | null; dtype: "number" | "text"; missing: number }[];
+  /** How many of `columns` the rows show (the first ones). */
+  shownColumns: number;
+  head: string[][];
+  /** The last rows, when `head` doesn't reach them. */
+  tail: string[][];
+  rowNames: boolean;
 }
 
 export type Change = { op: "upsert"; cell: Cell } | { op: "delete"; id: string };
@@ -465,6 +502,7 @@ export const api = {
   setupPython: () => invoke<Record<string, CellResult>>("setup_python"),
   /** Set up Rust for Rust cells (progress as `rust-setup` events). */
   setupRust: () => invoke<Record<string, CellResult>>("setup_rust"),
+  functionReference: () => invoke<FunctionReference>("function_reference"),
   trustDocument: () => invoke<Record<string, CellResult>>("trust_document"),
   /** Run these Python cells (all if omitted), even if nothing changed. */
   runPython: (ids?: string[]) => invoke<Record<string, CellResult>>("run_python", { ids: ids ?? null }),

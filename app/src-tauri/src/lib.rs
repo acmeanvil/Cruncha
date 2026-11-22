@@ -14,6 +14,7 @@
 
 mod agent_panel;
 mod agents;
+mod connection;
 mod engine;
 mod figures;
 mod login_path;
@@ -51,6 +52,7 @@ async fn agent_server_status(a: State<'_, AgentServer>) -> Result<Option<agents:
 /// Allow agents on this computer to use the open document (read, results, checks, history).
 #[tauri::command]
 async fn agent_server_start(
+    app: AppHandle,
     s: State<'_, Shared>,
     a: State<'_, AgentServer>,
 ) -> Result<agents::AgentServerView> {
@@ -61,6 +63,16 @@ async fn agent_server_start(
     let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), "ai:external-agent".into()))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
+    // The connection file, so clients on this computer find the server without copy and paste.
+    if let Ok(data) = app.path().app_data_dir() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        let c = connection::Connection::new(&server.url, &server.token, report::iso_utc(now));
+        if let Err(e) = connection::write(&connection::path(&data), &c) {
+            eprintln!("cruncha: couldn't write the agent connection file: {e}");
+        }
+    }
     let view = (&server).into();
     *slot = Some(server);
     Ok(view)
@@ -192,11 +204,19 @@ async fn agent_conversation(
 }
 
 #[tauri::command]
-async fn agent_server_stop(a: State<'_, AgentServer>) -> Result<()> {
+async fn agent_server_stop(app: AppHandle, a: State<'_, AgentServer>) -> Result<()> {
     if let Some(server) = a.0.lock().await.take() {
-        server.stop();
+        stop_server(&app, &server);
     }
     Ok(())
+}
+
+/// Stop the agent server and remove its connection file.
+fn stop_server(app: &AppHandle, server: &cruncha_mcp::http::Server) {
+    server.stop();
+    if let Ok(data) = app.path().app_data_dir() {
+        connection::remove(&connection::path(&data), &server.token);
+    }
 }
 type Result<T> = session::Result<T>;
 
@@ -496,6 +516,12 @@ async fn setup_python(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<St
 
 /// Set up Rust for Rust cells (ADR-0006): Cruncha's own toolchain, then a first build of the
 /// prelude (a minute or two; progress as `rust-setup` events). The session isn't locked meanwhile.
+/// The calc language's function reference (`cruncha_eval::REFERENCE`).
+#[tauri::command]
+fn function_reference() -> Result<serde_json::Value> {
+    serde_json::from_str(cruncha_eval::REFERENCE).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn setup_rust(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
     let base = s.lock().await.rust_base();
@@ -784,6 +810,7 @@ pub fn run() {
             setup_python,
             trust_document,
             setup_rust,
+            function_reference,
             run_python,
             stop_python,
             restart_python,
@@ -817,7 +844,7 @@ pub fn run() {
                 let a = app.state::<AgentServer>();
                 tauri::async_runtime::block_on(async {
                     if let Some(server) = a.0.lock().await.take() {
-                        server.stop();
+                        stop_server(app, &server);
                     }
                     s.lock().await.close().await;
                 });

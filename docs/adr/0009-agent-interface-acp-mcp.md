@@ -73,6 +73,7 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - Tools: `read_doc` (the text mirror), `run` (current results, waiting for Python), `explain`, `check`, `history`.
    - Built on `rmcp` 3.11 (Apache-2.0), Streamable HTTP, served by the app on 127.0.0.1 with a bearer token, behind a Host check and refusal of browser `Origin`s.
    - The user turns it on in the Agents dialog, which shows the `claude mcp add` command.
+   - *Follow-up 2026-11-22:* while it runs, the app also writes the URL and token to `<app data>/agents/server.json` (0600; removed when it stops), so local clients such as looking_glass connect without copy and paste.
    - The crate doesn't depend on `cruncha-store`; the app implements its `Backend` trait.
 2. [x] Try the interim setup: looking_glass + Claude Code + `cruncha-mcp`. Check that the external ACP adapters actually honor `mcpServers` and project skills. Verified 2026-11-22 in the app's agent panel with Claude Code (Claude Agent adapter): it loaded `cruncha-core`, listed the five Cruncha skills, and called `read_doc` on Cruncha's MCP server, reporting the document's 12 cells and the engine's results.
 3. [x] Port `lg-acp` with the `mcpServers` and capability changes (2026-11-20):

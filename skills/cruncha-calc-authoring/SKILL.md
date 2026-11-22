@@ -74,6 +74,15 @@ end
 - Assertions: `@test ϕM_n ≥ M_u`. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions. The report's cover lists every `@test` with OK or NOT OK and the sheet it is on. A test that couldn't be evaluated (an error, or an input from Python that hasn't run) is listed as ERROR or NOT CALCULATED, never as OK.
 - Units in a test's comparison value are quoted: `@test V_u < 25 'kips'`.
 
+## Built-in functions
+
+The full list, each with an example whose result is checked by a test, is `crates/cruncha-eval/reference/functions.json` (the app's ƒx Functions palette). Units inside an expression are quoted: `hypot(3 'm', 4 'm')`. Watch for these, inherited from Hurmet:
+
+- `mod(a, b)` is `|rem(a, b)|`: `mod(-7, 3)` is 1, not 2.
+- `rms(a, b)` is `√(a² + b²)` (the same as `hypot`), not the root mean square.
+- Not evaluated yet: `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `variance`, `stddev`, `Char`, `trace`, `roundSig`. Use `acos(1/x)`, `asin(1/x)`, `atan(1/x)`, `asinh(1/x)`, or a Python cell for statistics.
+- `e` isn't a constant: write `exp(1)`. `π` and `j` (the imaginary unit) work.
+
 ## Checklist before proposing a calc
 
 - [ ] Every input has a unit, and a cited source or a placeholder `_`.

@@ -3,7 +3,7 @@
 import { expect, test } from "vitest";
 import type { Cell, CellResult } from "../api";
 import { descriptionOf, docFromCells, nodeToContent, withDescription } from "./cells";
-import { isTall, matches, variablesOf } from "./variables";
+import { isTall, matches, typeOf, unitOf, variablesOf } from "./variables";
 
 function cell(id: string, kind: string, key: string, source: string, attrs: unknown = {}): Cell {
   return {
@@ -66,4 +66,18 @@ test("the meta cell (report settings) is not a block, so the editor never shows 
   const doc = docFromCells([cell("META", "meta", "0", "", { report: { title: { project: "X" } } }), ...cells]);
   expect(doc.childCount).toBe(cells.length);
   doc.forEach((n) => expect(n.attrs.id).not.toBe("META"));
+});
+
+test("the table's unit and type columns", () => {
+  const vs = variablesOf(docFromCells(cells), (id) => results[id]);
+  const M = vs.find((v) => v.name === "M")!;
+  expect(unitOf(M)).toBe("kip·ft");
+  expect(typeOf(M)).toBe("number");
+  const cols = (units: (string | null)[]) => units.map((unit, i) => ({ name: `c${i}`, unit, dtype: "number" as const, missing: 0 }));
+  const frame = { rows: 3, shownColumns: 2, head: [], tail: [], rowNames: false };
+  expect(unitOf({ ...M, valueKind: "dataframe", preview: { ...frame, columns: cols(["m", "m"]) } })).toBe("m");
+  expect(unitOf({ ...M, valueKind: "dataframe", preview: { ...frame, columns: cols(["m", "kN"]) } })).toBe("mixed");
+  expect(typeOf({ ...M, valueKind: "dataframe" })).toBe("data frame");
+  expect(typeOf({ ...M, valueKind: "python" })).toBe("Python object");
+  expect(unitOf({ ...M, text: "n = 12" })).toBe("");
 });

@@ -19,7 +19,7 @@ use crate::{Error, Formats};
 use regex::Regex;
 use std::sync::LazyLock;
 
-const BUILT_IN_FUNCTIONS: &[&str] = &[
+pub const BUILT_IN_FUNCTIONS: &[&str] = &[
     "Char",
     "Int",
     "abs",
@@ -105,7 +105,7 @@ const BUILT_IN_FUNCTIONS: &[&str] = &[
     "Γ",
 ];
 
-const BUILT_IN_REDUCER_FUNCTIONS: &[&str] = &[
+pub const BUILT_IN_REDUCER_FUNCTIONS: &[&str] = &[
     "accumulate",
     "beamDiagram",
     "dataframe",

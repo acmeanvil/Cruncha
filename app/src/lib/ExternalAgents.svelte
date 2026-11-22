@@ -80,6 +80,11 @@
       · Only programs on this computer that have the token can connect. Turning this off, or quitting
       Cruncha, disconnects them; the token changes every time you turn it on.
     </p>
+    <p class="small muted">
+      While this is on, the address and token are also in <code>agents/server.json</code> in Cruncha's
+      application data folder (readable only by you), so tools such as looking_glass can connect without
+      copying.
+    </p>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 </div>

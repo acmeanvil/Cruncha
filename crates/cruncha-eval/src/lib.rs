@@ -109,6 +109,11 @@ pub use cruncha_units::{Currencies, Rational};
 pub use exchange::{ColumnData, Num, Plain, PlainColumn, UnitView};
 pub use value::{Kind, Value};
 
+/// The function reference (JSON): built-in functions, operators and constants with a
+/// signature, a summary and an example whose result `tests/reference.rs` checks. The app shows
+/// it as its function palette.
+pub const REFERENCE: &str = include_str!("../reference/functions.json");
+
 /// Whether calculations convert to SI base units and check dimensions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UnitAware {

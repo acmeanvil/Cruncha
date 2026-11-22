@@ -67,14 +67,125 @@ pub struct ValueView {
     /// For vectors, matrices and data frames: their size, e.g. `3 × 4 matrix`, so the browser
     /// can show a one-line label while the value is collapsed.
     pub shape: Option<String>,
+    /// For the same: columns, their units and the first and last rows, for the variable
+    /// inspector (a large frame is never sent whole).
+    pub preview: Option<Preview>,
+}
+
+/// The start and end of a vector, matrix or data frame, as text (the variable inspector).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub rows: usize,
+    /// All columns, even those not in `head`/`tail` (see `shown_columns`).
+    pub columns: Vec<PreviewColumn>,
+    /// How many of `columns` the rows show (the first ones).
+    pub shown_columns: usize,
+    /// The first rows (all of them when there are few).
+    pub head: Vec<Vec<String>>,
+    /// The last rows, when `head` doesn't reach them.
+    pub tail: Vec<Vec<String>>,
+    /// The first column names the rows.
+    pub row_names: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PreviewColumn {
+    pub name: String,
+    pub unit: Option<String>,
+    /// `number` or `text`.
+    pub dtype: &'static str,
+    /// Empty cells (frames only).
+    pub missing: usize,
+}
+
+const PREVIEW_ROWS: usize = 5;
+const PREVIEW_COLUMNS: usize = 40;
+
+fn num_text(x: f64) -> String {
+    if x != 0.0 && (x.abs() >= 1e15 || x.abs() < 1e-6) {
+        format!("{x:e}")
+    } else {
+        format!("{x}")
+    }
+}
+
+/// Rows `head` and `tail` of a table with `rows` rows, `cell(r, c)` for the first `cols` columns.
+fn ends(rows: usize, cols: usize, cell: impl Fn(usize, usize) -> String) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let row = |r: usize| (0..cols).map(|c| cell(r, c)).collect::<Vec<_>>();
+    if rows <= 2 * PREVIEW_ROWS {
+        ((0..rows).map(row).collect(), Vec::new())
+    } else {
+        ((0..PREVIEW_ROWS).map(row).collect(), (rows - PREVIEW_ROWS..rows).map(row).collect())
+    }
+}
+
+fn preview_of(plain: &cruncha_eval::Plain) -> Option<Preview> {
+    use cruncha_eval::{ColumnData, Plain};
+    let unit = |u: &Option<cruncha_eval::UnitView>| u.as_ref().and_then(|u| u.name.clone());
+    match plain {
+        Plain::Array { shape, values, unit: u, .. } => {
+            let (rows, cols) = match shape.as_slice() {
+                [n] => (*n, 1),
+                [r, c] => (*r, *c),
+                _ => return None,
+            };
+            let shown = cols.min(PREVIEW_COLUMNS);
+            let columns = (0..cols)
+                .map(|c| PreviewColumn {
+                    name: if cols == 1 { "value".into() } else { (c + 1).to_string() },
+                    unit: unit(u),
+                    dtype: "number",
+                    missing: 0,
+                })
+                .collect();
+            let (head, tail) = ends(rows, shown, |r, c| values.get(r * cols + c).map_or_else(String::new, |x| num_text(*x)));
+            Some(Preview { rows, columns, shown_columns: shown, head, tail, row_names: false })
+        }
+        Plain::Frame { columns: cs, row_names } => {
+            let len = |d: &ColumnData| match d {
+                ColumnData::Number { values } => values.len(),
+                ColumnData::Text { values } => values.len(),
+            };
+            let rows = cs.first().map_or(0, |c| len(&c.data));
+            let columns = cs
+                .iter()
+                .map(|c| PreviewColumn {
+                    name: c.name.clone(),
+                    unit: unit(&c.unit),
+                    dtype: match c.data {
+                        ColumnData::Number { .. } => "number",
+                        ColumnData::Text { .. } => "text",
+                    },
+                    missing: match &c.data {
+                        ColumnData::Number { values } => values.iter().filter(|v| v.is_none()).count(),
+                        ColumnData::Text { values } => values.iter().filter(|v| v.is_none()).count(),
+                    },
+                })
+                .collect();
+            let shown = cs.len().min(PREVIEW_COLUMNS);
+            let (head, tail) = ends(rows, shown, |r, c| match &cs[c].data {
+                ColumnData::Number { values } => values.get(r).copied().flatten().map_or_else(String::new, num_text),
+                ColumnData::Text { values } => values.get(r).cloned().flatten().unwrap_or_default(),
+            });
+            Some(Preview { rows, columns, shown_columns: shown, head, tail, row_names: *row_names })
+        }
+        _ => None,
+    }
 }
 
 /// `vector of 51`, `3 × 4 matrix`, `12 rows × 3 columns`: the size of a multi-line value.
-fn shape_of(v: &Value) -> Option<String> {
-    use cruncha_eval::{Kind, Plain};
+fn shape_of(v: &Value) -> (Option<String>, Option<Preview>) {
+    use cruncha_eval::Kind;
     if !matches!(v.kind(), Kind::Vector | Kind::Matrix | Kind::DataFrame) {
-        return None;
+        return (None, None);
     }
+    let plain = v.to_plain();
+    (shape_text(&plain), preview_of(&plain))
+}
+
+fn shape_text(plain: &cruncha_eval::Plain) -> Option<String> {
+    use cruncha_eval::Plain;
     let plural = |n: usize, one: &str| {
         if n == 1 {
             format!("1 {one}")
@@ -82,7 +193,7 @@ fn shape_of(v: &Value) -> Option<String> {
             format!("{n} {one}s")
         }
     };
-    match v.to_plain() {
+    match plain {
         Plain::Array {
             shape, orientation, ..
         } => match shape.as_slice() {
@@ -95,7 +206,7 @@ fn shape_of(v: &Value) -> Option<String> {
                 cruncha_eval::ColumnData::Number { values } => values.len(),
                 cruncha_eval::ColumnData::Text { values } => values.len(),
             });
-            let cols = columns.len() - usize::from(row_names && !columns.is_empty());
+            let cols = columns.len() - usize::from(*row_names && !columns.is_empty());
             Some(format!(
                 "{} × {}",
                 plural(rows, "row"),
@@ -109,12 +220,16 @@ fn shape_of(v: &Value) -> Option<String> {
 fn value_views(values: &[(String, Value)]) -> Vec<ValueView> {
     values
         .iter()
-        .map(|(name, v)| ValueView {
-            name: name.clone(),
-            tex: v.tex().to_owned(),
-            kind: format!("{:?}", v.kind()).to_lowercase(),
-            summary: None,
-            shape: shape_of(v),
+        .map(|(name, v)| {
+            let (shape, preview) = shape_of(v);
+            ValueView {
+                name: name.clone(),
+                tex: v.tex().to_owned(),
+                kind: format!("{:?}", v.kind()).to_lowercase(),
+                summary: None,
+                shape,
+                preview,
+            }
         })
         .collect()
 }
@@ -1159,19 +1274,24 @@ fn py_value_views(o: &PyOutcome) -> Vec<ValueView> {
         .iter()
         .map(
             |(name, summary)| match o.values.iter().find(|(n, _)| n == name) {
-                Some((_, v)) => ValueView {
-                    name: name.clone(),
-                    tex: v.tex().to_owned(),
-                    kind: format!("{:?}", v.kind()).to_lowercase(),
-                    summary: Some(summary.clone()),
-                    shape: shape_of(v),
-                },
+                Some((_, v)) => {
+                    let (shape, preview) = shape_of(v);
+                    ValueView {
+                        name: name.clone(),
+                        tex: v.tex().to_owned(),
+                        kind: format!("{:?}", v.kind()).to_lowercase(),
+                        summary: Some(summary.clone()),
+                        shape,
+                        preview,
+                    }
+                }
                 None => ValueView {
                     name: name.clone(),
                     tex: String::new(),
                     kind: "python".into(),
                     summary: Some(summary.clone()),
                     shape: None,
+                    preview: None,
                 },
             },
         )
@@ -1325,6 +1445,33 @@ mod tests {
             "{:?}",
             r["M"]
         );
+    }
+
+    #[test]
+    fn previews_show_the_ends_of_large_values() {
+        use cruncha_eval::{ColumnData, Plain, PlainColumn};
+        let mut e = Engine::new();
+        let r = e.run(&[calc("X", "a", "x = [1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12] 'm'"), calc("A", "b", "A = [1, 2; 3, 4]")]);
+        assert_eq!((r["X"].error.as_deref(), r["A"].error.as_deref()), (None, None), "{:?}", r);
+        let p = r["X"].values[0].preview.clone().expect("a vector has a preview");
+        assert_eq!((p.rows, p.columns.len(), p.head.len(), p.tail.len()), (12, 1, 5, 5), "{p:?}");
+        assert_eq!(p.columns[0].unit.as_deref(), Some("m"));
+        assert_eq!((p.head[0][0].as_str(), p.tail[4][0].as_str()), ("1", "12"));
+        let a = r["A"].values[0].preview.clone().unwrap();
+        assert_eq!((a.rows, a.head.clone(), a.tail.len()), (2, vec![vec!["1".to_string(), "2".into()], vec!["3".into(), "4".into()]], 0));
+        // A frame: dtypes, missing cells, and only the first PREVIEW_COLUMNS columns in the rows.
+        let mut columns = vec![
+            PlainColumn { name: "id".into(), unit: None, data: ColumnData::Text { values: vec![Some("a".into()), None] } },
+            PlainColumn { name: "F".into(), unit: None, data: ColumnData::Number { values: vec![Some(2.5), Some(1e-9)] } },
+        ];
+        for i in 0..50 {
+            columns.push(PlainColumn { name: format!("c{i}"), unit: None, data: ColumnData::Number { values: vec![None, None] } });
+        }
+        let f = preview_of(&Plain::Frame { columns, row_names: true }).unwrap();
+        assert_eq!((f.rows, f.columns.len(), f.shown_columns, f.head[0].len()), (2, 52, PREVIEW_COLUMNS, PREVIEW_COLUMNS));
+        assert_eq!((f.columns[0].dtype, f.columns[0].missing, f.columns[1].dtype), ("text", 1, "number"));
+        assert_eq!((f.head[1][0].as_str(), f.head[1][1].as_str()), ("", "1e-9"));
+        assert!(r["X"].values[0].shape.as_deref().unwrap().contains("12"));
     }
 
     #[test]

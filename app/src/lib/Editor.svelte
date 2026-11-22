@@ -38,6 +38,7 @@
     onvariables,
     onerror,
     onproposal,
+    onfunctions,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -51,6 +52,8 @@
     onerror?: (message: string) => void;
     /** A proposal marker was clicked. */
     onproposal?: () => void;
+    /** The toolbar's function reference button. */
+    onfunctions?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -112,6 +115,31 @@
       if (found === null && n.attrs.id === id) found = pos;
     });
     return found;
+  }
+
+  /**
+   * Type `text` into the calc being edited, at its cursor (then the cursor goes `back`
+   * characters before the end of `text`, e.g. inside `sqrt()`). With no calc open, add a calc
+   * below the current block with `text` and open it.
+   */
+  export function insertInCalc(text: string, back = 0) {
+    if (!view || !editable) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement && active.classList.contains("calc-input") && host.contains(active)) {
+      const { selectionStart: a, selectionEnd: b } = active;
+      active.setRangeText(text, a, b, "end");
+      const at = a + text.length - back;
+      active.setSelectionRange(at, at);
+      active.dispatchEvent(new Event("input", { bubbles: true }));
+      active.focus();
+      return;
+    }
+    const sel = view.state.selection;
+    const at = sel instanceof NodeSelection ? sel.to : sel.$from.depth >= 1 ? sel.$from.after(1) : sel.$from.pos;
+    const fresh = schema.nodes.calc.create({ editing: true, source: text });
+    const tr = view.state.tr.insert(at, fresh);
+    tr.setSelection(NodeSelection.create(tr.doc, at));
+    view.dispatch(tr.scrollIntoView());
   }
 
   /** Jump to the block for cell `id`. */
@@ -408,6 +436,10 @@
     <button onclick={() => insert(newHeading(2))} title="Heading (type ## then space)">Heading</button>
     <button onclick={() => insert(newCalc())} title="Calculation (⌘E, or type = then space)">Calc</button>
     <button onclick={() => insert(newCode("python"))} title="Python cell (⌘⌥P); not run yet">Python</button>
+    {#if onfunctions}
+      <span class="sep"></span>
+      <button onclick={onfunctions} title="Functions, operators and constants (⌘⇧F)"><i>ƒ</i>x Functions</button>
+    {/if}
     <span class="sep"></span>
     <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
     <button onclick={() => run(moveBlock(1))} title="Move block down (⌥↓)" aria-label="Move block down">↓</button>

@@ -2,7 +2,7 @@
 // The variable browser's model: every name the document defines, in document order, with its
 // value, description, where it is defined and what uses it.
 import type { Node } from "prosemirror-model";
-import type { CellResult } from "../api";
+import type { CellResult, Preview } from "../api";
 import { descriptionOf } from "./cells";
 
 export interface Variable {
@@ -23,6 +23,8 @@ export interface Variable {
   valueKind: string | null;
   /** Vectors, matrices, frames: their size ("3 × 4 matrix"). */
   shape: string | null;
+  /** Vectors, matrices, frames: columns and the first and last rows. */
+  preview: Preview | null;
   /** The defining cell's plain-text result line. */
   text: string;
   error: string | null;
@@ -58,6 +60,7 @@ export function variablesOf(doc: Node, resultOf: (id: string) => CellResult | un
         summary: v?.summary ?? null,
         valueKind: v?.kind ?? null,
         shape: v?.shape ?? null,
+        preview: v?.preview ?? null,
         text: r.text ?? "",
         error: r.error,
         warnings: r.warnings ?? [],
@@ -77,6 +80,26 @@ export function variablesOf(doc: Node, resultOf: (id: string) => CellResult | un
  *  browser shows these collapsed to their size, with a toggle. */
 export function isTall(v: Variable): boolean {
   return v.shape != null || /\\begin\{|\\\\/.test(v.tex ?? "");
+}
+
+/** The unit a value is shown in, from its preview or its plain-text result ("108 kip·ft"). */
+export function unitOf(v: Variable): string {
+  if (v.preview) {
+    const units = new Set(v.preview.columns.map((c) => c.unit).filter(Boolean));
+    return units.size === 1 ? [...units][0]! : units.size ? "mixed" : "";
+  }
+  if (v.valueKind !== "number") return "";
+  const m = /[-+]?(?:\d[\d,]*\.?\d*|\.\d+)(?:e[-+]?\d+)?\s+(\S.*)$/i.exec(v.text.split(" = ").pop() ?? "");
+  return m ? m[1] : "";
+}
+
+/** What kind of value: "number", "matrix", "data frame", "Python object", … */
+export function typeOf(v: Variable): string {
+  if (v.error && !v.valueKind) return "error";
+  const k = v.valueKind ?? "";
+  if (k === "python") return "Python object";
+  if (k === "dataframe") return "data frame";
+  return k || "—";
 }
 
 /** Does `v` match the search text (name or description, case-insensitive)? */
