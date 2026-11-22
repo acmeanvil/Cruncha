@@ -41,7 +41,9 @@ use deltalake::kernel::engine::arrow_conversion::TryIntoKernel as _;
 use deltalake::kernel::transaction::CommitProperties;
 use deltalake::operations::vacuum::{Clock, VacuumMode};
 use deltalake::protocol::SaveMode;
-use deltalake::{DeltaTable, checkpoints};
+use deltalake::{DeltaTable, DeltaTableBuilder, checkpoints};
+
+use crate::logindex::LogIndexStore;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -206,6 +208,8 @@ pub struct Store {
     /// Edit commits since the last squash.
     since_squash: u64,
     squash_every: u64,
+    /// The file system, with indexed `_delta_log` listings (ADR-0021).
+    storage: Arc<LogIndexStore>,
     /// Held for the life of the store; released on drop.
     _lock: File,
 }
@@ -261,15 +265,30 @@ fn commit_props(
     CommitProperties::default().with_metadata(meta)
 }
 
+/// A container's storage: the local file system with indexed `_delta_log` listings.
+fn new_storage() -> Arc<LogIndexStore> {
+    Arc::new(LogIndexStore::new(Arc::new(deltalake::logstore::object_store::local::LocalFileSystem::new())))
+}
+
+/// The table at `path`, through `storage`.
+async fn open_table(path: &Path, storage: &Arc<LogIndexStore>) -> Result<DeltaTable> {
+    storage.register(path).map_err(|e| Error::Corrupt(e.to_string()))?;
+    let url = dir_url(path)?;
+    Ok(DeltaTableBuilder::from_url(url.clone())?.with_storage_backend(storage.clone(), url).load().await?)
+}
+
 async fn create_table(
     path: &Path,
     name: &str,
     schema: &deltalake::arrow::datatypes::Schema,
     actor: &str,
+    storage: &Arc<LogIndexStore>,
 ) -> Result<DeltaTable> {
     fs::create_dir_all(path)?;
+    storage.register(path).map_err(|e| Error::Corrupt(e.to_string()))?;
     let kernel: StructType = schema.try_into_kernel()?;
-    let table = DeltaTable::try_from_url(dir_url(path)?).await?;
+    let url = dir_url(path)?;
+    let table = DeltaTableBuilder::from_url(url.clone())?.with_storage_backend(storage.clone(), url).build()?;
     let table = table
         .create()
         .with_table_name(name)
@@ -365,8 +384,9 @@ impl Store {
         let root = root.canonicalize()?;
         let lock = acquire_lock(&root)?;
 
-        let doc = create_table(&root.join("doc"), "doc", &schema::DOC_LOG_SCHEMA, actor).await?;
-        let refs = create_table(&root.join("refs"), "refs", &schema::REFS_SCHEMA, actor).await?;
+        let storage = new_storage();
+        let doc = create_table(&root.join("doc"), "doc", &schema::DOC_LOG_SCHEMA, actor, &storage).await?;
+        let refs = create_table(&root.join("refs"), "refs", &schema::REFS_SCHEMA, actor, &storage).await?;
 
         // The manifest is written last, so a half-created directory is never mistaken for a
         // valid container.
@@ -396,6 +416,7 @@ impl Store {
             blob_threshold: blobs::DEFAULT_BLOB_THRESHOLD,
             since_squash: 0,
             squash_every: DEFAULT_SQUASH_EVERY,
+            storage,
             _lock: lock,
         })
     }
@@ -416,23 +437,24 @@ impl Store {
             return Err(Error::UnsupportedFormat(manifest.format_version));
         }
         let lock = acquire_lock(&root)?;
-        let doc = deltalake::open_table(dir_url(&root.join("doc"))?).await?;
-        let refs = deltalake::open_table(dir_url(&root.join("refs"))?).await?;
+        let storage = new_storage();
+        let doc = open_table(&root.join("doc"), &storage).await?;
+        let refs = open_table(&root.join("refs"), &storage).await?;
         let pins_dir = root.join("pins");
         let pins = if pins_dir.join("_delta_log").is_dir() {
-            Some(deltalake::open_table(dir_url(&pins_dir)?).await?)
+            Some(open_table(&pins_dir, &storage).await?)
         } else {
             None
         };
         let proposals_dir = root.join("proposals");
         let proposals = if proposals_dir.join("_delta_log").is_dir() {
-            Some(deltalake::open_table(dir_url(&proposals_dir)?).await?)
+            Some(open_table(&proposals_dir, &storage).await?)
         } else {
             None
         };
         let results_dir = root.join("results");
         let results = if results_dir.join("_delta_log").is_dir() {
-            Some(deltalake::open_table(dir_url(&results_dir)?).await?)
+            Some(open_table(&results_dir, &storage).await?)
         } else {
             None
         };
@@ -453,6 +475,7 @@ impl Store {
             clock_offset_us: 0,
             since_squash,
             squash_every: DEFAULT_SQUASH_EVERY,
+            storage,
             _lock: lock,
         };
         if store.manifest.format_version < FORMAT_VERSION {
@@ -1006,6 +1029,8 @@ impl Store {
             None,
         )
         .await?;
+        // That wrote the log through its own storage: read the directories again.
+        self.storage.forget();
 
         // 3. The point of no return: from here on, versions before the cutoff are reported as
         //    pruned even if the deletions below are interrupted.
@@ -1118,9 +1143,9 @@ impl Store {
             None => {
                 let dir = self.root.join("pins");
                 if dir.join("_delta_log").is_dir() {
-                    deltalake::open_table(dir_url(&dir)?).await?
+                    open_table(&dir, &self.storage).await?
                 } else {
-                    create_table(&dir, "pins", &schema::PINS_SCHEMA, actor).await?
+                    create_table(&dir, "pins", &schema::PINS_SCHEMA, actor, &self.storage).await?
                 }
             }
         };
@@ -1205,9 +1230,9 @@ impl Store {
             None => {
                 let dir = self.root.join("proposals");
                 if dir.join("_delta_log").is_dir() {
-                    deltalake::open_table(dir_url(&dir)?).await?
+                    open_table(&dir, &self.storage).await?
                 } else {
-                    create_table(&dir, "proposals", &proposals::PROPOSALS_SCHEMA, &actor).await?
+                    create_table(&dir, "proposals", &proposals::PROPOSALS_SCHEMA, &actor, &self.storage).await?
                 }
             }
         };
@@ -1517,9 +1542,9 @@ impl Store {
             None => {
                 let dir = self.root.join("results");
                 if dir.join("_delta_log").is_dir() {
-                    deltalake::open_table(dir_url(&dir)?).await?
+                    open_table(&dir, &self.storage).await?
                 } else {
-                    create_table(&dir, "results", &results::RESULTS_SCHEMA, actor).await?
+                    create_table(&dir, "results", &results::RESULTS_SCHEMA, actor, &self.storage).await?
                 }
             }
         };

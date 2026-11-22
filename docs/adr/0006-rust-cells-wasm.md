@@ -1,6 +1,6 @@
 # ADR-0006: Rust cells compile to WASM and run in wasmtime
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-18
 **Deciders:** acmeanvil
 

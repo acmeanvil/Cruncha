@@ -52,3 +52,12 @@ Listing `_delta_log` at 10,000 versions: 11 ms for the names alone, **66 ms with
 3. **The cost is linear in versions ever kept,** so "Keep everything" documents slow down without bound; documents with any save limit stay bounded.
 4. **Disk:** at 10,000 versions, checkpoints are most of `_delta_log` (100 checkpoints growing to 743 KiB, about 37 of 47 MiB).
 5. **Reading the latest version is unaffected** (4–20 ms): the open `Store` holds its snapshot.
+
+## After ADR-0021 (indexed listing)
+
+At 10,000 versions on the same container:
+- commit p50 is 15 ms (84 before);
+- time travel to the earliest version and the middle takes 36 / 48 ms (203 / 169 before);
+- reopen takes 42 ms.
+
+The growth curve is flat for commits and old versions. Time travel to a recent version still grows with the newest checkpoint's tombstones; see ADR-0021 item 5.

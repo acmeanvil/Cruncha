@@ -19,6 +19,7 @@ crates/cruncha-store/      Delta Lake document container (ADR-0003)
   src/schema.rs            Arrow schemas + row <-> struct conversion (doc log, refs, pins)
   src/store.rs             Store: create/open/lock, commit (append + squash), time travel, history, diff, tag, restore (to a version or a snapshot), compact, prune
   src/retention.rs         Retention policy, `_delta_log` commit reader, cutoff computation (ADR-0011)
+  src/logindex.rs          LogIndexStore (ADR-0021): every table's _delta_log listed from an index kept by this (single) writer; call forget() after any write that bypasses it
   src/blobs.rs             content-addressed, zstd-compressed `blobs/` for large cell sources (ADR-0013)
   src/proposals.rs         agents' proposals (ADR-0016): `proposals/` schema, ProposedChange, Proposal folding
   src/results.rs           stored code-cell runs (ADR-0018): `results/` schema, RunRecord, long strings ↔ blob references (`$blob`/`$json`)
@@ -101,6 +102,7 @@ cargo test  -p cruncha-store
 cargo run   -p cruncha-store --release --example store_bench -- <commits>
 cargo run   -p cruncha-store --release --example store_variants -- <store|append|bucketed|all> [commits] [cells] [squash_every]
 cargo test  -p cruncha-store --test crash      # SIGKILLs a writer 8 times mid-commit and 8 times mid-prune (~40 s)
+cargo run   -p cruncha-store --release --example history_scale -- <dir> 10000   # S3c: latency vs versions; history_variants compares remedies
 cargo clippy --all-targets -- -D warnings
 cargo test  -p cruncha-app                     # backend session logic, no window needed
 cargo test  -p cruncha-lang                    # Hurmet golden tests (65/66 TeX + 217/217 RPN; 1 known gap)
@@ -148,7 +150,7 @@ The first build compiles DataFusion and takes about 10 minutes on this machine. 
 - Sources of at least 1 KiB live out of line (ADR-0013): the row has `source_hash` (SHA-256) and a null `source`; the text is in `blobs/ab/cdef….zst`. Blobs are immutable and written **before** the commit that references them. Only `Store::prune` deletes blobs, and only those no data file left in `doc/` or `pins/` references. Keep the layout seam (`commit_with` appends, `maintain` squashes) so a deletion-vector layout (S3 option C) can replace those two steps; `reduce_log` already reads a one-row-per-id table.
 - Container tables are created with expired-log cleanup **disabled**. Delta's default 30-day log retention would silently destroy time travel. `Store::history` reads `doc/_delta_log/NNN.json` directly, from `manifest.earliest_version` to the latest version, and fails loudly on a gap.
 - Pruning order (each step crash-safe): pin refs older than the cutoff into `pins/` → checkpoint at the cutoff → write `earliest_version` to the manifest (point of no return) → VACUUM (Lite, explicit retention, fixed clock) → `cleanup_expired_logs_for(cutoff, …)` → delete unreferenced blobs → marker squash carrying `cruncha.prunedBefore`. An interrupted prune is finished by the next call.
-- There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
+- There is a single writer per container, enforced by the `.lock` file through `File::try_lock`. Tables are opened and created through the `Store`'s `LogIndexStore` (ADR-0021), whose `_delta_log` listings rely on that: anything that writes a table through other storage (e.g. a URL-based delta-rs call) must be followed by `storage.forget()`. Other writers (UI, MCP agents, CLI) must go through the process that holds the `Store`.
 - One `Store::commit` is one atomic Delta version (a squash, when due, adds a second, maintenance version). Batch changes (on cell submit or idle), never per keystroke.
 - A calc cell's `defines` and `reads` are always recomputed by the backend (`cruncha_eval::prepare`) when it is committed; the editor's values are ignored. A Python cell's come from the worker's scan when Python is set up. Other kinds keep what they were given.
 - Python runs only in documents this computer trusts (`Prefs.trusted`: created here or confirmed by the user), and an edited Python cell runs only on an explicit Run; after that it re-runs when its inputs change. Never run a document's code at open without trust. On macOS the worker runs under `sandbox-exec` (`cruncha_kernel_py::sandbox`): it reads only its environment, the worker package and system libraries and fonts, writes only its scratch directory, and has no network or subprocesses; keep new worker needs inside that profile rather than widening it. Worker output is shown as data (text, PNG, table rows, figure specs), never as HTML.

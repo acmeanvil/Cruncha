@@ -95,4 +95,9 @@ The licenses (MIT plus Apache-2.0, all transitive dependencies permissive) are G
    - cancellation is per session; the demo mode reads the document;
    - the app runs it as `cruncha-app --acp-agent`, listed as "Cruncha agent";
    - tests drive it through `cruncha-acp` against a real `cruncha-mcp` server (demo, OpenAI-style and Claude loops).
-5. [ ] Consider upstreaming MCP and skills support to looking_glass.
+5. [x] Consider upstreaming MCP and skills support to looking_glass. Done 2026-11-21 in `~/Developer/looking_glass` (uncommitted there):
+   - `[[mcp_servers]]` in config.toml reach every local agent as ACP `mcpServers`;
+   - lg-agent connects to HTTP and stdio servers and offers their tools as `mcp__<server>__<tool>` (asking first unless read-only);
+   - lg-agent loads AGENTS.md and Agent Skills (`load_skill`);
+   - cancellation is per session;
+   - test: `mcp_loop`.

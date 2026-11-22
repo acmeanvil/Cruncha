@@ -8,6 +8,7 @@
 mod blobs;
 mod cell;
 mod error;
+mod logindex;
 mod proposals;
 mod results;
 mod retention;

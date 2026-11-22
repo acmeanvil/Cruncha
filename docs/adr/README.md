@@ -9,7 +9,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0003](0003-hybrid-delta-lake-storage.md) | Hybrid Delta Lake container as the storage format | Accepted |
 | [0004](0004-reactive-graph-unique-names.md) | Reactive dependency graph with one definition per name | Accepted |
 | [0005](0005-python-out-of-process-worker.md) | Python cells run in an out-of-process worker | Accepted |
-| [0006](0006-rust-cells-wasm.md) | Rust cells compile to WASM and run in wasmtime | Proposed |
+| [0006](0006-rust-cells-wasm.md) | Rust cells compile to WASM and run in wasmtime | Accepted |
 | [0007](0007-always-unit-aware.md) | Calculations are always unit-aware | Accepted |
 | [0008](0008-app-shell-tauri-web.md) | App shell: Tauri with a web UI (not GPUI) | Accepted |
 | [0009](0009-agent-interface-acp-mcp.md) | Agent interface: ACP client, Cruncha MCP server, built-in agent from looking_glass | Accepted |
@@ -24,6 +24,7 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0018](0018-results-table.md) | Code-cell results are kept in a `results/` table, keyed by what produced them | Accepted |
 | [0019](0019-results-from-other-environments.md) | Stored results from another Python environment are found by an environment-free hash (refines 0018) | Accepted |
 | [0020](0020-figure-frames-own-scheme.md) | Figure frames are served from their own scheme, with their own CSP; the renderer arrives by `postMessage` (refines 0017) | Proposed |
+| [0021](0021-indexed-delta-log-listing.md) | The store lists `_delta_log` from an index it keeps, not from the directory (refines 0010, 0011) | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

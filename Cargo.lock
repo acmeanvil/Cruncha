@@ -1924,6 +1924,8 @@ dependencies = [
 name = "cruncha-store"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
+ "bytes",
  "chrono",
  "deltalake",
  "futures",

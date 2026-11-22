@@ -21,6 +21,7 @@
   import Modal from "./Modal.svelte";
   import PruneConfirm from "./PruneConfirm.svelte";
   import RetentionControl from "./RetentionControl.svelte";
+  import { isKeepEverything } from "./format";
   import TextSizeFields from "./TextSizeFields.svelte";
   import { bytes, describeRetention } from "./format";
 
@@ -58,6 +59,15 @@
 
   let useDefault = $state(untrack(() => doc.retention == null));
   let policy = $state($state.snapshot(untrack(() => doc.retention ?? prefs.defaultRetention)));
+  /** Offer a limit (S3c, ADR-0021): a document that keeps everything and has a long history. */
+  const LONG_HISTORY = 5000;
+  let longHistory = $derived(
+    doc.version - doc.earliestVersion > LONG_HISTORY && isKeepEverything(useDefault ? prefs.defaultRetention : policy),
+  );
+  function limitHistory() {
+    useDefault = false;
+    policy = { saves: 2000, size_bytes: null, activity_days: null, floor: policy.floor ?? 100 };
+  }
   const chosen = $derived(useDefault ? prefs.defaultRetention : policy);
   const retentionChanged = $derived(
     useDefault !== (doc.retention == null) || (!useDefault && JSON.stringify(policy) !== JSON.stringify(doc.retention)),
@@ -210,6 +220,13 @@
       <p class="small muted">
         History on disk {bytes(doc.historyBytes)} · versions {doc.earliestVersion}–{doc.version} available
       </p>
+      {#if longHistory && !confirm}
+        <p class="small offer">
+          This document keeps all {(doc.version - doc.earliestVersion).toLocaleString()} saves. Editing stays fast,
+          but a long history takes disk space and older versions open more slowly.
+          <button class="link" onclick={limitHistory}>Limit to the last 2,000 saves</button> (snapshots are always kept).
+        </p>
+      {/if}
       <label class="choice">
         <input type="radio" bind:group={useDefault} value={true} disabled={confirm != null} />
         Use the app default <span class="muted">({describeRetention(prefs.defaultRetention)})</span>
@@ -276,4 +293,5 @@
   .fields input { width: 100%; min-width: 0; }
   .check { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
   .message { background: var(--sunken); border-radius: 6px; padding: 6px 10px; }
+  .offer { background: var(--sunken); border-radius: 6px; padding: 6px 10px; }
 </style>
