@@ -60,14 +60,10 @@ pub(crate) fn convert_from_base_units(
     gauge: &Rational,
     factor: &Rational,
 ) -> V {
+    // v / factor − gauge, as for a single value (ADR-0022 item 12; with a gauge, Hurmet
+    // subtracted the gauge from the base-unit value and dropped the division).
     let vector = is_vector(dtype);
-    let conversion = map_elems(value, vector, &|e| V::R(e.r().divide(factor)));
-    if !gauge.is_zero() {
-        // Hurmet bug, reproduced: with a gauge, it subtracts the gauge from the base-unit
-        // value and discards the division by the factor.
-        return map_elems(value, vector, &|e| V::R(e.r().subtract(gauge)));
-    }
-    conversion
+    map_elems(value, vector, &|e| V::R(e.r().divide(factor).subtract(gauge)))
 }
 
 pub(crate) fn convert_to_base_units(
@@ -263,8 +259,10 @@ pub(crate) fn identity(n: usize) -> Vec<Vec<Rational>> {
         .collect()
 }
 
-/// Gauss–Jordan inversion; with `determinant`, returns the determinant (as Hurmet computes it:
-/// the reciprocal of the product of the pivots, which is the determinant of the inverse).
+/// Gauss–Jordan inversion; with `determinant`, returns the determinant instead: the product of
+/// the pivots, negated for each row swap, and 0 for a singular matrix. (Hurmet returned the
+/// reciprocal of the product and ignored the swaps, so `|[1, 2; 3, 4]|` was −0.5, not −2:
+/// ADR-0022 item 11.)
 pub(crate) fn invert(m: &V, determinant: bool) -> Result<V, Operand> {
     let rows = m.arr();
     let dim = rows.len();
@@ -284,16 +282,20 @@ pub(crate) fn invert(m: &V, determinant: bool) -> Result<V, Operand> {
                 if !c[ii][i].is_zero() {
                     c.swap(i, ii);
                     id.swap(i, ii);
+                    det = det.negate();
                     break;
                 }
             }
             temp = c[i][i].clone();
             if temp.is_zero() {
+                if determinant {
+                    return Ok(V::R(Rational::zero()));
+                }
                 return Err(err0("SINGULAR"));
             }
         }
         if determinant {
-            det = det.divide(&temp);
+            det = det.multiply(&temp);
             if i == dim - 1 {
                 return Ok(V::R(det));
             }
@@ -451,14 +453,16 @@ pub(crate) fn submatrix(o: &Operand, index: &Operand, col_index: Option<&Operand
         }
         value = V::A(v);
     } else {
-        // Hurmet bug, reproduced: it reads `oprnd[i][j]` (not `oprnd.value`), which is undefined.
+        // A column step: every col_step-th element of each row (ADR-0022 item 14; Hurmet read
+        // `oprnd[i][j]` instead of `oprnd.value[i][j]`, so every element was undefined).
         let mut v = Vec::new();
         let mut i = start - 1;
         while i < end && i - start < MAX_ELEMENTS as i64 {
             let mut r = Vec::new();
             let mut j = col_start - 1;
+            let cells = row(i);
             while j < col_end && j - col_start < MAX_ELEMENTS as i64 {
-                r.push(V::Undef);
+                r.push(at(&cells, j));
                 j += col_step;
             }
             v.push(V::A(r));
@@ -549,21 +553,18 @@ pub(crate) fn operand_from_token_stack(
         let num_args = num_rows.max(num_cols);
         let mut dtype = stack[stack.len() - 1].dtype;
         if num_rows == 1 && dtype & dt::COLUMNVECTOR != 0 {
-            // Column vectors side by side. Hurmet bug, reproduced: it indexes the stack from
-            // the bottom (`tokenStack[0]`, `tokenStack[j]`), not from the first argument.
+            // Column vectors side by side: the top `num_args` operands, which must be the same
+            // length. (Hurmet indexed the stack from the bottom, `tokenStack[0]`, so the literal
+            // only worked when nothing else was on the stack: ADR-0022 item 14.)
             dtype = dtype - dt::COLUMNVECTOR + dt::MATRIX;
-            let n = stack[0].value.len();
-            let mut array = Vec::with_capacity(n);
-            for i in 0..n {
-                let mut row = Vec::with_capacity(num_args);
-                for j in 0..num_args {
-                    row.push(stack.get(j).map_or(V::Undef, |t| t.value.get(i)));
-                }
-                array.push(V::A(row));
+            let cols = stack.split_off(stack.len() - num_args);
+            let n = cols[0].value.len();
+            if cols.iter().any(|c| c.dtype & dt::COLUMNVECTOR == 0 || c.value.len() != n) {
+                return err0("MIS_ELNUM");
             }
-            for _ in 0..num_args {
-                stack.pop();
-            }
+            let array = (0..n)
+                .map(|i| V::A(cols.iter().map(|c| c.value.get(i)).collect()))
+                .collect();
             return Operand::new(V::A(array), unit_for(dtype), dtype);
         }
         dtype += if num_rows == 1 {
@@ -611,8 +612,9 @@ pub(crate) fn filled(m: usize, n: usize, x: Rational) -> Operand {
             } else {
                 dt::COLUMNVECTOR
             };
-        // Hurmet bug, reproduced: the length is n even for a column vector.
-        Operand::new(V::A(vec![V::R(x); n]), OUnit::Bare, dtype)
+        // m elements for a column (ADR-0022 item 12; Hurmet always made n).
+        let len = if m == 1 { n } else { m };
+        Operand::new(V::A(vec![V::R(x); len]), OUnit::Bare, dtype)
     } else {
         let row = V::A(vec![V::R(x); n]);
         Operand::new(

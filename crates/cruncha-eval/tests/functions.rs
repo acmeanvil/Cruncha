@@ -155,3 +155,51 @@ fn fixed_format_keeps_the_sign() {
         ("round(2.5)", "3"),
     ]);
 }
+
+/// ADR-0022 items 11–14: vectors, matrices and data frames.
+#[test]
+fn vectors_matrices_and_frames() {
+    check(&[
+        // Item 11: the cross product, reducers over a matrix, the outer product, |A|.
+        ("[1, 0, 0] × [0, 1, 0]", "[0, 0, 1]"),
+        ("[1; 2; 3] × [4; 5; 6]", "[-3; 6; -3]"),
+        ("sum([1, 2; 3, 4])", "10"),
+        ("product([1, 2; 3, 4])", "24"),
+        ("mean([1, 2; 3, 4])", "2.5"),
+        ("min([1, 2; 3, 4])", "1"),
+        ("max([1, 2; 3, 4])", "4"),
+        ("range([1, 2; 3, 4])", "3"),
+        ("median([1, 2; 3, 4])", "2.5"),
+        ("sum([1, 2; 3, 4], 1)", "[4, 6]"),
+        ("[2; 3] [4, 5, 6]", "(8, 10, 12; 12, 15, 18)"),
+        ("|[1, 2; 3, 4]|", "-2"),
+        ("|[0, 1; 1, 0]|", "-1"),
+        ("|[1, 2; 2, 4]|", "0"),
+        ("|[2, 0, 1; 1, 3, 2; 1, 1, 2]|", "6"),
+        ("|[2, 0; 0, 3] 'm'|", "6 m²"),
+        // Item 12: units of product, offset units on vectors, zeros/ones columns, powers.
+        ("product(2 'm', 3 'm')", "6 m²"),
+        ("product([2; 3] 'm')", "6 m²"),
+        ("zeros(3, 1)", "[0; 0; 0]"),
+        ("ones(1, 2)", "[1, 1]"),
+        ("[2, 3]^2", "[4, 9]"),
+        ("[2; 3]^2", "[4; 9]"),
+        // Item 13: one unit for two-argument functions.
+        ("atan2(1 'm', 1 's')", "Error. Unit mis-match between arguments to function atan2."),
+        ("gcd(12 'm', 18 's')", "Error. Incorrect unit for input to function gcd."),
+        ("gcd(12, 18)", "6"),
+        ("sum(1 'm', 2 's')", "Error. Unit mis-match between arguments to function sum."),
+    ]);
+    assert_eq!(calc(&["v = [20; 30] '°C'", "a = v = ?? °F"]), "[68; 86] °F");
+    // Item 14: column vectors side by side inside an expression; stepped columns.
+    assert_eq!(calc(&["x = [1; 2]", "y = [3; 4]", "a = 2 + sum([x, y]) = ?"]), "12");
+    assert_eq!(calc(&["M = [1, 2, 3, 4; 5, 6, 7, 8]", "a = M[1:2, 1:2:4] = ?"]), "(1, 3; 5, 7)");
+    // Item 14: data-frame selections.
+    let df = "df = ``#name\tA\tB\tC\nr1\t1\t2\t3\nr2\t4\t5\t6\nr3\t7\t8\t9``";
+    assert_eq!(calc(&[df, "a = df[\"r2\", \"B\"] = ?"]), "5");
+    assert_eq!(calc(&[df, "s = df[[\"C\", \"A\"]] = !", "a = s.C = ?"]), "[3; 6; 9]");
+    assert_eq!(calc(&[df, "a = df[\"A\", \"B\"] = ?"]).replace('\n', "/"), "``A\tB/1\t2/4\t5/7\t8``");
+    let plain = "p = ``A\tB\tC\n1\t2\t3\n4\t5\t6``";
+    assert_eq!(calc(&[plain, "a = p[1, 2:3] = ?"]).replace('\n', "/"), "``B\tC/2\t3``");
+    assert_eq!(calc(&[plain, "a = p[\"x\"] = ?"]), "Error. Data frame does not have a column named x.");
+}

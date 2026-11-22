@@ -136,6 +136,9 @@ fn identify_range(df: &Operand, args: &[Operand]) -> Result<RangeSpec, Operand> 
         } else if let Some(c) = col_idx(key) {
             i_end = num_rows - 1;
             column_list.push(Some(c));
+        } else if f.row_map.is_none() {
+            // Without row names, the key can only have meant a column.
+            return Err(err("BAD_COLUMN_NAME", key));
         } else {
             return Err(err("BAD_ROW_NAME", key));
         }
@@ -145,10 +148,14 @@ fn identify_range(df: &Operand, args: &[Operand]) -> Result<RangeSpec, Operand> 
         }
         column_list = (0..num_cols).map(Some).collect();
     } else if args.len() == 1 && args[0].dtype == dt::STRING + dt::ROWVECTOR {
-        // Hurmet reads `df.columnIndicator`, which does not exist: every index is undefined.
+        // Columns by name (ADR-0022 item 14; Hurmet read `df.columnIndicator`, which doesn't
+        // exist, so every index was undefined).
         i_end = num_rows;
-        for _ in args[0].value.arr() {
-            column_list.push(None);
+        for name in args[0].value.arr() {
+            match col_idx(name.str()) {
+                Some(c) => column_list.push(Some(c)),
+                None => return Err(err("BAD_COLUMN_NAME", name.str())),
+            }
         }
     } else if args.len() == 2 {
         let a0 = &args[0];
@@ -160,9 +167,10 @@ fn identify_range(df: &Operand, args: &[Operand]) -> Result<RangeSpec, Operand> 
                 i_start = num_rows - 1;
                 i_end = i_start;
             } else {
-                // Hurmet bug, reproduced: this is the number of columns, not rows.
+                // A column name first: every row (ADR-0022 item 14; Hurmet used the number
+                // of columns here).
                 i_start = 0;
-                i_end = num_cols - 1;
+                i_end = num_rows - 1;
             }
         } else if a0.dtype == dt::RATIONAL {
             i_start = to_int(&a0.value) - 1;
@@ -185,12 +193,12 @@ fn identify_range(df: &Operand, args: &[Operand]) -> Result<RangeSpec, Operand> 
         } else if a1.dtype == dt::RATIONAL {
             column_list.push(Some(to_int(&a1.value) - 1));
         } else if a1.dtype == dt::RANGE {
-            // Hurmet bug, reproduced: it looks up `columnMap[NaN]` for each column.
+            // A range of columns (ADR-0022 item 14; Hurmet looked up `columnMap[NaN]`).
             let r = a1.value.arr();
             let js = to_int(&r.first().cloned().unwrap_or_default()) - 1;
             let je = to_int(&r.get(2).cloned().unwrap_or_default()) - 1;
-            for _ in js..=je.min(js + 100_000) {
-                column_list.push(None);
+            for j in js..=je.min(js + 100_000) {
+                column_list.push(Some(j));
             }
         }
     } else if !args.is_empty() {
@@ -341,8 +349,9 @@ pub(crate) fn range(df: &Operand, args: &[Operand], unit_aware: bool, ctx: &Ctx)
         if let Some(d) = out.dtype.as_mut() {
             d.push(dtype_of(j));
         }
-        // Hurmet bug, reproduced: the key is the k-th heading of the source, not the selected one.
-        out.column_map.insert(heading(f, Some(k as i64)), k);
+        // Keyed by the selected column's heading (ADR-0022 item 14; Hurmet used the k-th
+        // heading of the source).
+        out.column_map.insert(heading(f, j), k);
         if !row_list.is_empty() {
             let mut elements = Vec::new();
             for (i, row_name) in row_list.iter().enumerate() {
@@ -406,7 +415,8 @@ pub(crate) fn map_range(map: &Operand, keys: &[Operand]) -> Operand {
     };
     for (k, &j) in column_list.iter().enumerate() {
         out.headings.push(heading(f, j));
-        out.column_map.insert(heading(f, Some(k as i64)), k);
+        // Keyed by the selected column's heading, as in `range` (ADR-0022 item 14).
+        out.column_map.insert(heading(f, j), k);
         if !row_list.is_empty() {
             let mut elements = Vec::new();
             for (i, row_name) in row_list.iter().enumerate() {
@@ -853,7 +863,9 @@ fn is_not_empty(units: Option<&Vec<V>>) -> bool {
         None => false,
         Some(u) => u
             .iter()
-            .any(|x| !matches!(x, V::Null) && !(matches!(x, V::S(s) if s.is_empty()))),
+            // An undefined unit (a selection from a frame without a units row) is empty too;
+            // Hurmet printed a row of "undefined" (ADR-0022 item 14).
+            .any(|x| !matches!(x, V::Null | V::Undef) && !(matches!(x, V::S(s) if s.is_empty()))),
     }
 }
 

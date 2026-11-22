@@ -85,12 +85,9 @@ Where Cruncha differs from Hurmet (ADR-0022, `docs/design/03-hurmet-differences.
 - `median` is the true median; `variance` and `stddev` are sample statistics (n − 1); the variance is in the unit squared.
 - `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work.
 - Unit names: a unit's full name works as written (`Celsius`, `gauss`, `kilogram`, `mas` for milliarcsecond). Tesla and gauss are kg·s⁻²·A⁻¹; ampere-turn and gilbert are currents. Every unit, with its aliases and size in SI, is in the app's Units palette (`cruncha_units::catalog`).
-- **Not fixed yet (ADR-0022, second set). Avoid or check these:**
-  - The cross product `×` gives `[]`. Write it by components.
-  - `sum`, `product`, `mean`, `min`, `max`, `range` and `median` of a *matrix* give 0. Use `sum(A, 1)` or `sum(A, 2)`, or a Python cell.
-  - `product` of quantities has the wrong unit; `zeros(m, 1)` and `ones(m, 1)` give one element; `[a, b]^2` is read as a complex number.
-  - A vector in an offset unit (°C, °F, psig) converts wrongly; single values are right.
-  - `atan2` and `gcd` don't check that their arguments share a unit.
+- Vectors and matrices (ADR-0022, second set): `×` of two 3-vectors is the cross product; `sum`, `product`, `mean`, `min`, `max`, `range` and `median` of a matrix use every element (`sum(A, 1)` and `sum(A, 2)` sum columns and rows); `|A|` of a square matrix is its determinant (Hurmet gave 1/det), in the unit to the nth power; a column times a row is the outer product, any lengths; `[a, b]^2` is element-wise, never complex; `zeros(m, 1)` and `ones(m, 1)` are columns of m.
+- Units: `product` multiplies units (`product(2 'm', 3 'm')` is 6 m²); a vector in °C or °F converts like a single value; two-argument functions that need one unit (`atan2`, `mod`, `rem`, `hypot`, `sum`, `min`, `max`, …) refuse different units, and `gcd` refuses any unit.
+- Data frames: `df["row", "col"]` with row names (first heading starting with `#`) is one value; selecting columns (`df[["C", "A"]]`, `df[1, 2:3]`, `df["A", "B"]`) gives a frame whose columns are found by name; a frame without a units row prints none.
 - `e` is Euler's number unless the document defines `e` (an eccentricity, say); a definition wins and gets a warning. `j` works the same way for the imaginary unit.
 
 ## Checklist before proposing a calc

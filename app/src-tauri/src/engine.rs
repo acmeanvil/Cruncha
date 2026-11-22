@@ -29,6 +29,37 @@ use serde::{Deserialize, Serialize};
 /// Built-in calc names that a document can define (and so replace): name, what it was.
 const SHADOWED: [(&str, &str); 2] = [("e", "Euler's number"), ("j", "the imaginary unit")];
 
+/// How many result placeholders (`= ?`, `= ??`, `= !`, `= @`, `= %` and their doubles) a calc's
+/// source has, outside quoted strings and units.
+fn result_placeholders(source: &str) -> usize {
+    let chars: Vec<char> = source.chars().collect();
+    let (mut n, mut quote) = (0, None::<char>);
+    for (i, &c) in chars.iter().enumerate() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' || c == '`' => quote = Some(c),
+            None if c == '=' => {
+                let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+                if next.is_some_and(|c| matches!(c, '?' | '!' | '@' | '%')) {
+                    n += 1;
+                }
+            }
+            None => {}
+        }
+    }
+    n
+}
+
+/// The warning for a calc with more than one result placeholder: it holds one statement, so
+/// Hurmet's rules show it as plain math and calculate nothing.
+fn several_statements(source: &str) -> Option<String> {
+    let n = result_placeholders(source);
+    (n > 1).then(|| {
+        format!("This calc asks for {n} results, but a calc holds one statement, so nothing was calculated. Put each in its own calc.")
+    })
+}
+
 /// What a cell shows.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -886,6 +917,11 @@ impl Engine {
                     warnings.push(format!("{name} here is this document's value, not {what}"));
                 }
             }
+            if cell.kind == CellKind::Calc
+                && let Some(w) = several_statements(&cell.source)
+            {
+                warnings.push(w);
+            }
             let mut result = CellResult {
                 defines: node.defines.clone(),
                 reads: node
@@ -1244,6 +1280,7 @@ impl Engine {
             values: value_views(&o.values),
             defines: stmt.defines,
             reads: stmt.reads,
+            warnings: several_statements(source).into_iter().collect(),
             ..CellResult::default()
         }
     }
@@ -1457,7 +1494,18 @@ mod tests {
     }
 
     #[test]
-    fn defining_e_replaces_eulers_number_with_a_warning() {
+    fn several_statements_in_one_calc_say_so() {
+        let mut e = Engine::new();
+        let line = "sum([1, 2; 3, 4]) = ?, |[1, 2; 3, 4]| = ? and [20; 30] '°C' = ?? °F";
+        let r = e.run(&[calc("A", "a", line), calc("B", "b", "t = [20; 30] '°C' = ?? °F"), calc("C", "c", "s = \"= ?\" = !")]);
+        assert!(r["A"].warnings.iter().any(|w| w.contains("asks for 3 results")), "{:?}", r["A"]);
+        assert!(r["B"].warnings.is_empty() && r["B"].text.contains("[68; 86]"), "{:?}", r["B"]);
+        assert!(r["C"].warnings.is_empty(), "a placeholder inside a string doesn't count: {:?}", r["C"]);
+        assert!(e.preview(line).warnings[0].contains("own calc"));
+    }
+
+    #[test]
+        fn defining_e_replaces_eulers_number_with_a_warning() {
         let mut e = Engine::new();
         let r = e.run(&[calc("A", "a", "y = 2 e = ?")]);
         assert!(r["A"].text.contains("5.43656"), "{:?}", r["A"]);

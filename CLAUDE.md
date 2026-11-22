@@ -72,7 +72,7 @@ crates/cruncha-eval/       Hurmet's evaluator over cruncha-lang's RPN (spike S2b
   src/value.rs             operand model (Hurmet's dtype flags and JS-shaped values), public Value/Kind
   src/dataframe.rs  matrix.rs  complex.rs  format.rs  literal.rs  module.rs  echo.rs  error.rs
   src/exchange.rs          Value <-> Plain (serde) for the Python worker: exact numbers, UnitView, arrays, frames, SI fallback
-  tests/golden.rs          Hurmet's assignment + calc golden tests (250/250); tests/robustness.rs, tests/api.rs, tests/exchange.rs,
+  tests/golden.rs          Hurmet's assignment + calc golden tests (249/250; `|matrix|` is a deliberate correction, ADR-0022, in KNOWN_GAPS); tests/robustness.rs, tests/api.rs, tests/exchange.rs,
                            tests/functions.rs (ADR-0022: where built-ins differ from Hurmet, docs/design/03-hurmet-differences.md)
   reference/functions.json the function reference the app shows (`REFERENCE`): every built-in, operator and constant with an example;
                            tests/reference.rs evaluates each example and checks every built-in the parser knows is listed
@@ -118,7 +118,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test  -p cruncha-app                     # backend session logic, no window needed
 cargo test  -p cruncha-lang                    # Hurmet golden tests (65/66 TeX + 217/217 RPN; 1 known gap)
 cargo run   -p cruncha-lang --release --example parse_bench
-cargo test  -p cruncha-units -p cruncha-eval   # 250/250 Hurmet evaluator goldens, V8 Math vectors, fragment robustness
+cargo test  -p cruncha-units -p cruncha-eval   # Hurmet evaluator goldens (249/250 + 1 deliberate correction), V8 Math vectors, fragment robustness
 cargo run   -p cruncha-eval --release --example eval_bench -- 300
 cargo test  -p cruncha-graph                   # graph rules; fast
 cargo test  -p cruncha-prose                   # prose JSON <-> tree <-> Markdown; fast

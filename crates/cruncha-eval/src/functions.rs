@@ -17,14 +17,26 @@ pub(crate) fn function_expos(name: &str, args: &[&Operand]) -> Result<Option<Dim
     } else {
         None
     };
+    // Every argument must be dimensionless (ADR-0022 item 13: Hurmet checked only a single
+    // argument, so `gcd(12 'm', 18 's')` passed).
     let dimensionless = || {
-        if !units_are_compatible(expos.as_ref(), Some(&ALL_ZEROS)) {
-            Err(err("UNIT_IN", name))
-        } else {
-            Ok(Some(ALL_ZEROS))
+        for a in args {
+            if !units_are_compatible(a.unit.get_expos(), Some(&ALL_ZEROS)) {
+                return Err(err("UNIT_IN", name));
+            }
         }
+        Ok(Some(ALL_ZEROS))
     };
+    // `sum(A, 1)` and `sum(A, 2)`: the second argument is an axis, not a term.
+    if name == "sum" && args.len() == 2 && crate::value::is_matrix(args[0].dtype) {
+        return Ok(args[0].unit.get_expos().copied());
+    }
     match name {
+        // |A| of an n × n matrix is its determinant, in the unit to the nth power.
+        "abs" if args.len() == 1 && args[0].dtype & dt::MATRIX != 0 => {
+            let n = args[0].value.arr().len() as f64;
+            Ok(expos.map(|e| e.map(|x| x * n)))
+        }
         "abs" | "round" | "roundn" | "sign" | "trace" | "fetch" => Ok(expos),
         "cos" | "sin" | "tan" | "sec" | "csc" | "cot" | "acos" | "arccos" | "asin" | "arcsin"
         | "atan" | "arctan" | "asec" | "arcsec" | "acsc" | "arccsc" | "acot" | "arccot"
@@ -34,11 +46,11 @@ pub(crate) fn function_expos(name: &str, args: &[&Operand]) -> Result<Option<Dim
         | "csch" | "coth" | "acosh" | "asinh" | "atanh" | "asech" | "acsch" | "acoth"
         | "binomial" | "gamma" | "Γ" | "lgamma" | "lfact" | "factorial" => dimensionless(),
         "sqrt" => Ok(expos.map(|e| e.map(|x| x / 2.0))),
-        "gcd" | "mht" => dimensionless(),
+        "gcd" | "mht" | "ones" | "zeros" => dimensionless(),
         // ADR-0022: Char wasn't listed, so unit-aware it was "not found".
         "Char" => dimensionless(),
         "atan2" | "hypot" | "rms" | "mod" | "rem" | "ceil" | "floor" | "sum" | "mean" | "median" | "min"
-        | "max" | "range" | "stddev" | "variance" => {
+        | "max" | "range" | "stddev" | "variance" | "accumulate" => {
             let x = args.first().and_then(|a| a.unit.get_expos().copied());
             for a in &args[1..] {
                 if a.unit.get_expos().copied() != x {
@@ -53,8 +65,26 @@ pub(crate) fn function_expos(name: &str, args: &[&Operand]) -> Result<Option<Dim
             })
         }
         "real" | "imag" | "angle" | "conj" => Ok(Some(ALL_ZEROS)),
-        // Hurmet bug, reproduced: the sum of exponents is computed and thrown away.
-        "product" => Ok(args.first().and_then(|a| a.unit.get_expos().copied())),
+        // The product's unit is the product of the units: the exponents add up, n times
+        // for the n elements of one vector or matrix (ADR-0022 item 12; Hurmet summed the
+        // exponents and threw the sum away).
+        "product" => {
+            fn elements(v: &crate::value::V) -> usize {
+                match v {
+                    crate::value::V::A(a) => a.iter().map(elements).sum(),
+                    _ => 1,
+                }
+            }
+            let mut total = ALL_ZEROS;
+            for a in args {
+                let Some(e) = a.unit.get_expos().copied() else { return Ok(None) };
+                let n = if args.len() == 1 { elements(&a.value) } else { 1 } as f64;
+                for (t, x) in total.iter_mut().zip(e) {
+                    *t += x * n;
+                }
+            }
+            Ok(Some(total))
+        }
         _ => Err(err("F_NAME", name)),
     }
 }
@@ -577,8 +607,12 @@ pub(crate) fn multivar_function(
     args: &[Operand],
 ) -> Result<(V, i64), Operand> {
     if args.len() == 1 {
-        // Hurmet tests `args.dtype & MATRIX` (always 0), so a matrix is passed unflattened.
+        // A reducer over a matrix reduces every element (ADR-0022 item 11). Hurmet tested
+        // `args.dtype & MATRIX` on the argument list (always 0), so it folded the rows as if
+        // they were numbers and returned 0.
+        let flatten = arity == Arity::Reduce && name != "accumulate" && args[0].dtype & dt::MATRIX != 0;
         let list: Vec<V> = match &args[0].value {
+            V::A(rows) if flatten => rows.iter().flat_map(|r| r.arr().to_vec()).collect(),
             V::A(a) => a.clone(),
             other => vec![other.clone()],
         };

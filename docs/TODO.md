@@ -2,17 +2,12 @@
 
 Every action item in `docs/adr/` that is not done, as of 2026-11-22. **Partial** means some of it is built; the note says what's missing. Tick the item in its ADR (with a note on what delivered it) and remove it here in the same change.
 
-Order of work agreed on 2026-11-22: ADR-0022's second set → the ADR-0014 pilot → the recent-version time-travel measurement (ADR-0021 item 5) → the GPU investigation → everything else.
+Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → the ADR-0014 pilot → the recent-version time-travel measurement (ADR-0021 item 5) → the GPU investigation → everything else.
 
 ## Next up
 
 | ADR | Item | Status | What's left |
 | --- | --- | --- | --- |
-| 0022 | 11. Cross product and reducers over a matrix (`sum`, `product`, `mean`, `min`, `max`, `range`, `median`) | Not started | Also `\|A\|` of a square matrix gives 1/det(A) (found 2026-11-22) |
-| 0022 | 12. `product`'s unit, offset units on vectors, `zeros`/`ones(m, 1)`, `[a, b]^n` | Not started | |
-| 0022 | 13. Unit checks in two-argument functions that need one unit (`atan2`, `gcd`, …) | Not started | |
-| 0022 | 14. Column-vector matrix literal; the three data-frame bugs | Not started | The data-frame bugs need probing first |
-| 0022 | 15. For each: a test, the caution removed from the reference, the skill and `docs/design/03-hurmet-differences.md` updated | Not started | Done per item |
 | 0014 | 2. `cruncha-templates`: the format, validation, preview, the test runner | Not started | The pilot comes first (item 6) |
 | 0014 | 3. The insert flow: dialog, clash detection, renames, "use the document's", one commit, provenance | Not started | |
 | 0014 | 4. User library and snippet manager (Templates tab ⌘⇧T, Save as snippet, …) | Not started | |

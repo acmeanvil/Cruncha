@@ -573,7 +573,10 @@ pub(crate) fn eval_rpn(
                     } else if tkn == "·" {
                         dt::RATIONAL
                     } else if tkn == "×" {
-                        dt::COLUMNVECTOR
+                        // The cross product is a vector shaped like the first operand. (Hurmet
+                        // typed it a bare COLUMNVECTOR, without its elements' type, so it
+                        // displayed as [] — ADR-0022 item 11.)
+                        o1.dtype
                     } else {
                         matrix::mult_result_type(o1.dtype, o2.dtype)
                     };
@@ -617,12 +620,11 @@ pub(crate) fn eval_rpn(
                         OUnit::zeros()
                     };
                     let (s1, s2, _) = binary_shapes(&o1, &o2);
-                    let mut value = tryv!(ops::binary(s1, s2, "power", &o1.value, &o2.value));
-                    let dtype = if value.is_complex_pair() {
-                        // Hurmet's Cpx.isComplex also accepts any two-element vector of
-                        // rationals, so `[2, 3]^2` becomes the complex number 4 + j 9 (a bug).
-                        let z = value.cpx();
-                        value = cpx(z[0].clone(), z[1].clone());
+                    let value = tryv!(ops::binary(s1, s2, "power", &o1.value, &o2.value));
+                    // Complex results are V::C. Hurmet's Cpx.isComplex also accepted any
+                    // two-element vector of rationals, so `[2, 3]^2` became 4 + j 9 (ADR-0022
+                    // item 12).
+                    let dtype = if matches!(value, V::C(_)) {
                         dt::COMPLEX
                     } else {
                         match ops::op_dtype(s1, s2, o1.dtype, o2.dtype, tkn) {
@@ -716,7 +718,7 @@ pub(crate) fn eval_rpn(
                     };
                     let s1 = shape_of(&o1);
                     let value = tryv!(ops::binary(s1, Shape::Scalar, "power", &o1.value, &pow));
-                    let dtype = if value.is_complex_pair() {
+                    let dtype = if matches!(value, V::C(_)) {
                         dt::COMPLEX
                     } else {
                         match ops::op_dtype(s1, Shape::Scalar, o1.dtype, dt::RATIONAL, tkn) {
@@ -955,7 +957,13 @@ pub(crate) fn eval_rpn(
                     }
                     let op = if tkn == "|" { "abs" } else { "norm" };
                     let value = tryv!(ops::unary(shape_of(&o1), op, &o1.value));
-                    stack.push(Operand::new(value, o1.unit, dt::RATIONAL));
+                    // |A| of an n × n matrix is its determinant: the unit to the nth power.
+                    let unit = if op == "abs" && unit_aware && o1.dtype & dt::MATRIX != 0 {
+                        expos_unit(scale_expos(o1.unit.get_expos(), o1.value.arr().len() as f64))
+                    } else {
+                        o1.unit
+                    };
+                    stack.push(Operand::new(value, unit, dt::RATIONAL));
                 }
                 "matrix" => {
                     let num_rows = next_num(i);
@@ -1066,11 +1074,9 @@ pub(crate) fn eval_rpn(
                         return err0("");
                     }
                     let expos = if unit_aware {
-                        match functions::function_expos(tkn, &[&args[0], &args[1]]) {
-                            // mod and rem need one unit (ADR-0022); Hurmet ignores the others' checks.
-                            Err(e) if tkn == "mod" || tkn == "rem" => return e,
-                            r => r.unwrap_or(None),
-                        }
+                        // Every two-argument function's unit check counts (ADR-0022 item 13;
+                        // Hurmet discarded them, so atan2(1 'm', 1 's') gave 0.785).
+                        tryv!(functions::function_expos(tkn, &[&args[0], &args[1]]))
                     } else {
                         Some(ALL_ZEROS)
                     };
@@ -1090,7 +1096,7 @@ pub(crate) fn eval_rpn(
                             return err0("");
                         }
                         let expos = if unit_aware {
-                            functions::function_expos("hypot", &[&acc, &next]).unwrap_or(None)
+                            tryv!(functions::function_expos("hypot", &[&acc, &next]))
                         } else {
                             Some(ALL_ZEROS)
                         };
@@ -1353,7 +1359,7 @@ pub(crate) fn eval_rpn(
                     }
                     let expos = if unit_aware {
                         let refs: Vec<&Operand> = args.iter().collect();
-                        functions::function_expos(tkn, &refs).unwrap_or(None)
+                        tryv!(functions::function_expos(tkn, &refs))
                     } else {
                         Some(ALL_ZEROS)
                     };

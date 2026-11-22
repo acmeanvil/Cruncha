@@ -506,18 +506,9 @@ pub(crate) fn binary(s1: Shape, s2: Shape, op: &str, x: &V, y: &V) -> Result<V, 
             }
             "cross" => cross(x, y),
             "multiply" | "divide" => {
-                if op == "multiply" {
-                    // Hurmet bug, reproduced: it checks `x[0].length`, the length of the first
-                    // element (2 for a rational, which is a pair in Hurmet), not of x.
-                    let x0_len = match x.get(0) {
-                        V::R(_) | V::C(_) => 2,
-                        V::A(a) => a.len(),
-                        _ => 0,
-                    };
-                    if x0_len != y.len() {
-                        return Err(mis());
-                    }
-                }
+                // The outer product: any column times any row (ADR-0022 item 11). Hurmet
+                // compared the row's length with `x[0].length`, 2 for a rational, so only a
+                // two-element row worked.
                 let o = if op == "multiply" {
                     "multiply"
                 } else {

@@ -128,22 +128,23 @@ fn multiple_assignment() {
     assert_eq!(calculate("a + b = @", &mut vars, &opts), "7");
 }
 
-/// Hurmet behaviors that the port reproduces on purpose (docs/spikes/S2b, Finding 4).
+/// Hurmet behaviours the port once reproduced on purpose (docs/spikes/S2b, Finding 4); ADR-0022
+/// fixed each, so these now check the corrected results.
 #[test]
-fn hurmet_quirks() {
+fn hurmet_quirks_fixed() {
     let opts = Options::default();
     let mut vars = Vars::new();
     let mut calc = |s: &str| calculate(s, &mut vars, &opts);
-    assert_eq!(calc("[2, 3]^2 = @"), "4 + j 9");
+    // A two-element vector squared was the complex number 4 + j 9 (item 12).
+    assert_eq!(calc("[2, 3]^2 = @"), "[4, 9]");
     assert_eq!(calc("[2; 3] [4, 5] = @"), "(8, 10; 12, 15)");
-    assert_eq!(
-        calc("[2; 3] [4, 5, 6] = @"),
-        "Error. Mis-matched number of elements"
-    );
-    // round(-0.7) was 1 in Hurmet (sign lost; fixed by ADR-0022 item 10).
+    // The outer product needed a two-element row (item 11).
+    assert_eq!(calc("[2; 3] [4, 5, 6] = @"), "(8, 10, 12; 12, 15, 18)");
+    // round(-0.7) was 1: the sign was lost (item 10).
     assert_eq!(calc("round(-0.7) = @"), "-1");
     assert_eq!(calc("(\"a\" ∉ \"xyz\") = @"), "false");
-    assert_eq!(calc("|(2, 0; 0, 4)| = @"), "0.125");
+    // |A| was 1/det(A) (item 11).
+    assert_eq!(calc("|(2, 0; 0, 4)| = @"), "8");
 }
 
 #[test]

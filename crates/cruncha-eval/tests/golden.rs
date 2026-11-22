@@ -7,8 +7,12 @@
 use cruncha_eval::{Currencies, Options, Vars, calculate};
 use std::sync::Arc;
 
-/// Inputs whose expected output the port does not reproduce, with the reason.
-const KNOWN_GAPS: &[(&str, &str)] = &[];
+/// Inputs whose expected output the port does not reproduce, with the reason. Deliberate
+/// corrections of Hurmet (ADR-0022) are listed here too, so the rest stay pinned.
+const KNOWN_GAPS: &[(&str, &str)] = &[(
+    "|matrix| = @",
+    "ADR-0022 item 11: |A| is the determinant, 184.05; Hurmet gave its reciprocal, 0.0054333",
+)];
 
 fn load(name: &str) -> serde_json::Value {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

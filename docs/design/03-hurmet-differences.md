@@ -23,6 +23,18 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | `Char` | Not found when unit-aware. | Works. |
 | `roundSig(x, n)` | Known to the parser, not to the evaluator. | x rounded to n significant digits. |
 | Fixed format (`format = "f2"`, `roundn(x, "f2")`, `string(x, "f2")`, `round`) | A value between −1 and 0 loses its minus sign: −0.25 shows as 0.25, `round(-0.7)` is 1. | The sign is kept: −0.25, `round(-0.7)` = −1. A value that rounds to zero shows as 0, without a sign. |
+| `×` (cross product) | `[]` for any two 3-vectors. | The cross product, shaped like the first vector. |
+| `sum`, `product`, `mean`, `min`, `max`, `range`, `median` of a matrix | 0. | Over every element. |
+| `\|A\|` of a square matrix | 1/det(A), and row swaps didn't change the sign. Hurmet's golden `\|matrix\|` expects 0.0054333; Cruncha gives 184.05. | det(A), in the unit to the nth power; 0 when singular. |
+| Column × row (outer product) | "Mis-matched number of elements" unless the row has 2 elements. | Any lengths. |
+| `product` | The unit of the first argument (`6 m` for `product(2 'm', 3 'm')`). | The product of the units (`6 m²`). |
+| A vector in an offset unit (°C, °F) | Converted wrongly (`[20; 30] °C` = [−166.52; −156.52] °F). | As a single value ([68; 86] °F). |
+| `zeros(m, 1)`, `ones(m, 1)` | One element. | A column of m. |
+| `[a, b]^n`, `[a; b]^n` | Read as a complex number. | Element-wise. |
+| Two-argument functions (`atan2`, `gcd`, `hypot`, `sum`, …) | Unit checks discarded: `atan2(1 'm', 1 's')` = 0.785. | Different units are an error; `gcd` takes no unit. |
+| `[x, y]` of column vectors inside an expression | "does not understand the expression". | The matrix of those columns. |
+| `M[rows, a:step:b]` (stepped columns) | Every element undefined. | Every step-th column. |
+| Data frames | A column name first in `df[…, …]` spanned the number of columns as rows; a column range looked up `columnMap[NaN]`; columns by a row of names were undefined; a selection's columns were keyed by the source's first headings; a frame without units printed a row of "undefined". | Each selects what it says; a missing column on a frame without row names says "no column named". |
 | `e` | Not a constant ("Variable e not found"). | Euler's number unless the document defines `e`; a definition wins and gets a warning (as for `j`). |
 
 ## Units (ADR-0022)
