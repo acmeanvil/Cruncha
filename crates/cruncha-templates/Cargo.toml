@@ -1,0 +1,12 @@
+[package]
+name = "cruncha-templates"
+description = "Cruncha's calculation templates and snippets (ADR-0014): the .cruncha.md format, validation and worked-example tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cruncha-prose = { path = "../cruncha-prose" }
+cruncha-eval = { path = "../cruncha-eval" }
+serde = { version = "1", features = ["derive"] }
+toml = "1"

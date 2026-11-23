@@ -883,6 +883,16 @@ fn open_url(url: String) -> Result<()> {
 struct PastedCell {
     kind: &'static str,
     source: String,
+    /// The cell's attributes from the fence (`{description="…"}`).
+    attrs: serde_json::Value,
+}
+
+/// A fence's attributes as a cell's: only `description` for now (ADR-0014 §1).
+fn fence_attrs(mut attrs: std::collections::BTreeMap<String, String>) -> serde_json::Value {
+    match attrs.remove("description") {
+        Some(d) if !d.trim().is_empty() => serde_json::json!({ "description": d.trim() }),
+        _ => serde_json::json!({}),
+    }
 }
 
 /// Pasted Markdown as cells: prose blocks (as the editor stores them), and fenced `calc`
@@ -892,9 +902,10 @@ fn markdown_cells(markdown: String) -> Vec<PastedCell> {
     cruncha_prose::from_markdown(&markdown)
         .into_iter()
         .map(|p| match p {
-            cruncha_prose::Piece::Prose(b) => PastedCell { kind: "prose", source: cruncha_prose::to_json(&b) },
-            cruncha_prose::Piece::Calc(line) => PastedCell { kind: "calc", source: line },
-            cruncha_prose::Piece::Code { lang, source } => PastedCell {
+            cruncha_prose::Piece::Prose(b) => PastedCell { kind: "prose", source: cruncha_prose::to_json(&b), attrs: serde_json::json!({}) },
+            cruncha_prose::Piece::Calc { source, attrs } => PastedCell { kind: "calc", source, attrs: fence_attrs(attrs) },
+            cruncha_prose::Piece::Code { lang, source, attrs } => PastedCell {
+                attrs: fence_attrs(attrs),
                 kind: match lang.as_str() {
                     "rust" => "rust",
                     "tex" => "tex",

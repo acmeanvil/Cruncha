@@ -216,7 +216,7 @@ Giving each inserted template its own namespace (`beam1.M`) would avoid renames 
 ## Action Items
 
 1. [x] Markdown support in the editor, with a Markdown ↔ ProseMirror converter that round-trips headings, paragraphs, emphasis, code, lists, links and block quotes. Done 2026-11-22: `crates/cruncha-prose` (pulldown-cmark) for agents, the mirror, reports, paste and templates; Markdown input rules and list keys in the editor.
-2. [ ] `cruncha-templates`: the format (§1), validation, preview, the test runner (§6); `cargo test -p cruncha-templates` in CI.
+2. [ ] `cruncha-templates`: the format (§1), validation, preview, the test runner (§6); `cargo test -p cruncha-templates` in CI. *(Started 2026-11-22: parse, validate and run_tests for calc templates; `tests/library.rs` runs every built-in template. Two details settled while building it: a test case may set `checks = "pass"` or `"fail"` (every `@test` holds, or one doesn't), and clash suggestions are `M2`, not §3's `M_2`, because a calc reads `M_2` as `M₂` (ADR-0024 item 6). A calc fence holds one calc, or a group: the steps to one answer (thread shear: internal and external thread areas, then both stresses), each step's description on a `>` line before it. Preview and code-cell tests are still to do.)*
 3. [ ] The insert flow (§3): the dialog, clash detection, renames by the calc lexer and the code-cell scanners, "use the document's", one commit, provenance.
 4. [ ] The user library (§4) and the snippet manager (§5): Templates tab (⌘⇧T), Library page, Save as snippet, Update, Rename, Duplicate, Delete to trash, Import/Export, a library folder setting.
 5. [ ] MCP `templates` and `propose_template`; `skills/cruncha-templates`.

@@ -1959,6 +1959,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cruncha-templates"
+version = "0.0.1"
+dependencies = [
+ "cruncha-eval",
+ "cruncha-prose",
+ "serde",
+ "toml 1.2.1+spec-1.1.0",
+]
+
+[[package]]
 name = "cruncha-units"
 version = "0.0.1"
 dependencies = [

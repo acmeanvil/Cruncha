@@ -14,6 +14,8 @@
 //! that isn't a cell (not at the top level, or not `calc`, `python`, `rust` or `tex`) a
 //! paragraph in code type.
 
+use std::collections::BTreeMap;
+
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde_json::Value;
 
@@ -53,9 +55,52 @@ pub struct Marks {
 pub enum Piece {
     Prose(Block),
     /// A fenced `python`, `rust` or `tex` block: a code cell of that kind.
-    Code { lang: String, source: String },
-    /// One line of a fenced `calc` block: a calc cell.
-    Calc(String),
+    Code { lang: String, source: String, attrs: BTreeMap<String, String> },
+    /// One line of a fenced `calc` block: a calc cell. A fence's attributes go with its first
+    /// calc. In a group (several calcs in one fence), a line starting with `>` is the
+    /// description of the calc after it.
+    Calc { source: String, attrs: BTreeMap<String, String> },
+}
+
+/// A fence's info string: its language and `{key="value" key2=value2}` attributes
+/// (```` ```calc {description="Radial depth"} ````, ADR-0014).
+pub fn fence_info(info: &str) -> (String, BTreeMap<String, String>) {
+    let info = info.trim();
+    let (lang, rest) = match info.find(|c: char| c.is_whitespace() || c == '{') {
+        Some(i) => (&info[..i], info[i..].trim()),
+        None => (info, ""),
+    };
+    let mut attrs = BTreeMap::new();
+    let body = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or("");
+    let mut chars = body.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace() || *c == ',').is_some() {}
+        let key: String = std::iter::from_fn(|| chars.next_if(|c| !c.is_whitespace() && *c != '=')).collect();
+        if key.is_empty() {
+            break;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        if chars.next_if_eq(&'=').is_none() {
+            attrs.insert(key, String::new());
+            continue;
+        }
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let value: String = if chars.next_if_eq(&'"').is_some() {
+            let mut v = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => break,
+                    '\\' => v.extend(chars.next()),
+                    c => v.push(c),
+                }
+            }
+            v
+        } else {
+            std::iter::from_fn(|| chars.next_if(|c| !c.is_whitespace() && *c != ',')).collect()
+        };
+        attrs.insert(key, value);
+    }
+    (lang.to_ascii_lowercase(), attrs)
 }
 
 /// A link target the editor and reports will follow: `http`, `https` or `mailto` only.
@@ -260,7 +305,7 @@ enum Frame {
     /// `implicit`: the text of a tight list item, which has no paragraph events.
     Para { content: Vec<Inline>, implicit: bool },
     Heading { level: u8, content: Vec<Inline> },
-    Code { lang: String, text: String },
+    Code { lang: String, attrs: BTreeMap<String, String>, text: String },
     Html(String),
 }
 
@@ -394,11 +439,11 @@ impl Builder {
             Tag::Item => self.stack.push(Frame::Item(vec![])),
             Tag::CodeBlock(kind) => {
                 self.close_implicit();
-                let lang = match kind {
-                    CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or_default().to_ascii_lowercase(),
-                    CodeBlockKind::Indented => String::new(),
+                let (lang, attrs) = match kind {
+                    CodeBlockKind::Fenced(info) => fence_info(&info),
+                    CodeBlockKind::Indented => (String::new(), BTreeMap::new()),
                 };
-                self.stack.push(Frame::Code { lang, text: String::new() });
+                self.stack.push(Frame::Code { lang, attrs, text: String::new() });
             }
             Tag::HtmlBlock => {
                 self.close_implicit();
@@ -465,7 +510,7 @@ impl Builder {
                 }
             }
             TagEnd::CodeBlock => {
-                if let Some(Frame::Code { lang, text }) = self.stack.pop() {
+                if let Some(Frame::Code { lang, attrs, text }) = self.stack.pop() {
                     let text = text.strip_suffix('\n').unwrap_or(&text).to_owned();
                     let lang = match lang.as_str() {
                         "py" => "python",
@@ -474,11 +519,21 @@ impl Builder {
                     };
                     match lang {
                         "python" | "rust" | "tex" if self.at_root() => {
-                            self.pieces.push(Piece::Code { lang: lang.to_owned(), source: text })
+                            self.pieces.push(Piece::Code { lang: lang.to_owned(), source: text, attrs })
                         }
                         "calc" if self.at_root() => {
+                            let mut attrs = Some(attrs);
+                            let mut description: Option<String> = None;
                             for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                                self.pieces.push(Piece::Calc(line.to_owned()));
+                                if let Some(d) = line.strip_prefix('>') {
+                                    description = Some(d.trim().to_owned());
+                                    continue;
+                                }
+                                let mut attrs = attrs.take().unwrap_or_default();
+                                if let Some(d) = description.take() {
+                                    attrs.insert("description".to_owned(), d);
+                                }
+                                self.pieces.push(Piece::Calc { source: line.to_owned(), attrs });
                             }
                         }
                         _ => {

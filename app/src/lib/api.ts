@@ -614,7 +614,8 @@ export const api = {
   openUrl: (url: string) => call<void>("open_url", { url }),
   /** Markdown as cells (cruncha-prose): prose blocks as ProseMirror JSON, fenced calc lines
    *  and python/rust/tex blocks as their cells. */
-  markdownCells: (markdown: string) => call<{ kind: string; source: string }[]>("markdown_cells", { markdown }),
+  markdownCells: (markdown: string) =>
+    call<{ kind: string; source: string; attrs: Record<string, unknown> }[]>("markdown_cells", { markdown }),
   agentServerStatus: () => call<AgentServerView | null>("agent_server_status"),
   agentServerStart: () => call<AgentServerView>("agent_server_start"),
   agentServerStop: () => call<void>("agent_server_stop"),

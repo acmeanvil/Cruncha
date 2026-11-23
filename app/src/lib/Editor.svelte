@@ -359,7 +359,7 @@
           }
           api.markdownCells(md).then(
             (pieces) => {
-              const nodes = pieces.map((p) => cellToNode({ id: null, order_key: null, kind: p.kind, source: p.source, attrs: {} } as unknown as Cell));
+              const nodes = pieces.map((p) => cellToNode({ id: null, order_key: null, kind: p.kind, source: p.source, attrs: p.attrs ?? {} } as unknown as Cell));
               if (nodes.length === 0) return;
               const inline = nodes.length === 1 && nodes[0].type === schema.nodes.paragraph;
               const slice = new Slice(Fragment.from(nodes), inline ? 1 : 0, inline ? 1 : 0);

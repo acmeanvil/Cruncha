@@ -69,9 +69,10 @@ fn markdown_blocks_and_marks() {
 #[test]
 fn fences_become_cells_at_the_top_level_only() {
     let got = from_markdown("Text\n\n```calc\nL = 20 ft\n\nw = 2 kip/ft\n```\n\n```py\nx = 1\n```\n\n- item\n\n  ```python\n  y = 2\n  ```\n\n```json\n{}\n```\n");
-    assert_eq!(got[1], Piece::Calc("L = 20 ft".into()));
-    assert_eq!(got[2], Piece::Calc("w = 2 kip/ft".into()));
-    assert_eq!(got[3], Piece::Code { lang: "python".into(), source: "x = 1".into() });
+    let calc = |s: &str| Piece::Calc { source: s.into(), attrs: Default::default() };
+    assert_eq!(got[1], calc("L = 20 ft"));
+    assert_eq!(got[2], calc("w = 2 kip/ft"));
+    assert_eq!(got[3], Piece::Code { lang: "python".into(), source: "x = 1".into(), attrs: Default::default() });
     let code = |s: &str| m(s, |m| m.code = true);
     assert_eq!(got[4], Piece::Prose(Block::BulletList(vec![vec![Block::Paragraph(vec![t("item")]), Block::Paragraph(vec![code("y = 2")])]])));
     assert_eq!(got[5], Piece::Prose(Block::Paragraph(vec![code("{}")])));
@@ -126,4 +127,31 @@ fn unknown_or_broken_sources_keep_their_text() {
         Block::Paragraph(vec![t("cell")])
     );
     assert_eq!(plain_text(&prose("- a\n- b")[0]), "a\nb");
+}
+
+#[test]
+fn fence_attributes_go_with_the_cell() {
+    let got = from_markdown("```calc {description=\"Radial depth of the section\"}\nh = 4 in_\n```\n\n```python {description=\"Moments\" hidden}\nx = 1\n```\n");
+    let Piece::Calc { source, attrs } = &got[0] else { panic!("{got:?}") };
+    assert_eq!((source.as_str(), attrs.get("description").map(String::as_str)), ("h = 4 in_", Some("Radial depth of the section")));
+    let Piece::Code { attrs, .. } = &got[1] else { panic!() };
+    assert_eq!(attrs.get("description").map(String::as_str), Some("Moments"));
+    assert_eq!(attrs.get("hidden").map(String::as_str), Some(""));
+    assert_eq!(fence_info("calc{description=\"a \\\"quoted\\\" word\"}").1["description"], "a \"quoted\" word");
+}
+
+#[test]
+fn a_group_describes_each_calc_on_the_line_before_it() {
+    let got = from_markdown("```calc\n> Internal thread shear area\nA_n = 2 in²_\nB = 3\n> External thread shear area\nA_s = 3 in²_\n```\n");
+    let calcs: Vec<(&str, Option<&str>)> = got
+        .iter()
+        .map(|p| match p {
+            Piece::Calc { source, attrs } => (source.as_str(), attrs.get("description").map(String::as_str)),
+            _ => panic!("{got:?}"),
+        })
+        .collect();
+    assert_eq!(
+        calcs,
+        [("A_n = 2 in²_", Some("Internal thread shear area")), ("B = 3", None), ("A_s = 3 in²_", Some("External thread shear area"))]
+    );
 }
