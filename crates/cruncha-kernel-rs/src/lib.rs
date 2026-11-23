@@ -11,6 +11,7 @@
 
 pub mod cells;
 pub mod env;
+pub mod rename;
 pub mod scan;
 
 use std::path::{Path, PathBuf};

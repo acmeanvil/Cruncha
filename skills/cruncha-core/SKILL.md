@@ -29,8 +29,12 @@ Cruncha documents are engineering calculation packages: prose, calc cells, Pytho
 | `check(scope?)` | Built-in checks: unit consistency, names used before they're defined, unfilled placeholders, failing `@test`s, cycles |
 | `history(cell_id?, since?, archived?)` | Versions, actors and diffs; with `archived`, the archive and save log (see the `cruncha-history` skill) |
 | `query_data(name, polars_or_sql)` | Read-only query on a data frame in the document |
+| `documents()` | The documents open in Cruncha (its tabs): ID, name, version, which is yours, which is showing, whether its code may run |
+| `propose_copy(from: {document, cell_ids}, document?, after?, rename?, message)` | Copy cells from one open document into another, as one proposal in the target |
 
-**Available now:** `read_doc(from?, limit?, snapshot?)`, `run(cell_ids?)`, `explain(cell_id)`, `check()`, `history(cell_id?, since?, archived?)`, `propose_edit`, `proposals()` and `withdraw(proposal_id)`.
+**Available now:** `read_doc(from?, limit?, snapshot?)`, `run(cell_ids?)`, `explain(cell_id)`, `check()`, `history(cell_id?, since?, archived?)`, `propose_edit`, `proposals()`, `withdraw(proposal_id)`, `documents()` and `propose_copy`.
+- **Several documents** (ADR-0024): Cruncha can have several documents open in tabs. Every tool except `documents` takes an optional `document`: an ID or name (with or without `.cruncha`) from `documents()`. Without it, a tool acts on your own document: the tab your conversation started in, or the tab that's showing for agents outside Cruncha. A name that matches several open documents is refused; use the ID. You work only with documents the user opened: you can't open, create or close one. Say which document each result or proposal is in.
+- **Copying between documents:** "copy the Python cell from the beam check to the column check" is `documents()`, then `read_doc(document: "beam-check")` to find the cell, then `propose_copy(from: {document: "beam-check", cell_ids: [...]}, document: "column-check", after: ..., message: ...)`. The copies are new cells, in one proposal in the target, reviewed in that document's tab. If the target already defines a name they define, the call is refused and lists the names with suggestions: call again with `rename` (e.g. `{"M": "M2"}`), which renames definitions and uses in the copied cells and is checked (an unsafe rename is refused).
 - `run` returns the engine's current results; the document recalculates by itself, and `run` waits for Python cells that are still running.
 - `query_data` isn't available yet.
 

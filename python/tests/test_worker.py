@@ -16,6 +16,7 @@ sys.path.insert(0, HERE)
 
 from cruncha_worker import figures, main, protocol, values  # noqa: E402
 from cruncha_worker.scan import scan  # noqa: E402
+from cruncha_worker.rename import rename  # noqa: E402
 
 
 def num(v, unit=None):
@@ -70,6 +71,34 @@ class Scan(unittest.TestCase):
         r = scan("x = (1,")
         self.assertEqual(r["error"]["type"], "SyntaxError")
         self.assertEqual(r["error"]["line"], 1)
+
+
+class Rename(unittest.TestCase):
+    def test_names_strings_attributes_and_keywords(self):
+        src = (
+            'from math import pi\n'
+            'M = w * L**2 / 8   # M here\n'
+            's = f"M is {M:.2f}" + "M"\n'
+            'obj.M = M\n'
+            'y = f(M=M)\n'
+        )
+        out = rename(src, {"M": "M_2", "pi": "pi_2"})["source"]
+        self.assertEqual(
+            out,
+            'from math import pi as pi_2\n'
+            'M_2 = w * L**2 / 8   # M here\n'
+            's = f"M is {M_2:.2f}" + "M"\n'
+            'obj.M = M_2\n'
+            'y = f(M=M_2)\n',
+        )
+        # The scan agrees: the cell defines and reads the new names.
+        r = scan(out)
+        self.assertIn("M_2", r["defines"])
+        self.assertNotIn("M", r["defines"] + r["reads"])
+
+    def test_a_function_parameter_renames_with_its_body(self):
+        out = rename("def g(M=1):\n    return M + 1\n", {"M": "M_2"})["source"]
+        self.assertEqual(out, "def g(M_2=1):\n    return M_2 + 1\n")
 
 
 class Values(unittest.TestCase):

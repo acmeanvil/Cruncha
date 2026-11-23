@@ -12,7 +12,9 @@
   import { api } from "./api";
   import { cellToNode, docFromCells, withDescription } from "./editor/cells";
   import { markdownPaste } from "./editor/paste";
-  import { adaptPasted, plainText, stampOrigin } from "./editor/clipboard";
+  import { adaptPasted, pastedCells, plainText, stampOrigin, withSources } from "./editor/clipboard";
+  import PasteClashDialog, { type Choice, type Clash } from "./PasteClashDialog.svelte";
+  import type { SelectionBookmark } from "prosemirror-state";
   import {
     currentBlock,
     editorPlugins,
@@ -70,6 +72,39 @@
      *  is put back instead of rebuilding from `cells` (a tab's undo history and selection). */
     stashKey?: string | null;
   } = $props();
+
+  /** A paste waiting on the clash dialog (ADR-0024 §1). */
+  let clash = $state<{ clashes: Clash[]; slice: Slice; cells: { kind: string; source: string }[]; at: SelectionBookmark; error: string | null } | null>(null);
+
+  function insertPaste(slice: Slice, at: SelectionBookmark) {
+    if (!view) return;
+    const tr = view.state.tr.setSelection(at.resolve(view.state.doc)).replaceSelection(slice);
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+  }
+
+  async function finishPaste(choices: Choice[]) {
+    if (!clash) return;
+    const c = clash;
+    const names: Record<string, string> = {};
+    for (const ch of choices) if (ch.rename && ch.rename !== ch.name) names[ch.name] = ch.rename;
+    const kept = new Set(choices.filter((ch) => ch.rename == null).map((ch) => ch.name));
+    // A cell is left out when every name of it that clashes keeps the document's value (the
+    // dialog allows that only for cells that define nothing else).
+    const dropped = new Set(
+      c.cells.map((_, i) => i).filter((i) => {
+        const its = c.clashes.filter((x) => x.cells.includes(i));
+        return its.length > 0 && its.every((x) => kept.has(x.name));
+      }),
+    );
+    try {
+      const renamed = Object.keys(names).length ? await api.renameCells(c.cells, names, docId ?? undefined) : c.cells.map((x) => x.source);
+      clash = null;
+      insertPaste(withSources(c.slice, renamed.map((src, i) => (dropped.has(i) ? null : src))), c.at);
+    } catch (e) {
+      clash = { ...c, error: String(e) };
+    }
+  }
 
   /** Editor states of tabs that aren't showing, by `stashKey`. */
   const stashes = new Map<string, EditorState>();
@@ -306,9 +341,22 @@
         // Pasted Markdown (plain text, or text from a code editor, that looks like Markdown)
         // becomes cells: prose blocks, and calc/python/rust fences as cells. The backend
         // parses it (cruncha-prose), as it does for agents and templates.
-        handlePaste(v, e) {
+        handlePaste(v, e, slice) {
           const md = markdownPaste(v, e);
-          if (md == null) return false;
+          if (md == null) {
+            // Whole calc and code cells: check their names against the document's first.
+            const cells = pastedCells(slice);
+            if (cells.length === 0) return false;
+            const at = v.state.selection.getBookmark();
+            api.pasteClashes(cells, docId ?? undefined).then(
+              (clashes) => {
+                if (clashes.length === 0) insertPaste(slice, at);
+                else clash = { clashes, slice, cells, at, error: null };
+              },
+              () => insertPaste(slice, at), // can't check (e.g. the backend is busy): paste as is
+            );
+            return true;
+          }
           api.markdownCells(md).then(
             (pieces) => {
               const nodes = pieces.map((p) => cellToNode({ id: null, order_key: null, kind: p.kind, source: p.source, attrs: {} } as unknown as Cell));
@@ -497,6 +545,10 @@
     view.focus();
   }
 </script>
+
+{#if clash}
+  <PasteClashDialog clashes={clash.clashes} error={clash.error} onpaste={finishPaste} oncancel={() => (clash = null)} />
+{/if}
 
 {#if editable}
   <div class="tools" role="toolbar" aria-label="Insert" bind:this={toolsEl}>

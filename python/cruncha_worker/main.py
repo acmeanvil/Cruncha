@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The worker loop: read a request, answer it, repeat.
 
-Requests (``op``): ``hello``, ``scan``, ``run``, ``drop``, ``reset``, ``echo`` (protocol
+Requests (``op``): ``hello``, ``scan``, ``rename``, ``run``, ``drop``, ``reset``, ``echo`` (protocol
 tests and benchmarks), ``shutdown``. Every response carries the request's ``id`` and ``ok``.
 
 A cell runs in a **fresh namespace** holding only what it reads: values from calcs (sent with
@@ -23,7 +23,7 @@ import sys
 import time
 import traceback
 
-from . import PROTOCOL_VERSION, figures, outputs, protocol, scan, values
+from . import PROTOCOL_VERSION, figures, outputs, protocol, rename, scan, values
 
 STORE = {}
 MAX_CAPTURE = 200_000
@@ -143,6 +143,8 @@ def handle(req, blobs_in):
         return {"protocol": PROTOCOL_VERSION, "python": sys.version.split()[0], "executable": sys.executable, "pid": os.getpid()}, blobs_out
     if op == "scan":
         return scan.scan(req["source"]), blobs_out
+    if op == "rename":
+        return rename.rename(req["source"], req["names"]), blobs_out
     if op == "run":
         return run(req, blobs_out), blobs_out
     if op == "drop":

@@ -164,3 +164,21 @@ test("a selection from mid-paragraph through whole cells: text merges, cells spl
   expect(got[1].from).toBe("document:DOC_A@v7");
   expect(new Set(got.map((c) => c.id)).size).toBe(got.length);
 });
+
+test("the cells a paste holds, and the paste rebuilt with renamed or left-out cells", async () => {
+  const { pastedCells, withSources } = await import("./clipboard");
+  const a = A();
+  // From mid-paragraph through the calc and the Python cell.
+  const p = a.state.doc.child(0);
+  const slice = TextSelection.create(a.state.doc, p.nodeSize - 5, a.state.doc.content.size).content();
+  expect(pastedCells(slice)).toEqual([
+    { kind: "calc", source: "M = w L^2 / 8 = ?? kip·ft" },
+    { kind: "python", source: "x = np.linspace(0, L, 50)\nmoment = w * x" },
+  ]);
+  const out = withSources(slice, ["M2 = w L^2 / 8 = ?? kip·ft", null]);
+  const types: string[] = [];
+  out.content.forEach((n) => types.push(n.type.name));
+  expect(types).toEqual(["paragraph", "calc"]);
+  expect(out.content.child(1).attrs.source).toBe("M2 = w L^2 / 8 = ?? kip·ft");
+  expect(out.content.child(1).attrs.cellAttrs).toBe('{"description":"Midspan moment"}');
+});

@@ -25,7 +25,7 @@ pub struct Names {
 const AMBIENT: &[&str] = &["Some", "None", "Ok", "Err", "drop", "Box", "Vec", "String", "unit", "self", "Self"];
 
 /// Macros whose arguments are comma-separated expressions (a format string first for some).
-const EXPR_MACROS: &[&str] = &[
+pub(crate) const EXPR_MACROS: &[&str] = &[
     "println", "print", "eprintln", "eprint", "format", "panic", "assert", "assert_eq", "assert_ne",
     "debug_assert", "debug_assert_eq", "vec", "write", "writeln", "dbg", "unreachable", "todo",
 ];

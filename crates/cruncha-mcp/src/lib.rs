@@ -86,6 +86,20 @@ pub struct VersionInfo {
     pub snapshots: Vec<String>,
 }
 
+/// An open document (ADR-0024).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DocumentInfo {
+    pub id: String,
+    pub name: String,
+    pub version: u64,
+    /// The app's active tab.
+    pub active: bool,
+    /// This connection's own document (what tools act on without `document`).
+    pub this: bool,
+    /// Its code may run here (the document is trusted on this computer).
+    pub can_run: bool,
+}
+
 /// What archiving and trimming removed (ADR-0023): the snapshots kept from removed history
 /// and the save log.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -216,6 +230,27 @@ pub trait Backend: Clone + Send + Sync + 'static {
     /// snapshots too).
     fn snapshot_named(&self, name: String) -> impl Future<Output = Result<DocSnapshot, String>> + Send {
         async move { Err(format!("this server can't read snapshot “{name}”")) }
+    }
+    /// The documents open in the app (ADR-0024).
+    fn documents(&self) -> impl Future<Output = Result<Vec<DocumentInfo>, String>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// This backend acting on another open document, named by ID or name.
+    fn for_document(&self, document: String) -> impl Future<Output = Result<Self, String>> + Send {
+        async move { Err(format!("this server can't act on another document ({document})")) }
+    }
+    /// Propose copying `cell_ids` from the open document `from` into this one, after `after`,
+    /// with `rename` applied, as one proposal here.
+    fn propose_copy(
+        &self,
+        from: String,
+        cell_ids: Vec<String>,
+        after: Option<String>,
+        rename: std::collections::BTreeMap<String, String>,
+        message: String,
+    ) -> impl Future<Output = Result<ProposalInfo, String>> + Send {
+        let _ = (cell_ids, after, rename, message);
+        async move { Err(format!("this server can't copy from {from}")) }
     }
     /// The archive: snapshots kept from removed history and the save log; with `cell`, only
     /// saves that changed it.

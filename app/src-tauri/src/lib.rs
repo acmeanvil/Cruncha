@@ -20,6 +20,7 @@ mod figures;
 mod login_path;
 mod proposals;
 mod python;
+mod rename;
 mod report;
 mod secrets;
 mod session;
@@ -76,6 +77,13 @@ async fn agent_server_start(
     let view = (&server).into();
     *slot = Some(server);
     Ok(view)
+}
+
+/// How long a background tab's Python may sit idle before its workers stop (ADR-0024): 10
+/// minutes, or `CRUNCHA_IDLE_WORKERS_SECS` seconds (for review).
+fn idle_workers() -> std::time::Duration {
+    let secs = std::env::var("CRUNCHA_IDLE_WORKERS_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(10 * 60);
+    std::time::Duration::from_secs(secs)
 }
 
 /// The macOS menu: Tauri's default, except that ⌘W closes the tab (ADR-0024) and Close Window
@@ -266,6 +274,23 @@ type Result<T> = session::Result<T>;
 async fn open_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
     // A new tab (or the document's tab, if it's open). An agent keeps its own document.
     s.lock().await.open(&path).await
+}
+
+/// Names that pasted cells define and the document already defines (ADR-0024).
+#[tauri::command]
+async fn paste_clashes(cells: Vec<session::SourceView>, doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<session::ClashView>> {
+    s.lock().await.on(doc.as_deref())?.paste_clashes(cells).await
+}
+
+/// The cells' sources with names renamed (old → new), each checked; refused if unsafe.
+#[tauri::command]
+async fn rename_cells(
+    cells: Vec<session::SourceView>,
+    names: std::collections::BTreeMap<String, String>,
+    doc: Option<String>,
+    s: State<'_, Shared>,
+) -> Result<Vec<String>> {
+    s.lock().await.on(doc.as_deref())?.rename_cells(cells, names).await
 }
 
 /// The open documents, in tab order (ADR-0024).
@@ -951,7 +976,21 @@ pub fn run() {
             {
                 eprintln!("cruncha: couldn't open {}: {e}", PathBuf::from(&path).display());
             }
-            app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
+            let shared: Shared = std::sync::Arc::new(Mutex::new(session));
+            // Background tabs' Python stops after 10 idle minutes (ADR-0024), checked each minute
+            // (or as often as the limit, when it's shorter).
+            let sleeper = shared.clone();
+            let idle = idle_workers();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(idle.min(std::time::Duration::from_secs(60))).await;
+                    let stopped = sleeper.lock().await.sleep_idle_workers(idle).await;
+                    for id in stopped {
+                        eprintln!("cruncha: stopped the idle Python workers of document {id}");
+                    }
+                }
+            });
+            app.manage::<Shared>(shared);
             #[cfg(target_os = "macos")]
             app.set_menu(app_menu(app.handle())?)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
@@ -986,6 +1025,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_document,
             open_documents,
+            paste_clashes,
+            rename_cells,
             activate_document,
             create_document,
             create_sample_document,

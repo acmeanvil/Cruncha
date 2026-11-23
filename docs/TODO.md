@@ -8,9 +8,7 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 
 | ADR | Item | Status | What's left |
 | --- | --- | --- | --- |
-| 0024 | 4. Workers per document, on demand, stopped after 10 minutes idle | Not started | |
-| 0024 | 5. Agents across open documents: `documents`, `document` argument, `propose_copy` | Not started | |
-| 0024 | 6. Name clashes on paste through ADR-0014's clash dialog | Not started | With ADR-0014 item 3 |
+| 0024 | 5. (rest) Agent-panel conversations listed per tab (the panel shows the running one and notes its tab) | **Partial** | |
 | 0014 | 2. `cruncha-templates`: the format, validation, preview, the test runner | Not started | The pilot comes first (item 6) |
 | 0014 | 3. The insert flow: dialog, clash detection, renames, "use the document's", one commit, provenance | Not started | |
 | 0014 | 4. User library and snippet manager (Templates tab ⌘⇧T, Save as snippet, …) | Not started | |

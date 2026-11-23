@@ -49,6 +49,8 @@ pub struct Python {
     pub timeout: Option<Duration>,
     /// Rust cells, once Rust is set up.
     rust: Mutex<Option<Arc<cruncha_kernel_rs::cells::Cells>>>,
+    /// When the workers were last used (a scan or a run), for stopping idle ones (ADR-0024).
+    last_used: Mutex<std::time::Instant>,
 }
 
 impl Python {
@@ -64,6 +66,7 @@ impl Python {
             generation: AtomicU64::new(0),
             timeout: None,
             rust: Mutex::new(None),
+            last_used: Mutex::new(std::time::Instant::now()),
         })
     }
 
@@ -81,10 +84,45 @@ impl Python {
         env::ready(&self.base, LOCK)
     }
 
+    fn touch(&self) {
+        *self.last_used.lock().unwrap() = std::time::Instant::now();
+    }
+
+    /// Is a worker process running (a runner or a scanner)?
+    #[cfg(test)]
+    pub fn has_workers(&self) -> bool {
+        let live = |m: &AsyncMutex<Option<Kernel>>| m.try_lock().map_or(true, |s| s.is_some());
+        live(&self.runner) || live(&self.scanner)
+    }
+
+    /// Stop the workers if they have been idle for `idle` and nothing is running (ADR-0024: a
+    /// background tab's Python stops after 10 minutes). They start again on the next scan or
+    /// run. Returns whether they were stopped; the caller tells the engine its values are gone.
+    pub async fn sleep_if_idle(&self, idle: Duration) -> bool {
+        if self.last_used.lock().unwrap().elapsed() < idle {
+            return false;
+        }
+        // A run in progress holds the runner; a scan, the scanner. Never wait for either.
+        let (Ok(mut runner), Ok(mut scanner)) = (self.runner.try_lock(), self.scanner.try_lock()) else {
+            return false;
+        };
+        if runner.is_none() && scanner.is_none() {
+            return false;
+        }
+        if let Some(k) = runner.take() {
+            k.shutdown().await;
+        }
+        if let Some(k) = scanner.take() {
+            k.shutdown().await;
+        }
+        true
+    }
+
     async fn ensure<'a>(
         &self,
         slot: &'a mut Option<Kernel>,
     ) -> Result<&'a mut Kernel, KernelError> {
+        self.touch();
         if slot.as_mut().is_some_and(|k| !k.is_alive()) {
             *slot = None;
         }
@@ -102,6 +140,16 @@ impl Python {
             *slot = Some(Kernel::start(config).await?);
         }
         Ok(slot.as_mut().expect("just started"))
+    }
+
+    /// `source` with these names renamed, by the worker (Python's tokenizer; ADR-0024).
+    pub async fn rename(&self, source: &str, names: &std::collections::BTreeMap<String, String>) -> Result<String, String> {
+        if self.interpreter().is_none() {
+            return Err("renaming in a Python cell needs Python set up".into());
+        }
+        let mut slot = self.scanner.lock().await;
+        let k = self.ensure(&mut slot).await.map_err(|e| e.to_string())?;
+        k.rename(source, names).await.map_err(|e| e.to_string())
     }
 
     /// Scan these sources (empty when Python isn't set up).
@@ -179,6 +227,7 @@ impl Python {
                 notify(run.results);
                 return;
             };
+            self.touch();
             let results = {
                 let mut e = engine.lock().unwrap();
                 e.set_running(Some(&job));

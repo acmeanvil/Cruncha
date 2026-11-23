@@ -291,6 +291,8 @@ pub struct PanelView {
     pub size: u64,
     pub totals: Option<UsageTotals>,
     pub conversation_id: Option<String>,
+    /// The document the conversation belongs to (ADR-0024: the tab it started in).
+    pub doc_id: Option<String>,
 }
 
 /// A saved conversation (one per agent session).
@@ -450,6 +452,7 @@ impl Panel {
             agent_name: Some(agent.name.clone()),
             running: true,
             conversation_id: Some(format!("{}-{}", now_ms(), self.generation)),
+            doc_id: Some(doc_id.to_owned()),
             entries: vec![Entry::Notice { text: format!("Starting {}…", agent.name), error: false }],
             ..PanelView::default()
         };

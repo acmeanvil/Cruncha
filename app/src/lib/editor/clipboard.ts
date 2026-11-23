@@ -111,3 +111,36 @@ export function plainText(slice: Slice): string {
     })
     .join("\n\n");
 }
+
+/** The whole calc and code cells a paste holds, in order (ADR-0024 §1: their names may clash
+ *  with the document's). Partial blocks and raw cells aren't included. */
+export function pastedCells(slice: Slice): { kind: string; source: string }[] {
+  const out: { kind: string; source: string }[] = [];
+  slice.content.forEach((n, _, i) => {
+    const open = (i === 0 && slice.openStart > 0) || (i === slice.content.childCount - 1 && slice.openEnd > 0);
+    if (open) return;
+    if (n.type === schema.nodes.calc) out.push({ kind: "calc", source: n.attrs.source });
+    else if (n.type === schema.nodes.code_block) out.push({ kind: n.attrs.lang, source: n.textContent });
+  });
+  return out;
+}
+
+/** The paste with its cells' sources replaced, in `pastedCells` order; `null` leaves a cell
+ *  out (the document's definition is used instead). */
+export function withSources(slice: Slice, sources: (string | null)[]): Slice {
+  const nodes: Node[] = [];
+  let k = 0;
+  slice.content.forEach((n, _, i) => {
+    const open = (i === 0 && slice.openStart > 0) || (i === slice.content.childCount - 1 && slice.openEnd > 0);
+    const isCell = !open && (n.type === schema.nodes.calc || n.type === schema.nodes.code_block);
+    if (!isCell) {
+      nodes.push(n);
+      return;
+    }
+    const src = sources[k++];
+    if (src == null) return;
+    if (n.type === schema.nodes.calc) nodes.push(n.type.create({ ...n.attrs, source: src }, n.content, n.marks));
+    else nodes.push(n.type.create(n.attrs, src ? schema.text(src) : null, n.marks));
+  });
+  return new Slice(Fragment.from(nodes), slice.openStart, slice.openEnd);
+}

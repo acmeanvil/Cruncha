@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
+use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, DocumentInfo, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
 use cruncha_store::{CellDiff, CellKind};
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -225,6 +225,119 @@ impl Backend for AppBackend {
         Ok(doc_snapshot(info.name, info.id, info.version, &cells, &results))
     }
 
+    async fn documents(&self) -> Result<Vec<DocumentInfo>, String> {
+        let s = self.0.lock().await;
+        let docs = s.documents();
+        let own = self.2.clone().or_else(|| docs.iter().find(|d| d.active).map(|d| d.id.clone()));
+        Ok(docs
+            .into_iter()
+            .map(|d| DocumentInfo {
+                this: own.as_deref() == Some(d.id.as_str()),
+                can_run: s.prefs().trusted.contains(&d.id),
+                id: d.id,
+                name: d.name,
+                version: d.version,
+                active: d.active,
+            })
+            .collect())
+    }
+
+    async fn for_document(&self, document: String) -> Result<Self, String> {
+        let docs = self.0.lock().await.documents();
+        if docs.iter().any(|d| d.id == document) {
+            return Ok(AppBackend(self.0.clone(), self.1.clone(), Some(document)));
+        }
+        let bare = |n: &str| n.strip_suffix(".cruncha").unwrap_or(n).to_lowercase();
+        let want = bare(&document);
+        let matches: Vec<_> = docs.iter().filter(|d| bare(&d.name) == want).collect();
+        match matches.as_slice() {
+            [d] => Ok(AppBackend(self.0.clone(), self.1.clone(), Some(d.id.clone()))),
+            [] => Err(format!(
+                "no open document is called “{document}”; open: {}",
+                docs.iter().map(|d| format!("{} ({})", d.name, d.id)).collect::<Vec<_>>().join(", ")
+            )),
+            many => Err(format!(
+                "“{document}” matches several open documents: {}; give its ID",
+                many.iter().map(|d| format!("{} ({})", d.path, d.id)).collect::<Vec<_>>().join(", ")
+            )),
+        }
+    }
+
+    async fn propose_copy(
+        &self,
+        from: String,
+        cell_ids: Vec<String>,
+        after: Option<String>,
+        rename: std::collections::BTreeMap<String, String>,
+        message: String,
+    ) -> Result<ProposalInfo, String> {
+        use crate::session::SourceView;
+        let source_doc = self.for_document(from).await?.2.expect("a resolved document");
+        let mut s = self.session().await?;
+        let target = s.info().await?;
+        if source_doc == target.id {
+            return Err("that's the same document; use propose_edit to add cells to it".into());
+        }
+        s.select(Some(&source_doc))?;
+        let from_info = s.info().await?;
+        let cells = s.cells(None).await?;
+        let picked = cell_ids
+            .iter()
+            .map(|id| {
+                cells
+                    .iter()
+                    .find(|c| &c.id == id && c.parent_id.is_none())
+                    .cloned()
+                    .ok_or_else(|| format!("no cell {id} in {}", from_info.name))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if picked.is_empty() {
+            return Err("give at least one cell to copy".into());
+        }
+        // Prose travels as Markdown (proposals take prose as Markdown); code as it is.
+        let mut views = Vec::with_capacity(picked.len());
+        for c in &picked {
+            let source = match c.kind {
+                CellKind::Prose => cruncha_prose::to_markdown(&cruncha_prose::parse_json(&c.source)),
+                CellKind::Calc | CellKind::Python | CellKind::Rust => c.source.clone(),
+                other => return Err(format!("a {} cell can't be copied by an agent", other.as_str())),
+            };
+            views.push(SourceView { kind: c.kind.as_str().into(), source });
+        }
+        let sources = if rename.is_empty() {
+            views.iter().map(|v| v.source.clone()).collect()
+        } else {
+            s.rename_cells(views.clone(), rename).await?
+        };
+        s.select(Some(&target.id))?;
+        let renamed: Vec<SourceView> =
+            views.iter().zip(&sources).map(|(v, src)| SourceView { kind: v.kind.clone(), source: src.clone() }).collect();
+        let clashes = s.paste_clashes(renamed).await?;
+        if !clashes.is_empty() {
+            let example: Vec<String> = clashes.iter().map(|c| format!("\"{}\": \"{}\"", c.name, c.suggestion)).collect();
+            return Err(format!(
+                "{} already defines {}; copy again with rename, e.g. {{{}}}",
+                target.name,
+                clashes.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "),
+                example.join(", ")
+            ));
+        }
+        // Listed in reverse with the same `after`, they land in order.
+        let edits: Vec<Edit> = picked
+            .iter()
+            .zip(sources)
+            .rev()
+            .map(|(c, source)| Edit::Insert {
+                after: after.clone(),
+                kind: c.kind.as_str().into(),
+                source,
+                description: c.attrs["description"].as_str().map(str::to_owned),
+            })
+            .collect();
+        let message = format!("{} (copied from {} v{})", message.trim(), from_info.name, from_info.version);
+        s.propose(&self.1, None, &message, edits).await.map(proposal_info)
+    }
+
     async fn snapshot_named(&self, name: String) -> Result<DocSnapshot, String> {
         let mut s = self.session().await?;
         if !s.is_open() {
@@ -411,6 +524,65 @@ mod tests {
         assert!(h.iter().any(|v| !v.snapshots.is_empty()), "the sample has a snapshot");
         let changes = backend.diff(0, doc.version).await.unwrap();
         assert!(changes.iter().all(|c| c.change == "added"), "everything was added since v0");
+    }
+
+    #[tokio::test]
+    async fn agents_work_across_open_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(None);
+        let a = session.create_sample(&dir.path().join("beam.cruncha")).await.unwrap().id;
+        let b = session.create(&dir.path().join("column.cruncha")).await.unwrap().id;
+        // B gets its own M, so a copy of A's moment clashes.
+        session
+            .on(Some(&b))
+            .unwrap()
+            .commit(vec![crate::session::ChangeView::Upsert { cell: {
+                let mut c = cruncha_store::Cell::new(CellKind::Calc, "a0", "M = 5 kip·ft");
+                c.id = "BM".into();
+                c
+            } }], "M")
+            .await
+            .unwrap();
+        // An agent outside Cruncha: the active tab (B) by default.
+        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
+        let docs = backend.documents().await.unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs.iter().any(|d| d.id == b && d.this && d.active));
+        assert_eq!(backend.snapshot(false).await.unwrap().id, b);
+
+        // By name (with or without .cruncha) or by ID; an unknown one lists what's open.
+        let on_a = backend.for_document("beam".into()).await.unwrap();
+        assert_eq!(on_a.snapshot(false).await.unwrap().id, a);
+        assert_eq!(backend.for_document(a.clone()).await.unwrap().2.as_deref(), Some(a.as_str()));
+        assert!(backend.for_document("nope".into()).await.err().unwrap().contains("beam.cruncha"));
+
+        // Copy A's moment cell into B: refused while M clashes, then proposed with a rename.
+        let doc_a = on_a.snapshot(false).await.unwrap();
+        let m = doc_a.cells.iter().find(|c| c.defines.contains(&"M".to_string())).unwrap().id.clone();
+        let err = backend
+            .propose_copy("beam".into(), vec![m.clone()], None, Default::default(), "reuse the moment".into())
+            .await
+            .unwrap_err();
+        assert!(err.contains("already defines M") && err.contains("\"M\": \"M2\""), "{err}");
+        let p = backend
+            .propose_copy(
+                "beam".into(),
+                vec![m.clone()],
+                Some("BM".into()),
+                std::collections::BTreeMap::from([("M".to_string(), "M2".to_string())]),
+                "reuse the moment".into(),
+            )
+            .await
+            .unwrap();
+        assert!(p.message.contains("copied from beam.cruncha"), "{}", p.message);
+        let views = backend.0.lock().await.on(Some(&b)).unwrap().proposals().await.unwrap();
+        let ins = views[0].changes.iter().find(|c| c.op == "insert").expect("an insert");
+        assert!(ins.source.as_deref().unwrap_or_default().starts_with("M2 ="), "{ins:?}");
+        assert_eq!(ins.after.as_deref(), Some("BM"));
+        assert_eq!(ins.description.as_deref(), Some("Maximum bending moment, at midspan"), "the description travels");
+        // It's B's proposal; A is untouched.
+        assert_eq!(backend.proposals().await.unwrap().len(), 1);
+        assert!(on_a.proposals().await.unwrap().is_empty());
     }
 
     #[tokio::test]

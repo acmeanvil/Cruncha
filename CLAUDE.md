@@ -37,13 +37,13 @@ crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluati
 crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing, sandbox.rs (macOS profile),
                            env.rs (uv + python-build-standalone environment per lockfile); examples/setup_env.rs, examples/py_bench.rs (S4)
 python/                    the worker (stdlib-only protocol; numeric packages only when cells import them)
-  cruncha_worker/          main.py loop (fresh namespace per cell, STORE of Python values), scan.py (ast/symtable), values.py (Plain <-> pint/NumPy/Polars),
+  cruncha_worker/          main.py loop (fresh namespace per cell, STORE of Python values), scan.py (ast/symtable), rename.py (tokenize-based renames), values.py (Plain <-> pint/NumPy/Polars),
                            outputs.py (PNG figures, tables, text; never HTML), figures.py (ADR-0017: Plotly adapter installed on import,
                            `figure` outputs as JSON specs of allowlisted MIME types, units into axis titles, stable uids, summary + ranges), protocol.py, bench.py (S4)
   cruncha/                 what cells import: `ureg`, `Q_` (the shared pint registry), `show` (figures)
   requirements.in/.lock    the packages Python cells get (lock compiled by uv with hashes; a new lock means a new environment)
   tests/test_worker.py     unittest; tools/scan_check.py (scan vs bytecode, S4)
-crates/cruncha-kernel-rs/  Rust cells (ADR-0006): scan.rs (syn: top-level lets define, free names read), cells.rs (generated crate per source + input types, cached builds, cell-line errors), env.rs (setup: rustup-init, checksum, warm build),
+crates/cruncha-kernel-rs/  Rust cells (ADR-0006): scan.rs (syn: top-level lets define, free names read), rename.rs (proc_macro2 token renames), cells.rs (generated crate per source + input types, cached builds, cell-line errors), env.rs (setup: rustup-init, checksum, warm build),
                            wit/cell.wit (the cell world), guest/cruncha-prelude (Quantity on cruncha-units, Plain in/out; built only for wasm32-wasip2; not a workspace member),
                            src/lib.rs (Toolchain: Cruncha's rustup home; build with a shared target dir; Runtime/Cell: wasmtime, empty WASI context, epoch timeouts),
                            examples/rs_bench.rs (S5), tests/cell.rs (sandbox and timeout; skips without the toolchain)
@@ -90,6 +90,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
                            Python, trusted documents; ⌘,), DocumentSettings (tabs: Document, Report, History; kept in the document), …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
+                           src/rename.rs renames in pasted or copied cells (ADR-0024: calcs lexically, Python by the worker's tokenizer, Rust by proc_macro2; every rename re-scanned and checked),
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/stored.rs stored results (ADR-0018): look up before running, flush finished runs, trim after a prune,
                            src/report.rs a version (latest, past or snapshot) as a Report (title block from the meta cell, snapshots as revisions, house style from Prefs),

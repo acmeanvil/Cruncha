@@ -27,6 +27,8 @@
     onjumpcell,
     onclose,
     onsettings,
+    docId = null,
+    docName,
   }: {
     /** Cell IDs of the open document (mentions become links). */
     cellIds: Set<string>;
@@ -34,6 +36,10 @@
     onclose: () => void;
     /** Open Settings at a section (`agents`, `external`). */
     onsettings: (section: "agents" | "external") => void;
+    /** The active tab's document. */
+    docId?: string | null;
+    /** A document's name, for the note when the conversation is in another tab. */
+    docName?: (id: string) => string | null;
   } = $props();
 
   /** Models each agent offered (from Settings), and the one to start with. */
@@ -263,6 +269,12 @@
 <!-- Clicks on cell links and links inside replies are handled here (event delegation). -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <aside class="panel" {onclick}>
+  {#if view?.running && view.docId && docId && view.docId !== docId}
+    <p class="elsewhere small">
+      This conversation belongs to <strong>{docName?.(view.docId) ?? "another tab"}</strong>; the agent can still read and propose
+      to this document when you name it.
+    </p>
+  {/if}
   <header>
     <strong>Agent</strong>
     {#if view?.agentId && !reading}
@@ -443,6 +455,7 @@
 </aside>
 
 <style>
+  .elsewhere { margin: 0; padding: 6px 12px; background: var(--accent-bg); color: var(--text); border-bottom: 1px solid var(--border); }
   .panel {
     display: flex; flex-direction: column; min-height: 0; height: 100%; border-left: 1px solid var(--border);
     background: var(--panel); font-size: 13.5px;

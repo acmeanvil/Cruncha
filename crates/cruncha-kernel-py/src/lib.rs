@@ -326,6 +326,18 @@ impl Kernel {
         serde_json::from_value(h).map_err(|e| Error::Died(e.to_string()))
     }
 
+    /// `source` with these names renamed (old → new), by Python's tokenizer: strings,
+    /// comments, attributes and keyword arguments are left alone (ADR-0024).
+    pub async fn rename(&mut self, source: &str, names: &std::collections::BTreeMap<String, String>) -> Result<String> {
+        let (h, _) = self
+            .request(json!({"op": "rename", "source": source, "names": names}), vec![])
+            .await?;
+        h["source"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Died("rename gave no source".into()))
+    }
+
     /// Run a cell. With a `timeout`, the cell is interrupted when it expires (and the worker
     /// killed if it doesn't stop); the result then has status `interrupted`.
     pub async fn run(&mut self, req: &RunRequest, timeout: Option<Duration>) -> Result<RunResult> {

@@ -58,6 +58,8 @@
   /** What each tab was showing when it was left: the version or snapshot, and the scroll. */
   const tabMemory = new Map<string, { selected: Selection; scroll: number }>();
   let mainEl = $state<HTMLElement | undefined>();
+  /** Background tabs with new proposals from an agent (ADR-0024). */
+  let badged = $state.raw(new Set<string>());
   let history = $state<VersionView[]>([]);
   let selected = $state<Selection>({ kind: "latest" });
   let cells = $state.raw<Cell[]>([]);
@@ -265,6 +267,7 @@
   const switchTab = (id: string) =>
     attempt(async () => {
       if (doc?.id === id) return;
+      if (badged.has(id)) badged = new Set([...badged].filter((x) => x !== id));
       await leaveTab();
       await load(await api.activateDocument(id));
     });
@@ -331,6 +334,7 @@
     });
     const unProposals = listen<string>("proposals", (e) => {
       if (doc && e.payload === doc.id) void refreshProposals();
+      else badged = new Set([...badged, e.payload]);
     });
     const unSetup = listen<SetupProgress>("python-setup", (e) => (setup = SETUP_LABEL[e.payload.step]));
     const unRustSetup = listen<string>("rust-setup", (e) => (setup = RUST_SETUP_LABEL[e.payload] ?? setup));
@@ -553,7 +557,7 @@
       {#each tabs as t (t.id)}
         <div class="tab" class:active={t.id === doc?.id} title={t.path}>
           <button class="tname" onclick={() => switchTab(t.id)} aria-current={t.id === doc?.id ? "page" : undefined}>
-            {t.name.replace(/\.cruncha$/, "")}
+            {t.name.replace(/\.cruncha$/, "")}{#if badged.has(t.id)}<span class="tbadge" title="An agent proposed changes here"></span>{/if}
           </button>
           <button class="tclose" aria-label="Close {t.name}" title="Close tab (⌘W)" onclick={() => closeTab(t.id)}>×</button>
         </div>
@@ -670,6 +674,8 @@
       {#if agentPanel}
         <AgentPanel
           {cellIds}
+          docId={doc?.id ?? null}
+          docName={(id) => tabs.find((t) => t.id === id)?.name.replace(/\.cruncha$/, "") ?? null}
           onjumpcell={(id) => editor?.jumpToCell(id)}
           onclose={() => (agentPanel = false)}
           onsettings={(section) => (settingsPage = section)}
@@ -792,6 +798,7 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
   }
   .tab.active .tname { font-weight: 500; }
+  .tbadge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }
   .tclose { border: none; background: none; padding: 2px 8px; color: var(--muted); font-size: 15px; line-height: 1; border-radius: 4px; }
   .tclose:hover { color: var(--text); background: var(--sunken); }
   .tnew { border: none; background: none; padding: 4px 10px; color: var(--muted); font-size: 16px; }

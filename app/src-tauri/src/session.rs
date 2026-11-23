@@ -6,7 +6,7 @@
 //! `Store` and its lock. The editor's edits arrive as batched change sets through
 //! [`Session::commit`]: one commit per submitted calc or per idle pause in prose.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -165,6 +165,26 @@ pub struct PythonStatus {
     /// Rust is set up (ADR-0006), and the document has Rust cells.
     pub rust_available: bool,
     pub has_rust: bool,
+}
+
+/// A cell's kind and source (pasted, copied, or to rename).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceView {
+    pub kind: String,
+    pub source: String,
+}
+
+/// A name pasted cells define that the document already defines (ADR-0024).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClashView {
+    pub name: String,
+    /// The pasted cells (indices) that define it.
+    pub cells: Vec<usize>,
+    /// A free name to rename it to.
+    pub suggestion: String,
+    /// Other names those cells define, which don't clash: such a cell can't just be left out.
+    pub others: Vec<String>,
 }
 
 /// An open document, as the tab bar shows it.
@@ -496,6 +516,108 @@ impl Session {
     pub fn on(&mut self, doc: Option<&str>) -> Result<&mut Session> {
         self.select(doc)?;
         Ok(self)
+    }
+
+    /// Stop the Python workers of tabs that aren't active and have been idle for `idle`
+    /// (ADR-0024: 10 minutes). Their values are gone, so their engines forget them; results
+    /// stay on screen and come back from the stored results when the tab shows again. Returns
+    /// the documents whose workers stopped.
+    pub async fn sleep_idle_workers(&mut self, idle: std::time::Duration) -> Vec<String> {
+        let mut stopped = Vec::new();
+        for doc in self.docs.iter().filter(|d| Some(&d.id) != self.active.as_ref()) {
+            if doc.python.sleep_if_idle(idle).await {
+                doc.engine.lock().unwrap().python_restarted();
+                stopped.push(doc.id.clone());
+            }
+        }
+        stopped
+    }
+
+    /// The names a cell defines and reads: calcs prepared by the engine, Python scanned by
+    /// the worker (nothing when Python isn't set up), Rust by `syn`.
+    async fn cell_names(&self, kind: CellKind, source: &str) -> Result<crate::rename::CellNames> {
+        let doc = self.doc()?;
+        Ok(match kind {
+            CellKind::Calc => {
+                let (d, r) = doc.engine.lock().unwrap().names(source);
+                crate::rename::CellNames::new(&d, &r)
+            }
+            CellKind::Python => {
+                let scanned = doc.python.scan(&[source]).await;
+                match scanned.into_iter().next() {
+                    Some((_, n)) => crate::rename::CellNames::new(&n.defines, &n.reads),
+                    None => crate::rename::CellNames::new(&[], &[]),
+                }
+            }
+            CellKind::Rust => {
+                let n = doc.engine.lock().unwrap().rust_names(source).clone();
+                crate::rename::CellNames::new(&n.defines, &n.reads)
+            }
+            _ => crate::rename::CellNames::new(&[], &[]),
+        })
+    }
+
+    /// Names that pasted (or copied) cells define and the selected document already defines
+    /// (ADR-0024), with a free name to rename each to (`M_2`, `M_3`, …).
+    pub async fn paste_clashes(&mut self, cells: Vec<SourceView>) -> Result<Vec<ClashView>> {
+        let existing: BTreeSet<String> = self.cells(None).await?.into_iter().flat_map(|c| c.defines).collect();
+        let mut taken = existing.clone();
+        let mut out: Vec<ClashView> = Vec::new();
+        for (i, c) in cells.iter().enumerate() {
+            let kind = CellKind::parse(&c.kind).ok_or_else(|| format!("unknown kind {}", c.kind))?;
+            let names = self.cell_names(kind, &c.source).await?;
+            taken.extend(names.defines.iter().cloned());
+            for name in names.defines.iter().filter(|n| existing.contains(*n)) {
+                match out.iter_mut().find(|x| &x.name == name) {
+                    Some(x) => x.cells.push(i),
+                    None => out.push(ClashView { name: name.clone(), cells: vec![i], suggestion: String::new(), others: Vec::new() }),
+                }
+            }
+            // A cell that also defines names that don't clash can't simply be left out.
+            for x in out.iter_mut().filter(|x| x.cells.contains(&i)) {
+                for n in names.defines.iter().filter(|n| !existing.contains(*n)) {
+                    if !x.others.contains(n) {
+                        x.others.push(n.clone());
+                    }
+                }
+            }
+        }
+        // A suggestion reads the same in every language: `M2`, `M3`, … (in a calc `M_2` is
+        // the name `M₂`, in Python `M_2`), or `x1_b`, `x1_c`, … for a name ending in a digit.
+        for x in &mut out {
+            let candidates: Box<dyn Iterator<Item = String>> = if x.name.chars().last().is_some_and(char::is_numeric) {
+                Box::new(('b'..='z').map(|c| format!("{}_{c}", x.name)))
+            } else {
+                Box::new((2..).map(|k| format!("{}{k}", x.name)))
+            };
+            x.suggestion = candidates.into_iter().find(|n| !taken.contains(n)).unwrap_or_else(|| format!("{}_copy", x.name));
+            taken.insert(x.suggestion.clone());
+        }
+        Ok(out)
+    }
+
+    /// These cells' sources with `names` renamed (old → new), each checked by scanning it
+    /// again (`rename::check`): a rename that can't be done safely is refused.
+    pub async fn rename_cells(&mut self, cells: Vec<SourceView>, names: BTreeMap<String, String>) -> Result<Vec<String>> {
+        let mut out = Vec::with_capacity(cells.len());
+        for c in cells {
+            let kind = CellKind::parse(&c.kind).ok_or_else(|| format!("unknown kind {}", c.kind))?;
+            let before = self.cell_names(kind, &c.source).await?;
+            if !before.defines.iter().chain(&before.reads).any(|n| names.contains_key(n)) {
+                out.push(c.source);
+                continue;
+            }
+            let renamed = match kind {
+                CellKind::Calc => crate::rename::rename_calc(&c.source, &names, &before.reads),
+                CellKind::Python => self.doc()?.python.rename(&c.source, &names).await?,
+                CellKind::Rust => cruncha_kernel_rs::rename::rename(&c.source, &names)?,
+                _ => c.source.clone(),
+            };
+            let after = self.cell_names(kind, &renamed).await?;
+            crate::rename::check(kind, &c.source, &before, &after, &names)?;
+            out.push(renamed);
+        }
+        Ok(out)
     }
 
     /// Make `id` the active tab.
@@ -1731,6 +1853,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn idle_background_workers_stop_and_results_come_back_from_the_store() {
+        let Some(base) = python_base() else {
+            eprintln!("no Python environment; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let worker = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../python"));
+        let mut session = Session::new(None).with_python(base, worker);
+        let (tx, rx) = std::sync::mpsc::channel();
+        session.on_results(move |ev| {
+            let _ = tx.send(ev);
+        });
+        let a = session.create_sample(&dir.path().join("a.cruncha")).await.unwrap().id;
+        session.results(&At::default()).await.unwrap();
+        let state = |r: &HashMap<String, CellResult>| r["PY"].python.as_ref().map(|p| p.state);
+        wait_for(&rx, |ev| ev.doc_id == a && state(&ev.results) == Some(crate::engine::PyState::Done)).await;
+        session.flush_results().await.unwrap();
+        let python_of = |s: &Session, id: &str| s.docs.iter().find(|d| d.id == id).unwrap().python.clone();
+        assert!(python_of(&session, &a).has_workers());
+
+        // B opens and is active; A is in the background. Not idle long enough: nothing stops.
+        let b = session.create(&dir.path().join("b.cruncha")).await.unwrap().id;
+        assert!(session.sleep_idle_workers(std::time::Duration::from_secs(600)).await.is_empty());
+        // Idle (a zero limit here): A's workers stop; the active tab is never touched.
+        assert_eq!(session.sleep_idle_workers(std::time::Duration::ZERO).await, std::slice::from_ref(&a));
+        assert!(!python_of(&session, &a).has_workers());
+        session.activate(&b).await.unwrap();
+
+        // Back on A: its Python results come from the stored results, nothing reruns.
+        session.activate(&a).await.unwrap();
+        let r = session.results(&At::default()).await.unwrap();
+        let py = r["PY"].python.as_ref().unwrap();
+        assert_eq!(py.state, crate::engine::PyState::Done, "{py:?}");
+        assert!(py.stored.is_some(), "shown from the store: {py:?}");
+        assert!(r["RATIO"].error.is_none(), "calcs still read the values: {:?}", r["RATIO"]);
+        assert!(!python_of(&session, &a).has_workers(), "nothing had to run");
+        session.close_all().await;
+    }
+
+    #[tokio::test]
     async fn stored_python_results_survive_reopening_and_show_in_history() {
         use cruncha_report::{Block, Status};
         let Some(base) = python_base() else {
@@ -2225,6 +2387,37 @@ mod tests {
         let v: Vec<ChangeView> = serde_json::from_value(json).unwrap();
         assert!(matches!(&v[0], ChangeView::Delete { id } if id == "A"));
         assert!(matches!(&v[1], ChangeView::Upsert { cell } if cell.kind == CellKind::Calc));
+    }
+
+    #[tokio::test]
+    async fn pasted_cells_clash_and_rename_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(None);
+        session.create_sample(&dir.path().join("a.cruncha")).await.unwrap();
+        // The sample defines L, w and M; pasted cells defining M and L clash, x doesn't.
+        let src = |kind: &str, source: &str| SourceView { kind: kind.into(), source: source.into() };
+        let pasted = vec![
+            src("calc", "M = w L^2 / 8 = ?? kip·ft"),
+            src("calc", "L = 30 ft"),
+            src("rust", "let twice = M * 2.0;\nlet L2 = L;"),
+        ];
+        let clashes = session.paste_clashes(pasted.clone()).await.unwrap();
+        let names: Vec<(&str, &str)> = clashes.iter().map(|c| (c.name.as_str(), c.suggestion.as_str())).collect();
+        assert_eq!(names, [("M", "M2"), ("L", "L3")], "L2 is taken by the pasted Rust cell");
+        assert_eq!(clashes[0].cells, [0]);
+        assert!(clashes.iter().all(|c| c.others.is_empty()));
+
+        // Renamed consistently across the pasted cells, uses included; units stay units.
+        let map = BTreeMap::from([("M".to_string(), "M2".to_string()), ("L".to_string(), "L3".to_string())]);
+        let out = session.rename_cells(pasted, map.clone()).await.unwrap();
+        assert_eq!(out, ["M2 = w L3^2 / 8 = ?? kip·ft", "L3 = 30 ft", "let twice = M2 * 2.0;\nlet L2 = L3;"]);
+
+        // A rename the check can't confirm is refused, not applied.
+        let bad = session
+            .rename_cells(vec![src("calc", "y = M M = ?")], BTreeMap::from([("M".to_string(), "y".to_string())]))
+            .await;
+        assert!(bad.unwrap_err().contains("already uses y"));
+        session.close_all().await;
     }
 
     #[tokio::test]

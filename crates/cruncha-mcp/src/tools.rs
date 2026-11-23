@@ -27,18 +27,27 @@ pub struct ReadDocRequest {
     /// Read this snapshot (e.g. "Rev A"), read-only, instead of the latest version. Archived
     /// snapshots work too. Edits are always proposed against the latest version.
     pub snapshot: Option<String>,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct RunRequest {
     /// Cell IDs to report. Omit for every cell with a result.
     pub cell_ids: Option<Vec<String>>,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct ExplainRequest {
     /// The cell to explain.
     pub cell_id: String,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -50,6 +59,41 @@ pub struct HistoryRequest {
     /// List the archive instead: snapshots kept from archived or trimmed history, and the
     /// save log (who changed which cells, when) of the saves that were removed.
     pub archived: Option<bool>,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct DocumentRequest {
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CopyFrom {
+    /// The open document to copy from: its ID or name.
+    pub document: String,
+    /// The cells to copy, in the order they should appear.
+    pub cell_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CopyRequest {
+    /// Where the cells come from.
+    pub from: CopyFrom,
+    /// The open document to copy into: its ID or name. Omit for this conversation's document.
+    pub document: Option<String>,
+    /// The cell in the target to insert after; omit for the start of the document.
+    pub after: Option<String>,
+    /// Names to rename in the copied cells (old → new), for names the target already
+    /// defines. Applied to definitions and uses, and checked; a rename that can't be done
+    /// safely is refused.
+    #[serde(default)]
+    pub rename: std::collections::BTreeMap<String, String>,
+    /// What the copy is for, for the engineer who reviews it.
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -61,12 +105,18 @@ pub struct ProposeRequest {
     /// The document version you read (from read_doc's header). A cell changed after it is
     /// refused, so you re-read instead of overwriting someone's edit.
     pub base_version: Option<u64>,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WithdrawRequest {
     /// The proposal to withdraw (one of yours that is still open).
     pub proposal_id: String,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
 }
 
 /// The tool server for one app; cheap to clone (one per MCP session).
@@ -79,6 +129,14 @@ pub struct CrunchaTools<B: Backend> {
 impl<B: Backend> CrunchaTools<B> {
     pub fn new(backend: B) -> Self {
         CrunchaTools { backend, tool_router: Self::tool_router() }
+    }
+
+    /// The backend for the named document (ADR-0024), or this connection's own.
+    async fn on(&self, document: Option<&str>) -> Result<B, String> {
+        match document {
+            None => Ok(self.backend.clone()),
+            Some(d) => self.backend.for_document(d.to_owned()).await,
+        }
     }
 }
 
@@ -106,13 +164,17 @@ impl<B: Backend> CrunchaTools<B> {
     #[tool(description = "The document as Markdown (the text mirror): headings and prose, every cell \
         with its ID in the fence ({#ID}), and the engine's result on a `⇒` line. Start here.")]
     async fn read_doc(&self, Parameters(req): Parameters<ReadDocRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
         let range = Range { from: req.from, limit: req.limit.map(|l| l as usize) };
         match &req.snapshot {
-            None => match self.backend.snapshot(false).await {
+            None => match b.snapshot(false).await {
                 Ok(doc) => ok(mirror::render(&doc, &range)),
                 Err(e) => fail(e),
             },
-            Some(name) => match self.backend.snapshot_named(name.clone()).await {
+            Some(name) => match b.snapshot_named(name.clone()).await {
                 Ok(doc) => ok(format!(
                     "<!-- Snapshot “{name}” (version {}), read-only. Propose edits against the latest version. -->\n{}",
                     doc.version,
@@ -127,7 +189,11 @@ impl<B: Backend> CrunchaTools<B> {
         when it changes; this waits (up to two minutes) for Python cells that are running, then \
         returns the result, error or check outcome of each cell (or of the given cells).")]
     async fn run(&self, Parameters(req): Parameters<RunRequest>) -> Result<CallToolResult, ErrorData> {
-        let doc = match self.backend.snapshot(true).await {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        let doc = match b.snapshot(true).await {
             Ok(d) => d,
             Err(e) => return fail(e),
         };
@@ -162,7 +228,11 @@ impl<B: Backend> CrunchaTools<B> {
     #[tool(description = "One cell in depth: its source, what it defines and reads, where each \
         input is defined and its current value, which cells use it, and its result.")]
     async fn explain(&self, Parameters(req): Parameters<ExplainRequest>) -> Result<CallToolResult, ErrorData> {
-        let doc = match self.backend.snapshot(false).await {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        let doc = match b.snapshot(false).await {
             Ok(d) => d,
             Err(e) => return fail(e),
         };
@@ -218,8 +288,12 @@ impl<B: Backend> CrunchaTools<B> {
     #[tool(description = "The document's problems: errors, failing @test checks, cells not \
         calculated (and why), lints such as names used above their definition, names read but \
         never defined, and unfilled placeholders (names ending in _).")]
-    async fn check(&self) -> Result<CallToolResult, ErrorData> {
-        let doc = match self.backend.snapshot(false).await {
+    async fn check(&self, Parameters(req): Parameters<DocumentRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        let doc = match b.snapshot(false).await {
             Ok(d) => d,
             Err(e) => return fail(e),
         };
@@ -286,13 +360,17 @@ impl<B: Backend> CrunchaTools<B> {
         (read them with read_doc's snapshot) and the save log of removed saves (with cell_id, \
         those that changed that cell).")]
     async fn history(&self, Parameters(req): Parameters<HistoryRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
         if req.archived == Some(true) {
-            return match self.backend.archive(req.cell_id.clone()).await {
+            return match b.archive(req.cell_id.clone()).await {
                 Ok(a) => ok(archive_text(&a)),
                 Err(e) => fail(e),
             };
         }
-        let versions = match self.backend.history().await {
+        let versions = match b.history().await {
             Ok(v) => v,
             Err(e) => return fail(e),
         };
@@ -302,7 +380,7 @@ impl<B: Backend> CrunchaTools<B> {
         for (i, v) in versions.iter().enumerate().rev() {
             if let Some(cell) = &req.cell_id {
                 let prev = if i == 0 { continue } else { versions[i - 1].version };
-                match self.backend.diff(prev, v.version).await {
+                match b.diff(prev, v.version).await {
                     Ok(d) if d.iter().any(|c| &c.id == cell) => {}
                     _ => continue,
                 }
@@ -318,7 +396,7 @@ impl<B: Backend> CrunchaTools<B> {
         if listed == 0 {
             out.push_str("(no matching versions)\n");
         }
-        if let Ok(a) = self.backend.archive(None).await
+        if let Ok(a) = b.archive(None).await
             && (!a.saves.is_empty() || !a.snapshots.is_empty())
         {
             let names: Vec<&str> = a.snapshots.iter().map(|s| s.name.as_str()).collect();
@@ -329,7 +407,7 @@ impl<B: Backend> CrunchaTools<B> {
             ));
         }
         if let Some(since) = req.since {
-            match self.backend.diff(since, latest).await {
+            match b.diff(since, latest).await {
                 Ok(changes) => {
                     out.push_str(&format!("\nChanges from v{since} to v{latest}: {}\n", changes.len()));
                     for c in changes {
@@ -348,12 +426,65 @@ impl<B: Backend> CrunchaTools<B> {
         ok(out)
     }
 
+    #[tool(description = "The documents open in Cruncha (its tabs): ID, name, latest version, which \
+        is this conversation's own, which tab is showing, and whether its code may run. Every \
+        other tool takes `document` (an ID or a name from this list) to act on another one.")]
+    async fn documents(&self) -> Result<CallToolResult, ErrorData> {
+        match self.backend.documents().await {
+            Ok(docs) if docs.is_empty() => ok("No document is open in Cruncha.".into()),
+            Ok(docs) => {
+                let mut out = String::from("Open documents:\n");
+                for d in docs {
+                    let mut tags = Vec::new();
+                    if d.this {
+                        tags.push("this conversation's");
+                    }
+                    if d.active {
+                        tags.push("showing");
+                    }
+                    if !d.can_run {
+                        tags.push("code doesn't run: not trusted on this computer");
+                    }
+                    let tags = if tags.is_empty() { String::new() } else { format!(" ({})", tags.join(", ")) };
+                    out.push_str(&format!("- {} — {} — version {}{tags}\n", d.name, d.id, d.version));
+                }
+                ok(out)
+            }
+            Err(e) => fail(e),
+        }
+    }
+
+    #[tool(description = "Propose copying cells from one open document into another, as one proposal \
+        in the target that the engineer accepts or rejects there. The copies are new cells. If the \
+        target already defines a name they define, the proposal is refused and lists the names: \
+        call again with `rename` (old → new, e.g. {\"M\": \"M2\"}). The reply has the new cells' IDs \
+        and every result the copy would change in the target.")]
+    async fn propose_copy(&self, Parameters(req): Parameters<CopyRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        match b.propose_copy(req.from.document, req.from.cell_ids, req.after, req.rename, req.message).await {
+            Ok(p) => ok(format!(
+                "Proposal {} recorded in the target document; it waits for the engineer to accept or \
+                 reject it in that document's tab. Don't describe it as applied.\n\n{}",
+                p.id,
+                mirror::proposal_text(&p)
+            )),
+            Err(e) => fail(e),
+        }
+    }
+
     #[tool(description = "Propose a change to the document: insert, modify or delete cells, as one \
         unit a human accepts or rejects in the app. Nothing changes until they accept. The reply \
         has the proposal id, the new cells' ids, and every result the change would alter \
         (\"if accepted\"), computed by the engine. One coherent proposal per logical change.")]
     async fn propose_edit(&self, Parameters(req): Parameters<ProposeRequest>) -> Result<CallToolResult, ErrorData> {
-        match self.backend.propose(req.base_version, req.message, req.changes).await {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        match b.propose(req.base_version, req.message, req.changes).await {
             Ok(p) => ok(format!(
                 "Proposal {} recorded; it waits for the engineer to accept or reject it in Cruncha. \
                  Don't describe it as applied.\n\n{}",
@@ -366,8 +497,12 @@ impl<B: Backend> CrunchaTools<B> {
 
     #[tool(description = "The document's open proposals (from any agent) and your decided ones, \
         with status, the reviewer's note on rejections, and \"if accepted\" results.")]
-    async fn proposals(&self) -> Result<CallToolResult, ErrorData> {
-        match self.backend.proposals().await {
+    async fn proposals(&self, Parameters(req): Parameters<DocumentRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        match b.proposals().await {
             Ok(list) if list.is_empty() => ok("No proposals.".into()),
             Ok(list) => ok(list.iter().map(mirror::proposal_text).collect::<Vec<_>>().join("\n")),
             Err(e) => fail(e),
@@ -376,7 +511,11 @@ impl<B: Backend> CrunchaTools<B> {
 
     #[tool(description = "Withdraw one of your open proposals (for example to replace it with a better one).")]
     async fn withdraw(&self, Parameters(req): Parameters<WithdrawRequest>) -> Result<CallToolResult, ErrorData> {
-        match self.backend.withdraw(req.proposal_id).await {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        match b.withdraw(req.proposal_id).await {
             Ok(p) => ok(format!("Proposal {} withdrawn.", p.id)),
             Err(e) => fail(e),
         }

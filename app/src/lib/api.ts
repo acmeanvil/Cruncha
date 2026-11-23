@@ -155,6 +155,8 @@ export interface ConfigOption {
 
 export interface PanelView {
   agentId: string | null;
+  /** The document the conversation belongs to: the tab it started in (ADR-0024). */
+  docId?: string | null;
   agentName: string | null;
   agentVersion: string | null;
   /** An agent process is running (starting, ready or busy). */
@@ -546,7 +548,7 @@ const DOC_COMMANDS = new Set([
   "archive_preview", "archive_history", "archived_saves", "retention_preview", "python_status", "setup_python",
   "setup_rust", "trust_document", "run_python", "stop_python", "restart_python", "report_settings",
   "set_report_settings", "export_report", "figures_to_render", "proposals", "accept_proposal", "reject_proposal",
-  "prune_now", "clear_results",
+  "prune_now", "clear_results", "paste_clashes", "rename_cells",
 ]);
 function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   return invoke<T>(cmd, DOC_COMMANDS.has(cmd) && !("doc" in args) ? { doc: activeDoc, ...args } : args);
@@ -587,6 +589,12 @@ export const api = {
   restartPython: () => call<Record<string, CellResult>>("restart_python"),
   createSampleDocument: (path: string) => call<DocInfo>("create_sample_document", { path }),
   closeDocument: (doc?: string) => call<PruneResult | null>("close_document", doc ? { doc } : {}),
+  /** Names pasted cells define that the document already defines, with a free name for each. */
+  pasteClashes: (cells: { kind: string; source: string }[], doc?: string) =>
+    call<{ name: string; cells: number[]; suggestion: string; others: string[] }[]>("paste_clashes", { cells, ...(doc ? { doc } : {}) }),
+  /** The cells' sources with names renamed (old → new), each checked; refused if unsafe. */
+  renameCells: (cells: { kind: string; source: string }[], names: Record<string, string>, doc?: string) =>
+    call<string[]>("rename_cells", { cells, names, ...(doc ? { doc } : {}) }),
   /** The open documents, in tab order. */
   openDocuments: () => call<OpenDocView[]>("open_documents"),
   /** Switch to a tab. */
