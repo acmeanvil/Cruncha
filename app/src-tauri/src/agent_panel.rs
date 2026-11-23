@@ -457,6 +457,12 @@ impl Panel {
         Ok((self.generation, events))
     }
 
+    /// The document the running agent works on (its folder is `agents/<doc id>/`).
+    pub fn doc_id(&self) -> Option<String> {
+        self.running.as_ref()?;
+        self.dir.as_ref()?.file_name().map(|n| n.to_string_lossy().into_owned())
+    }
+
     pub fn stop(&mut self) {
         if let Some(r) = self.running.take() {
             r.server.stop();

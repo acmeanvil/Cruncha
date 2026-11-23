@@ -25,6 +25,9 @@ export interface Prefs {
   /** Ids of documents trusted to run Python (kept by the backend), and where each was last opened. */
   trusted?: string[];
   trustedPaths?: Record<string, string>;
+  /** The open tabs (paths, in order) and the active one, reopened at launch (kept by the backend). */
+  openTabs?: string[];
+  activeTab?: string | null;
 }
 
 export interface KnownModel {
@@ -531,86 +534,119 @@ export interface ProposalView {
   effects: ProposalEffect[];
 }
 
+/** The active tab's document (ADR-0024): document commands act on it unless they name one.
+ *  Calls that must reach a particular document (the editor's saves and runs) pass `doc`. */
+let activeDoc: string | null = null;
+export function setActiveDocument(id: string | null) {
+  activeDoc = id;
+}
+const DOC_COMMANDS = new Set([
+  "commit", "results", "snapshot", "restore", "preview_calc", "close_document", "document_info", "cells",
+  "cells_at_ref", "history", "document_settings", "set_document_settings", "set_document_retention",
+  "archive_preview", "archive_history", "archived_saves", "retention_preview", "python_status", "setup_python",
+  "setup_rust", "trust_document", "run_python", "stop_python", "restart_python", "report_settings",
+  "set_report_settings", "export_report", "figures_to_render", "proposals", "accept_proposal", "reject_proposal",
+  "prune_now", "clear_results",
+]);
+function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  return invoke<T>(cmd, DOC_COMMANDS.has(cmd) && !("doc" in args) ? { doc: activeDoc, ...args } : args);
+}
+
+/** An open document, as the tab bar shows it. */
+export interface OpenDocView {
+  id: string;
+  name: string;
+  path: string;
+  version: number;
+  active: boolean;
+}
+
 export const api = {
-  openDocument: (path: string) => invoke<DocInfo>("open_document", { path }),
-  createDocument: (path: string) => invoke<DocInfo>("create_document", { path }),
-  commit: (changes: Change[], message: string) => invoke<CommitView>("commit", { changes, message }),
-  results: (at: At) => invoke<Record<string, CellResult>>("results", { at }),
-  previewCalc: (source: string) => invoke<CellResult>("preview_calc", { source }),
+  openDocument: (path: string) => call<DocInfo>("open_document", { path }),
+  createDocument: (path: string) => call<DocInfo>("create_document", { path }),
+  commit: (changes: Change[], message: string, doc?: string) =>
+    call<CommitView>("commit", { changes, message, ...(doc ? { doc } : {}) }),
+  results: (at: At) => call<Record<string, CellResult>>("results", { at }),
+  previewCalc: (source: string, doc?: string) => call<CellResult>("preview_calc", { source, ...(doc ? { doc } : {}) }),
   /** Name the latest version as a known-good snapshot. */
-  snapshot: (name: string, note: string) => invoke<DocInfo>("snapshot", { name, note }),
+  snapshot: (name: string, note: string) => call<DocInfo>("snapshot", { name, note }),
   /** Make a version or snapshot the latest again (a new version). */
-  restore: (at: At) => invoke<CommitView>("restore", { at }),
-  pythonStatus: () => invoke<PythonStatus | null>("python_status"),
+  restore: (at: At) => call<CommitView>("restore", { at }),
+  pythonStatus: () => call<PythonStatus | null>("python_status"),
   /** Set up the Python environment (progress as `python-setup` events). */
-  setupPython: () => invoke<Record<string, CellResult>>("setup_python"),
+  setupPython: () => call<Record<string, CellResult>>("setup_python"),
   /** Set up Rust for Rust cells (progress as `rust-setup` events). */
-  setupRust: () => invoke<Record<string, CellResult>>("setup_rust"),
-  functionReference: () => invoke<FunctionReference>("function_reference"),
-  unitCatalog: () => invoke<UnitCatalog>("unit_catalog"),
-  trustDocument: () => invoke<Record<string, CellResult>>("trust_document"),
+  setupRust: () => call<Record<string, CellResult>>("setup_rust"),
+  functionReference: () => call<FunctionReference>("function_reference"),
+  unitCatalog: () => call<UnitCatalog>("unit_catalog"),
+  trustDocument: () => call<Record<string, CellResult>>("trust_document"),
   /** Run these Python cells (all if omitted), even if nothing changed. */
-  runPython: (ids?: string[]) => invoke<Record<string, CellResult>>("run_python", { ids: ids ?? null }),
-  stopPython: () => invoke<void>("stop_python"),
-  restartPython: () => invoke<Record<string, CellResult>>("restart_python"),
-  createSampleDocument: (path: string) => invoke<DocInfo>("create_sample_document", { path }),
-  closeDocument: () => invoke<PruneResult | null>("close_document"),
-  documentInfo: () => invoke<DocInfo | null>("document_info"),
-  cells: (version: number | null) => invoke<Cell[]>("cells", { version }),
-  cellsAtRef: (name: string) => invoke<Cell[]>("cells_at_ref", { name }),
-  history: () => invoke<VersionView[]>("history"),
-  getPrefs: () => invoke<Prefs>("get_prefs"),
-  setPrefs: (prefs: Prefs) => invoke<void>("set_prefs", { prefs }),
-  reportSettings: () => invoke<ReportSettings>("report_settings"),
-  setReportSettings: (settings: ReportSettings) => invoke<CommitView>("set_report_settings", { settings }),
+  runPython: (ids?: string[], doc?: string) =>
+    call<Record<string, CellResult>>("run_python", { ids: ids ?? null, ...(doc ? { doc } : {}) }),
+  stopPython: (doc?: string) => call<void>("stop_python", doc ? { doc } : {}),
+  restartPython: () => call<Record<string, CellResult>>("restart_python"),
+  createSampleDocument: (path: string) => call<DocInfo>("create_sample_document", { path }),
+  closeDocument: (doc?: string) => call<PruneResult | null>("close_document", doc ? { doc } : {}),
+  /** The open documents, in tab order. */
+  openDocuments: () => call<OpenDocView[]>("open_documents"),
+  /** Switch to a tab. */
+  activateDocument: (doc: string) => call<DocInfo>("activate_document", { doc }),
+  documentInfo: () => call<DocInfo | null>("document_info"),
+  cells: (version: number | null) => call<Cell[]>("cells", { version }),
+  cellsAtRef: (name: string) => call<Cell[]>("cells_at_ref", { name }),
+  history: () => call<VersionView[]>("history"),
+  getPrefs: () => call<Prefs>("get_prefs"),
+  setPrefs: (prefs: Prefs) => call<void>("set_prefs", { prefs }),
+  reportSettings: () => call<ReportSettings>("report_settings"),
+  setReportSettings: (settings: ReportSettings) => call<CommitView>("set_report_settings", { settings }),
   /** The latest version, or (with `at`) a past version or snapshot from its stored results. */
-  exportReport: (path: string, at?: At) => invoke<ExportView>("export_report", { path, at: at ?? null }),
-  openPath: (path: string) => invoke<void>("open_path", { path }),
+  exportReport: (path: string, at?: At) => call<ExportView>("export_report", { path, at: at ?? null }),
+  openPath: (path: string) => call<void>("open_path", { path }),
   /** Open an http, https or mailto link in the system's browser or mail app. */
-  openUrl: (url: string) => invoke<void>("open_url", { url }),
+  openUrl: (url: string) => call<void>("open_url", { url }),
   /** Markdown as cells (cruncha-prose): prose blocks as ProseMirror JSON, fenced calc lines
    *  and python/rust/tex blocks as their cells. */
-  markdownCells: (markdown: string) => invoke<{ kind: string; source: string }[]>("markdown_cells", { markdown }),
-  agentServerStatus: () => invoke<AgentServerView | null>("agent_server_status"),
-  agentServerStart: () => invoke<AgentServerView>("agent_server_start"),
-  agentServerStop: () => invoke<void>("agent_server_stop"),
-  agentCatalog: () => invoke<AgentDef[]>("agent_catalog"),
-  agentPanelView: () => invoke<PanelView>("agent_panel_view"),
-  agentStart: (agentId: string) => invoke<PanelView>("agent_start", { agentId }),
-  agentPrompt: (text: string) => invoke<PanelView>("agent_prompt", { text }),
-  agentCancel: () => invoke<PanelView>("agent_cancel"),
-  agentStop: () => invoke<PanelView>("agent_stop"),
-  agentSetOption: (id: string, value: string) => invoke<void>("agent_set_option", { id, value }),
-  agentPermission: (id: number, option: string | null) => invoke<PanelView>("agent_permission", { id, option }),
-  agentConversations: () => invoke<ConversationSummary[]>("agent_conversations"),
-  agentConversation: (id: string) => invoke<{ summary: ConversationSummary; entries: AgentEntry[] }>("agent_conversation", { id }),
-  forgetRecent: (path: string) => invoke<void>("forget_recent", { path }),
-  forgetTrusted: (id: string) => invoke<Prefs>("forget_trusted", { id }),
-  pythonEnv: () => invoke<PythonEnv>("python_env"),
-  providers: () => invoke<ProviderView[]>("providers"),
+  markdownCells: (markdown: string) => call<{ kind: string; source: string }[]>("markdown_cells", { markdown }),
+  agentServerStatus: () => call<AgentServerView | null>("agent_server_status"),
+  agentServerStart: () => call<AgentServerView>("agent_server_start"),
+  agentServerStop: () => call<void>("agent_server_stop"),
+  agentCatalog: () => call<AgentDef[]>("agent_catalog"),
+  agentPanelView: () => call<PanelView>("agent_panel_view"),
+  agentStart: (agentId: string) => call<PanelView>("agent_start", { agentId }),
+  agentPrompt: (text: string) => call<PanelView>("agent_prompt", { text }),
+  agentCancel: () => call<PanelView>("agent_cancel"),
+  agentStop: () => call<PanelView>("agent_stop"),
+  agentSetOption: (id: string, value: string) => call<void>("agent_set_option", { id, value }),
+  agentPermission: (id: number, option: string | null) => call<PanelView>("agent_permission", { id, option }),
+  agentConversations: () => call<ConversationSummary[]>("agent_conversations"),
+  agentConversation: (id: string) => call<{ summary: ConversationSummary; entries: AgentEntry[] }>("agent_conversation", { id }),
+  forgetRecent: (path: string) => call<void>("forget_recent", { path }),
+  forgetTrusted: (id: string) => call<Prefs>("forget_trusted", { id }),
+  pythonEnv: () => call<PythonEnv>("python_env"),
+  providers: () => call<ProviderView[]>("providers"),
   /** Where each connection's key comes from (reads the Keychain). */
-  connectionKeys: () => invoke<Record<string, KeySource>>("connection_keys"),
+  connectionKeys: () => call<Record<string, KeySource>>("connection_keys"),
   connectionAdd: (provider: string, name: string, baseUrl: string, key: string) =>
-    invoke<Prefs>("connection_add", { provider, name, baseUrl, key }),
-  connectionSetKey: (id: string, key: string) => invoke<void>("connection_set_key", { id, key }),
-  connectionRemove: (id: string) => invoke<Prefs>("connection_remove", { id }),
+    call<Prefs>("connection_add", { provider, name, baseUrl, key }),
+  connectionSetKey: (id: string, key: string) => call<void>("connection_set_key", { id, key }),
+  connectionRemove: (id: string) => call<Prefs>("connection_remove", { id }),
   /** Start an agent briefly to list its models; they are remembered in the prefs returned. */
-  agentModels: (agentId: string) => invoke<Prefs>("agent_models", { agentId }),
-  documentSettings: () => invoke<DocumentSettings>("document_settings"),
-  setDocumentSettings: (settings: DocumentSettings) => invoke<CommitView>("set_document_settings", { settings }),
+  agentModels: (agentId: string) => call<Prefs>("agent_models", { agentId }),
+  documentSettings: () => call<DocumentSettings>("document_settings"),
+  setDocumentSettings: (settings: DocumentSettings) => call<CommitView>("set_document_settings", { settings }),
   setDocumentRetention: (policy: Retention | null) =>
-    invoke<DocInfo>("set_document_retention", { policy }),
-  retentionPreview: (policy: Retention | null) => invoke<Preview>("retention_preview", { policy }),
-  pruneNow: () => invoke<PruneResult | null>("prune_now"),
-  archivePreview: (cutoff: number) => invoke<ArchivePreview>("archive_preview", { cutoff }),
+    call<DocInfo>("set_document_retention", { policy }),
+  retentionPreview: (policy: Retention | null) => call<Preview>("retention_preview", { policy }),
+  pruneNow: () => call<PruneResult | null>("prune_now"),
+  archivePreview: (cutoff: number) => call<ArchivePreview>("archive_preview", { cutoff }),
   /** Archive every version before `cutoff` (a snapshot's version): irreversible. */
-  archiveHistory: (cutoff: number) => invoke<DocInfo>("archive_history", { cutoff }),
-  archivedSaves: (cell: string | null = null) => invoke<ArchivedSave[]>("archived_saves", { cell }),
-  clearResults: () => invoke<DocInfo>("clear_results"),
-  figuresToRender: (at?: At) => invoke<FigureJob[]>("figures_to_render", { at: at ?? null }),
-  putFigure: (key: string, svg: string) => invoke<void>("put_figure", { key, svg }),
+  archiveHistory: (cutoff: number) => call<DocInfo>("archive_history", { cutoff }),
+  archivedSaves: (cell: string | null = null) => call<ArchivedSave[]>("archived_saves", { cell }),
+  clearResults: () => call<DocInfo>("clear_results"),
+  figuresToRender: (at?: At) => call<FigureJob[]>("figures_to_render", { at: at ?? null }),
+  putFigure: (key: string, svg: string) => call<void>("put_figure", { key, svg }),
   /** The open document's proposals, newest first (open ones with "if accepted" results). */
-  proposals: () => invoke<ProposalView[]>("proposals"),
-  acceptProposal: (id: string, force: boolean) => invoke<CommitView>("accept_proposal", { id, force }),
-  rejectProposal: (id: string, note: string) => invoke<ProposalView>("reject_proposal", { id, note }),
+  proposals: () => call<ProposalView[]>("proposals"),
+  acceptProposal: (id: string, force: boolean) => call<CommitView>("accept_proposal", { id, force }),
+  rejectProposal: (id: string, note: string) => call<ProposalView>("reject_proposal", { id, note }),
 };

@@ -142,8 +142,8 @@ Isolation is total, but every process loads the whole app and its own agent serv
 ## Action Items
 
 1. [x] Copy and paste of cells: `data-cruncha-*` serialization and parsing, new IDs and order keys, `Imported` provenance, Markdown plain text; partial blocks per the table in §1 (into prose, into code cells and the calc editor, selections spanning blocks, cells pasted inside a block); tests for each row, within a document and between two editors. Done 2026-11-22: `app/src/lib/editor/clipboard.ts`, schema `parseDOM` rules, `clipboard.test.ts` (seven cases through ProseMirror's own copy and paste).
-2. [ ] `Session` with several documents, and document IDs on commands and events; backend tests with two documents open (separate stores, engines, workers, proposals).
-3. [ ] Tab bar, per-tab editor state, keys, reopen at launch; the sidebar and panels follow the active tab.
+2. [x] `Session` with several documents, and document IDs on commands and events; backend tests with two documents open (separate stores, engines, workers, proposals). Done 2026-11-22: `Session` holds an `OpenDoc` per tab with `select`/`activate`; every document command takes `doc`; background results flush to their own document; `several_documents_stay_separate`.
+3. [x] Tab bar, per-tab editor state, keys, reopen at launch; the sidebar and panels follow the active tab. Done 2026-11-22: tab bar, per-tab editor state (kept `EditorState` with undo history, the version shown, scroll), ⌘T, ⌘⇧[ ], ⌘W via a macOS menu (Close Window moves to ⇧⌘W), tabs reopened at launch (`Prefs.open_tabs`).
 4. [ ] Workers per document, started on demand and stopped when idle.
 5. [ ] Agents: `documents`; the `document` argument on every tool, with ambiguous names refused; `propose_copy` (with `rename`), "if accepted" from the target's engine; proposals badge background tabs; panel conversations per tab, acting on any open document; skills updated; tell the looking_glass session.
 6. [ ] Name clashes on paste through ADR-0014's clash dialog (with ADR-0014 item 3).

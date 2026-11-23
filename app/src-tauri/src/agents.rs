@@ -24,7 +24,17 @@ use crate::session::Session;
 /// The session, as the MCP tools of one agent see it: the shared session and the agent's
 /// actor (`ai:<agent>`), recorded on its proposals.
 #[derive(Clone)]
-pub struct AppBackend(pub Arc<Mutex<Session>>, pub String);
+pub struct AppBackend(pub Arc<Mutex<Session>>, pub String, pub Option<String>);
+
+impl AppBackend {
+    /// The session, with this agent's document selected: its own (an agent-panel agent works
+    /// on the tab it started in) or, for the external server, the active tab (ADR-0024).
+    async fn session(&self) -> Result<tokio::sync::MutexGuard<'_, Session>, String> {
+        let mut s = self.0.lock().await;
+        s.select(self.2.as_deref())?;
+        Ok(s)
+    }
+}
 
 /// The value part of a result line (`M = w L^2 / 8 = 108 kip·ft` → `108 kip·ft`).
 fn value_of(text: &str) -> String {
@@ -201,11 +211,11 @@ impl Backend for AppBackend {
     async fn snapshot(&self, wait: bool) -> Result<DocSnapshot, String> {
         if wait {
             let start = Instant::now();
-            while self.0.lock().await.python_busy().await? && start.elapsed() < Duration::from_secs(120) {
+            while self.session().await?.python_busy().await? && start.elapsed() < Duration::from_secs(120) {
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
         }
-        let mut s = self.0.lock().await;
+        let mut s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -216,7 +226,7 @@ impl Backend for AppBackend {
     }
 
     async fn snapshot_named(&self, name: String) -> Result<DocSnapshot, String> {
-        let mut s = self.0.lock().await;
+        let mut s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -233,7 +243,7 @@ impl Backend for AppBackend {
     }
 
     async fn archive(&self, cell: Option<String>) -> Result<ArchiveView, String> {
-        let s = self.0.lock().await;
+        let s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -267,7 +277,7 @@ impl Backend for AppBackend {
     }
 
     async fn history(&self) -> Result<Vec<VersionInfo>, String> {
-        let s = self.0.lock().await;
+        let s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -287,7 +297,7 @@ impl Backend for AppBackend {
     }
 
     async fn diff(&self, from: u64, to: u64) -> Result<Vec<CellChange>, String> {
-        let s = self.0.lock().await;
+        let s = self.session().await?;
         let shown = |k: CellKind| k != CellKind::Meta;
         Ok(s.diff(from, to)
             .await?
@@ -320,7 +330,7 @@ impl Backend for AppBackend {
     }
 
     async fn propose(&self, base_version: Option<u64>, message: String, edits: Vec<Edit>) -> Result<ProposalInfo, String> {
-        let mut s = self.0.lock().await;
+        let mut s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -328,7 +338,7 @@ impl Backend for AppBackend {
     }
 
     async fn proposals(&self) -> Result<Vec<ProposalInfo>, String> {
-        let mut s = self.0.lock().await;
+        let mut s = self.session().await?;
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
@@ -344,7 +354,7 @@ impl Backend for AppBackend {
     }
 
     async fn withdraw(&self, id: String) -> Result<ProposalInfo, String> {
-        let mut s = self.0.lock().await;
+        let mut s = self.session().await?;
         s.withdraw_proposal(&self.1, &id).await.map(proposal_info)
     }
 }
@@ -390,7 +400,7 @@ mod tests {
         let path = dir.path().join("beam.cruncha");
         let mut session = Session::new(None);
         session.create_sample(&path).await.unwrap();
-        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into());
+        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
         let doc = backend.snapshot(false).await.unwrap();
         let m = doc.cells.iter().find(|c| c.defines.contains(&"M".to_string())).expect("the sample defines M");
         assert_eq!(doc.results[&m.id].values[0].0, "M");
@@ -422,7 +432,7 @@ mod tests {
         drop(store);
         session.open(&path).await.unwrap();
         session.archive(rev_b).await.unwrap();
-        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into());
+        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
 
         let a = backend.archive(None).await.unwrap();
         assert_eq!(a.snapshots.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Rev A"]);

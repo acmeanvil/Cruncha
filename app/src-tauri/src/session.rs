@@ -90,6 +90,12 @@ pub struct Prefs {
     /// Agents: the default one, per-agent models and connections, provider accounts.
     #[serde(default)]
     pub agents: crate::agent_panel::AgentSettings,
+    /// The open tabs (paths, in order) and the active one, reopened at the next launch
+    /// (ADR-0024). Quitting leaves them as they are; closing a tab removes it.
+    #[serde(default)]
+    pub open_tabs: Vec<String>,
+    #[serde(default)]
+    pub active_tab: Option<String>,
 }
 
 /// A document's own settings, kept in its meta cell (so they are versioned like any edit).
@@ -159,6 +165,17 @@ pub struct PythonStatus {
     /// Rust is set up (ADR-0006), and the document has Rust cells.
     pub rust_available: bool,
     pub has_rust: bool,
+}
+
+/// An open document, as the tab bar shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDocView {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub version: u64,
+    pub active: bool,
 }
 
 /// How many recent documents to remember.
@@ -316,6 +333,8 @@ impl From<PruneReport> for PruneView {
 }
 
 struct OpenDoc {
+    /// The container's id (its manifest's).
+    id: String,
     store: Store,
     /// Evaluation state of the latest version (memoized results, current values). Shared with
     /// the Python run loop.
@@ -329,7 +348,13 @@ struct OpenDoc {
 }
 
 pub struct Session {
-    doc: Option<OpenDoc>,
+    /// The open documents, in tab order (ADR-0024). The app is the single writer of each.
+    docs: Vec<OpenDoc>,
+    /// The document the next call acts on: chosen per call with [`Session::select`].
+    current: Option<String>,
+    /// The tab the user is looking at: the default for calls that name no document (the
+    /// external agent server's tools, for one).
+    active: Option<String>,
     prefs: Prefs,
     prefs_path: Option<PathBuf>,
     /// Where Python environments live, and the worker package.
@@ -355,7 +380,9 @@ impl Session {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         Session {
-            doc: None,
+            docs: Vec::new(),
+            current: None,
+            active: None,
             prefs,
             prefs_path,
             python_base: std::env::temp_dir().join("cruncha-no-python"),
@@ -421,8 +448,8 @@ impl Session {
     }
 
     fn proposals_changed(&self) {
-        if let (Some(f), Some(doc)) = (&self.on_proposals, &self.doc) {
-            f(doc.store.manifest().id.clone());
+        if let (Some(f), Ok(doc)) = (&self.on_proposals, self.doc()) {
+            f(doc.id.clone());
         }
     }
 
@@ -435,15 +462,67 @@ impl Session {
     }
 
     fn doc(&self) -> Result<&OpenDoc> {
-        self.doc
-            .as_ref()
+        let id = self.current.as_deref().ok_or("no document is open")?;
+        self.docs
+            .iter()
+            .find(|d| d.id == id)
             .ok_or_else(|| "no document is open".into())
     }
 
     fn doc_mut(&mut self) -> Result<&mut OpenDoc> {
-        self.doc
-            .as_mut()
+        let id = self.current.clone().ok_or("no document is open")?;
+        self.docs
+            .iter_mut()
+            .find(|d| d.id == id)
             .ok_or_else(|| "no document is open".into())
+    }
+
+    /// Choose the document the following calls act on: `Some(id)` an open document, `None` the
+    /// active tab. Every command that acts on a document calls this first (ADR-0024).
+    pub fn select(&mut self, doc: Option<&str>) -> Result<()> {
+        match doc {
+            Some(id) => {
+                if !self.docs.iter().any(|d| d.id == id) {
+                    return Err(format!("document {id} isn't open"));
+                }
+                self.current = Some(id.to_owned());
+            }
+            None => self.current = self.active.clone(),
+        }
+        Ok(())
+    }
+
+    /// [`Session::select`], for chaining: `session.on(doc)?.info()`.
+    pub fn on(&mut self, doc: Option<&str>) -> Result<&mut Session> {
+        self.select(doc)?;
+        Ok(self)
+    }
+
+    /// Make `id` the active tab.
+    pub async fn activate(&mut self, id: &str) -> Result<DocInfo> {
+        self.select(Some(id))?;
+        self.active = Some(id.to_owned());
+        self.remember_tabs();
+        self.info().await
+    }
+
+    /// The open documents, in tab order.
+    pub fn documents(&self) -> Vec<OpenDocView> {
+        self.docs
+            .iter()
+            .map(|d| OpenDocView {
+                id: d.id.clone(),
+                name: d
+                    .store
+                    .root()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                path: d.store.root().display().to_string(),
+                version: d.store.version(),
+                active: self.active.as_deref() == Some(d.id.as_str()),
+            })
+            .collect()
     }
 
     fn effective_retention(&self, store: &Store) -> Retention {
@@ -453,8 +532,13 @@ impl Session {
             .unwrap_or_else(|| self.prefs.default_retention.clone())
     }
 
+    /// Open the document at `path` in a new tab, or switch to its tab if it's open already.
     pub async fn open(&mut self, path: &Path) -> Result<DocInfo> {
-        self.close().await;
+        let root = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Some(id) = self.docs.iter().find(|d| d.store.root() == root).map(|d| d.id.clone()) {
+            self.remember_recent(&root.display().to_string());
+            return self.activate(&id).await;
+        }
         let store = Store::open(path).await.map_err(err)?;
         self.opened(store, false, false).await
     }
@@ -474,17 +558,25 @@ impl Session {
         python.set_rust(rust);
         engine.env = crate::python::env_label(&self.python_base);
         engine.computed_by = crate::stored::this_computer(&local_actor());
-        self.doc = Some(OpenDoc {
+        if self.docs.iter().any(|d| d.id == id) {
+            return Err(format!(
+                "a document with the same identity is already open ({}); is this a copy of it?",
+                path_shown
+            ));
+        }
+        self.docs.push(OpenDoc {
+            id: id.clone(),
             store,
             engine: Arc::new(Mutex::new(engine)),
             python,
             edited,
             pruned: false,
         });
+        self.current = Some(id.clone());
+        self.active = Some(id.clone());
+        self.remember_recent(&path);
+        self.remember_tabs();
         let mut prefs = self.prefs.clone();
-        prefs.recent.retain(|p| p != &path);
-        prefs.recent.insert(0, path);
-        prefs.recent.truncate(MAX_RECENT);
         if created && !prefs.trusted.contains(&id) {
             prefs.trusted.push(id.clone());
         }
@@ -504,6 +596,33 @@ impl Session {
             e.approve(&cells);
         }
         self.info().await
+    }
+
+    /// Record the open tabs and the active one in the preferences (reopened at launch).
+    fn remember_tabs(&mut self) {
+        let mut prefs = self.prefs.clone();
+        prefs.open_tabs = self.docs.iter().map(|d| d.store.root().display().to_string()).collect();
+        prefs.active_tab = self
+            .active
+            .as_deref()
+            .and_then(|id| self.docs.iter().find(|d| d.id == id))
+            .map(|d| d.store.root().display().to_string());
+        if (prefs.open_tabs != self.prefs.open_tabs || prefs.active_tab != self.prefs.active_tab)
+            && let Err(e) = self.set_prefs(prefs)
+        {
+            eprintln!("cruncha: could not save preferences: {e}");
+        }
+    }
+
+    /// Put `path` first in the recent list.
+    fn remember_recent(&mut self, path: &str) {
+        let mut prefs = self.prefs.clone();
+        prefs.recent.retain(|p| p != path);
+        prefs.recent.insert(0, path.to_owned());
+        prefs.recent.truncate(MAX_RECENT);
+        if let Err(e) = self.set_prefs(prefs) {
+            eprintln!("cruncha: could not save preferences: {e}");
+        }
     }
 
     /// Have the worker scan Python sources the engine hasn't seen.
@@ -655,9 +774,7 @@ impl Session {
         prefs.trusted.retain(|t| t != id);
         prefs.trusted_paths.remove(id);
         self.set_prefs(prefs)?;
-        if let Some(doc) = &self.doc
-            && doc.store.manifest().id == id
-        {
+        for doc in self.docs.iter().filter(|d| d.id == id) {
             doc.engine.lock().unwrap().trusted = false;
         }
         Ok(())
@@ -671,22 +788,43 @@ impl Session {
 
     /// Create a new, empty document at `path` and open it.
     pub async fn create(&mut self, path: &Path) -> Result<DocInfo> {
-        self.close().await;
         let store = Store::create(path, &local_actor()).await.map_err(err)?;
         self.opened(store, false, true).await
     }
 
     /// Create a small example worksheet with some history.
     pub async fn create_sample(&mut self, path: &Path) -> Result<DocInfo> {
-        self.close().await;
         let store = sample_document(path).await.map_err(err)?;
         self.opened(store, true, true).await
     }
 
-    /// Close the open document. If this session edited it, apply its retention policy first;
-    /// `Store::prune` itself refuses when there were no edits since the last prune.
+    /// Close every open document (the app is quitting).
+    pub async fn close_all(&mut self) {
+        while let Some(id) = self.docs.first().map(|d| d.id.clone()) {
+            self.current = Some(id);
+            self.close_tab(false).await;
+        }
+    }
+
+    /// Close the selected document (its tab). If this session edited it, apply its retention
+    /// policy first; `Store::prune` itself refuses when there were no edits since the last
+    /// prune. The next tab (or the previous) becomes active if this one was.
     pub async fn close(&mut self) -> Option<PruneView> {
-        let mut doc = self.doc.take()?;
+        self.close_tab(true).await
+    }
+
+    /// Close the selected document; `forget`: also drop it from the tabs reopened at launch.
+    async fn close_tab(&mut self, forget: bool) -> Option<PruneView> {
+        let id = self.current.clone()?;
+        let at = self.docs.iter().position(|d| d.id == id)?;
+        let mut doc = self.docs.remove(at);
+        if self.active.as_deref() == Some(id.as_str()) {
+            self.active = self.docs.get(at).or_else(|| self.docs.last()).map(|d| d.id.clone());
+        }
+        self.current = self.active.clone();
+        if forget {
+            self.remember_tabs();
+        }
         doc.python.shutdown().await;
         if let Err(e) = crate::stored::flush(&mut doc.store, &doc.engine, &local_actor()).await {
             eprintln!("cruncha: storing results on close failed: {e}");
@@ -747,8 +885,9 @@ impl Session {
         })
     }
 
+    /// Is a document selected (and open)?
     pub fn is_open(&self) -> bool {
-        self.doc.is_some()
+        self.doc().is_ok()
     }
 
     /// Cells of `version` (default: the latest).
@@ -1065,7 +1204,7 @@ impl Session {
     /// Write the Python runs finished since the last call to the document's stored results.
     /// Never a document version. Returns how many were stored.
     pub async fn flush_results(&mut self) -> Result<usize> {
-        let Some(doc) = self.doc.as_mut() else { return Ok(0) };
+        let Ok(doc) = self.doc_mut() else { return Ok(0) };
         crate::stored::flush(&mut doc.store, &doc.engine, &local_actor()).await.map_err(err)
     }
 
@@ -2086,6 +2225,69 @@ mod tests {
         let v: Vec<ChangeView> = serde_json::from_value(json).unwrap();
         assert!(matches!(&v[0], ChangeView::Delete { id } if id == "A"));
         assert!(matches!(&v[1], ChangeView::Upsert { cell } if cell.kind == CellKind::Calc));
+    }
+
+    #[tokio::test]
+    async fn several_documents_stay_separate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(Some(dir.path().join("prefs.json")));
+        let a = dir.path().join("a.cruncha");
+        let b = dir.path().join("b.cruncha");
+        let ia = session.create_sample(&a).await.unwrap().id;
+        let ib = session.create(&b).await.unwrap().id;
+        // The newest is active; both are open, in tab order.
+        let docs = session.documents();
+        assert_eq!(docs.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [ia.as_str(), ib.as_str()]);
+        assert!(docs[1].active && !docs[0].active);
+
+        // A commit to B (selected by id) leaves A alone, and each has its own results.
+        let va = session.on(Some(&ia)).unwrap().info().await.unwrap().version;
+        let c = calc("X", "a0", "x = 2 m", &["x"], &[]);
+        session.on(Some(&ib)).unwrap().commit(vec![ChangeView::Upsert { cell: c }], "x").await.unwrap();
+        assert_eq!(session.on(Some(&ia)).unwrap().info().await.unwrap().version, va);
+        let rb = session.on(Some(&ib)).unwrap().results(&At::default()).await.unwrap();
+        assert!(rb["X"].text.contains("2 m"), "{:?}", rb["X"]);
+        let ra = session.on(Some(&ia)).unwrap().results(&At::default()).await.unwrap();
+        assert!(!ra.contains_key("X"));
+
+        // No document named: the active tab.
+        session.select(None).unwrap();
+        assert_eq!(session.info().await.unwrap().id, ib);
+        session.activate(&ia).await.unwrap();
+        session.select(None).unwrap();
+        assert_eq!(session.info().await.unwrap().id, ia);
+
+        // Opening an open document switches to its tab; a copy of one (same identity) is refused.
+        session.activate(&ib).await.unwrap();
+        assert_eq!(session.open(&a).await.unwrap().id, ia);
+        assert_eq!(session.documents().len(), 2);
+        let copy = dir.path().join("copy.cruncha");
+        copy_dir(&a, &copy);
+        let _ = std::fs::remove_file(copy.join(".lock"));
+        assert!(session.open(&copy).await.unwrap_err().contains("same identity"));
+
+        // Closing the active tab activates its neighbour; an unknown id is an error.
+        session.select(Some(&ia)).unwrap();
+        session.close().await;
+        assert_eq!(session.documents().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), [ib.as_str()]);
+        session.select(None).unwrap();
+        assert_eq!(session.info().await.unwrap().id, ib);
+        assert!(session.select(Some(&ia)).is_err());
+        session.close_all().await;
+        assert!(session.documents().is_empty() && !session.is_open());
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            let target = to.join(e.file_name());
+            if e.file_type().unwrap().is_dir() {
+                copy_dir(&e.path(), &target);
+            } else {
+                std::fs::copy(e.path(), target).unwrap();
+            }
+        }
     }
 
     #[tokio::test]

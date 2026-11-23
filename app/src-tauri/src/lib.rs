@@ -60,7 +60,7 @@ async fn agent_server_start(
     if let Some(server) = slot.as_ref() {
         return Ok(server.into());
     }
-    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), "ai:external-agent".into()))
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), "ai:external-agent".into(), None))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
     // The connection file, so clients on this computer find the server without copy and paste.
@@ -76,6 +76,47 @@ async fn agent_server_start(
     let view = (&server).into();
     *slot = Some(server);
     Ok(view)
+}
+
+/// The macOS menu: Tauri's default, except that ⌘W closes the tab (ADR-0024) and Close Window
+/// moves to ⇧⌘W. The Edit menu stays, so copy and paste reach the page.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+    let open = MenuItemBuilder::with_id("open", "Open…").accelerator("CmdOrCtrl+O").build(app)?;
+    let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab").accelerator("CmdOrCtrl+W").build(app)?;
+    let close_window = MenuItemBuilder::with_id("close_window", "Close Window")
+        .accelerator("CmdOrCtrl+Shift+W")
+        .build(app)?;
+    let cruncha = SubmenuBuilder::new(app, "Cruncha")
+        .about(None)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    let file = SubmenuBuilder::new(app, "File").item(&open).separator().item(&close_tab).build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let view = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+    let window = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .item(&close_window)
+        .build()?;
+    MenuBuilder::new(app).items(&[&cruncha, &file, &edit, &view, &window]).build()
 }
 
 /// The in-app agent panel for the open document.
@@ -118,7 +159,8 @@ async fn agent_start(
         .find(|a| a.id == agent_id)
         .ok_or_else(|| format!("unknown agent {agent_id}"))?;
     let (doc_id, version, settings) = {
-        let s = s.lock().await;
+        let mut s = s.lock().await;
+        s.select(None)?; // the active tab
         let info = s.info().await?;
         (info.id, info.version, s.prefs().agents.clone())
     };
@@ -127,7 +169,7 @@ async fn agent_start(
     let agent = tauri::async_runtime::spawn_blocking(move || agent_panel::launch_def(agent, &settings))
         .await
         .map_err(|e| e.to_string())?;
-    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), format!("ai:{}", agent.id)))
+    let server = cruncha_mcp::http::serve(agents::AppBackend(s.inner().clone(), format!("ai:{}", agent.id), Some(doc_id.clone())))
         .await
         .map_err(|e| format!("couldn't start the agent server: {e}"))?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -187,7 +229,7 @@ async fn agent_conversations(
     app: AppHandle,
     s: State<'_, Shared>,
 ) -> Result<Vec<agent_panel::ConversationSummary>> {
-    let doc_id = s.lock().await.info().await?.id;
+    let doc_id = s.lock().await.on(None)?.info().await?.id;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(agent_panel::conversations(&data, &doc_id))
 }
@@ -198,7 +240,7 @@ async fn agent_conversation(
     app: AppHandle,
     s: State<'_, Shared>,
 ) -> Result<serde_json::Value> {
-    let doc_id = s.lock().await.info().await?.id;
+    let doc_id = s.lock().await.on(None)?.info().await?.id;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     agent_panel::conversation(&data, &doc_id, &id)
 }
@@ -221,16 +263,25 @@ fn stop_server(app: &AppHandle, server: &cruncha_mcp::http::Server) {
 type Result<T> = session::Result<T>;
 
 #[tauri::command]
-async fn open_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
-    // An agent works on one document: a different one stops it.
-    p.lock().await.stop();
+async fn open_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
+    // A new tab (or the document's tab, if it's open). An agent keeps its own document.
     s.lock().await.open(&path).await
 }
 
+/// The open documents, in tab order (ADR-0024).
 #[tauri::command]
-async fn create_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
-    // An agent works on one document: a different one stops it.
-    p.lock().await.stop();
+async fn open_documents(s: State<'_, Shared>) -> Result<Vec<session::OpenDocView>> {
+    Ok(s.lock().await.documents())
+}
+
+/// Switch to a tab.
+#[tauri::command]
+async fn activate_document(doc: String, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.activate(&doc).await
+}
+
+#[tauri::command]
+async fn create_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
     s.lock().await.create(&path).await
 }
 
@@ -238,50 +289,57 @@ async fn create_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, Panel
 async fn commit(
     changes: Vec<ChangeView>,
     message: String,
-    s: State<'_, Shared>,
+    doc: Option<String>, s: State<'_, Shared>,
 ) -> Result<CommitView> {
-    s.lock().await.commit(changes, &message).await
+    s.lock().await.on(doc.as_deref())?.commit(changes, &message).await
 }
 
 #[tauri::command]
-async fn results(at: At, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
-    s.lock().await.results(&at).await
+async fn results(at: At, doc: Option<String>, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.on(doc.as_deref())?.results(&at).await
 }
 
 #[tauri::command]
-async fn snapshot(name: String, note: String, s: State<'_, Shared>) -> Result<DocInfo> {
-    s.lock().await.snapshot(&name, &note).await
+async fn snapshot(name: String, note: String, doc: Option<String>, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.on(doc.as_deref())?.snapshot(&name, &note).await
 }
 
 #[tauri::command]
-async fn restore(at: At, s: State<'_, Shared>) -> Result<CommitView> {
-    s.lock().await.restore(&at).await
+async fn restore(at: At, doc: Option<String>, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.on(doc.as_deref())?.restore(&at).await
 }
 
 #[tauri::command]
-async fn preview_calc(source: String, s: State<'_, Shared>) -> Result<CellResult> {
-    s.lock().await.preview_calc(&source)
+async fn preview_calc(source: String, doc: Option<String>, s: State<'_, Shared>) -> Result<CellResult> {
+    s.lock().await.on(doc.as_deref())?.preview_calc(&source)
 }
 
 #[tauri::command]
-async fn create_sample_document(path: PathBuf, s: State<'_, Shared>, p: State<'_, PanelState>) -> Result<DocInfo> {
-    // An agent works on one document: a different one stops it.
-    p.lock().await.stop();
+async fn create_sample_document(path: PathBuf, s: State<'_, Shared>) -> Result<DocInfo> {
     s.lock().await.create_sample(&path).await
 }
 
 #[tauri::command]
 async fn close_document(
-    s: State<'_, Shared>,
+    doc: Option<String>, s: State<'_, Shared>,
     p: State<'_, PanelState>,
 ) -> Result<Option<PruneView>> {
-    p.lock().await.stop();
-    Ok(s.lock().await.close().await)
+    let mut s = s.lock().await;
+    s.select(doc.as_deref())?;
+    // The agent working on this document stops with it.
+    let closing = s.info().await.ok().map(|i| i.id);
+    let mut panel = p.lock().await;
+    if closing.is_some() && panel.doc_id() == closing {
+        panel.stop();
+    }
+    drop(panel);
+    Ok(s.close().await)
 }
 
 #[tauri::command]
-async fn document_info(s: State<'_, Shared>) -> Result<Option<DocInfo>> {
-    let s = s.lock().await;
+async fn document_info(doc: Option<String>, s: State<'_, Shared>) -> Result<Option<DocInfo>> {
+    let mut s = s.lock().await;
+    s.select(doc.as_deref())?;
     if !s.is_open() {
         return Ok(None);
     }
@@ -289,18 +347,18 @@ async fn document_info(s: State<'_, Shared>) -> Result<Option<DocInfo>> {
 }
 
 #[tauri::command]
-async fn cells(version: Option<u64>, s: State<'_, Shared>) -> Result<Vec<Cell>> {
-    s.lock().await.cells(version).await
+async fn cells(version: Option<u64>, doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<Cell>> {
+    s.lock().await.on(doc.as_deref())?.cells(version).await
 }
 
 #[tauri::command]
-async fn cells_at_ref(name: String, s: State<'_, Shared>) -> Result<Vec<Cell>> {
-    s.lock().await.cells_at_ref(&name).await
+async fn cells_at_ref(name: String, doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<Cell>> {
+    s.lock().await.on(doc.as_deref())?.cells_at_ref(&name).await
 }
 
 #[tauri::command]
-async fn history(s: State<'_, Shared>) -> Result<Vec<VersionView>> {
-    s.lock().await.history().await
+async fn history(doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<VersionView>> {
+    s.lock().await.on(doc.as_deref())?.history().await
 }
 
 #[tauri::command]
@@ -320,6 +378,8 @@ async fn set_prefs(mut prefs: Prefs, s: State<'_, Shared>) -> Result<()> {
     prefs.recent = s.prefs().recent.clone();
     prefs.trusted = s.prefs().trusted.clone();
     prefs.trusted_paths = s.prefs().trusted_paths.clone();
+    prefs.open_tabs = s.prefs().open_tabs.clone();
+    prefs.active_tab = s.prefs().active_tab.clone();
     // Connections are changed only by their own commands (their keys live in the Keychain).
     prefs.agents.connections = s.prefs().agents.connections.clone();
     s.set_prefs(prefs)
@@ -467,48 +527,49 @@ async fn agent_models(agent_id: String, app: AppHandle, s: State<'_, Shared>) ->
 }
 
 #[tauri::command]
-async fn document_settings(s: State<'_, Shared>) -> Result<session::DocumentSettings> {
-    s.lock().await.document_settings().await
+async fn document_settings(doc: Option<String>, s: State<'_, Shared>) -> Result<session::DocumentSettings> {
+    s.lock().await.on(doc.as_deref())?.document_settings().await
 }
 
 #[tauri::command]
-async fn set_document_settings(settings: session::DocumentSettings, s: State<'_, Shared>) -> Result<CommitView> {
-    s.lock().await.set_document_settings(settings).await
+async fn set_document_settings(settings: session::DocumentSettings, doc: Option<String>, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.on(doc.as_deref())?.set_document_settings(settings).await
 }
 
 #[tauri::command]
 async fn set_document_retention(
     policy: Option<Retention>,
-    s: State<'_, Shared>,
+    doc: Option<String>, s: State<'_, Shared>,
 ) -> Result<DocInfo> {
-    s.lock().await.set_document_retention(policy).await
+    s.lock().await.on(doc.as_deref())?.set_document_retention(policy).await
 }
 
 #[tauri::command]
-async fn archive_preview(cutoff: u64, s: State<'_, Shared>) -> Result<session::ArchivePreviewView> {
-    s.lock().await.archive_preview(cutoff).await
+async fn archive_preview(cutoff: u64, doc: Option<String>, s: State<'_, Shared>) -> Result<session::ArchivePreviewView> {
+    s.lock().await.on(doc.as_deref())?.archive_preview(cutoff).await
 }
 
 /// Archive the oldest snapshot groups, up to the one starting at `cutoff` (ADR-0023).
 #[tauri::command]
-async fn archive_history(cutoff: u64, s: State<'_, Shared>) -> Result<DocInfo> {
-    s.lock().await.archive(cutoff).await
+async fn archive_history(cutoff: u64, doc: Option<String>, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.on(doc.as_deref())?.archive(cutoff).await
 }
 
 /// The save log: removed saves, oldest first; with `cell`, those that wrote it.
 #[tauri::command]
-async fn archived_saves(cell: Option<String>, s: State<'_, Shared>) -> Result<Vec<session::ArchivedSaveView>> {
-    s.lock().await.archived(cell.as_deref()).await
+async fn archived_saves(cell: Option<String>, doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<session::ArchivedSaveView>> {
+    s.lock().await.on(doc.as_deref())?.archived(cell.as_deref()).await
 }
 
 #[tauri::command]
-async fn retention_preview(policy: Option<Retention>, s: State<'_, Shared>) -> Result<PreviewView> {
-    s.lock().await.retention_preview(policy).await
+async fn retention_preview(policy: Option<Retention>, doc: Option<String>, s: State<'_, Shared>) -> Result<PreviewView> {
+    s.lock().await.on(doc.as_deref())?.retention_preview(policy).await
 }
 
 #[tauri::command]
-async fn python_status(s: State<'_, Shared>) -> Result<Option<PythonStatus>> {
-    let s = s.lock().await;
+async fn python_status(doc: Option<String>, s: State<'_, Shared>) -> Result<Option<PythonStatus>> {
+    let mut s = s.lock().await;
+    s.select(doc.as_deref())?;
     if !s.is_open() {
         return Ok(None);
     }
@@ -518,13 +579,14 @@ async fn python_status(s: State<'_, Shared>) -> Result<Option<PythonStatus>> {
 /// Set up the Python environment (minutes on first use; progress as `python-setup` events).
 /// The session isn't locked meanwhile, so editing goes on.
 #[tauri::command]
-async fn setup_python(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
-    let base = s.lock().await.python_base();
+async fn setup_python(app: AppHandle, doc: Option<String>, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    let base = s.lock().await.on(doc.as_deref())?.python_base();
     let progress = |p: cruncha_kernel_py::env::Progress| {
         let _ = app.emit("python-setup", p);
     };
     cruncha_kernel_py::env::setup(&base, python::LOCK, progress).await?;
     let mut s = s.lock().await;
+    s.select(doc.as_deref())?;
     if !s.is_open() {
         return Ok(HashMap::new());
     }
@@ -603,13 +665,14 @@ fn function_reference() -> Result<serde_json::Value> {
 }
 
 #[tauri::command]
-async fn setup_rust(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
-    let base = s.lock().await.rust_base();
+async fn setup_rust(app: AppHandle, doc: Option<String>, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    let base = s.lock().await.on(doc.as_deref())?.rust_base();
     let progress = |step: cruncha_kernel_rs::env::Step| {
         let _ = app.emit("rust-setup", step);
     };
     cruncha_kernel_rs::env::setup(&base, progress).await?;
     let mut s = s.lock().await;
+    s.select(doc.as_deref())?;
     if !s.is_open() {
         return Ok(HashMap::new());
     }
@@ -617,26 +680,26 @@ async fn setup_rust(app: AppHandle, s: State<'_, Shared>) -> Result<HashMap<Stri
 }
 
 #[tauri::command]
-async fn trust_document(s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
-    s.lock().await.trust_document().await
+async fn trust_document(doc: Option<String>, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.on(doc.as_deref())?.trust_document().await
 }
 
 #[tauri::command]
 async fn run_python(
     ids: Option<Vec<String>>,
-    s: State<'_, Shared>,
+    doc: Option<String>, s: State<'_, Shared>,
 ) -> Result<HashMap<String, CellResult>> {
-    s.lock().await.run_python(ids).await
+    s.lock().await.on(doc.as_deref())?.run_python(ids).await
 }
 
 #[tauri::command]
-async fn stop_python(s: State<'_, Shared>) -> Result<()> {
-    s.lock().await.stop_python()
+async fn stop_python(doc: Option<String>, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.on(doc.as_deref())?.stop_python()
 }
 
 #[tauri::command]
-async fn restart_python(s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
-    s.lock().await.restart_python().await
+async fn restart_python(doc: Option<String>, s: State<'_, Shared>) -> Result<HashMap<String, CellResult>> {
+    s.lock().await.on(doc.as_deref())?.restart_python().await
 }
 
 /// The `cruncha_worker` package: `CRUNCHA_WORKER_DIR`, the app's bundled resources, or the
@@ -655,16 +718,16 @@ fn worker_dir(app: &tauri::App) -> PathBuf {
 }
 
 #[tauri::command]
-async fn report_settings(s: State<'_, Shared>) -> Result<report::ReportSettings> {
-    s.lock().await.report_settings().await
+async fn report_settings(doc: Option<String>, s: State<'_, Shared>) -> Result<report::ReportSettings> {
+    s.lock().await.on(doc.as_deref())?.report_settings().await
 }
 
 #[tauri::command]
 async fn set_report_settings(
     settings: report::ReportSettings,
-    s: State<'_, Shared>,
+    doc: Option<String>, s: State<'_, Shared>,
 ) -> Result<CommitView> {
-    s.lock().await.set_report_settings(settings).await
+    s.lock().await.on(doc.as_deref())?.set_report_settings(settings).await
 }
 
 /// What an export produced.
@@ -688,7 +751,7 @@ struct ExportView {
 /// so the report shows their results; a past version uses its stored results and runs
 /// nothing. Whatever isn't computed is printed as NOT CALCULATED.
 #[tauri::command]
-async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> Result<ExportView> {
+async fn export_report(path: PathBuf, at: Option<At>, doc: Option<String>, s: State<'_, Shared>) -> Result<ExportView> {
     let start = std::time::Instant::now();
     let mut timed_out = false;
     let at = at.unwrap_or_default();
@@ -696,7 +759,7 @@ async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> R
     if latest {
         loop {
             // The session lock is taken per check, so the window stays usable while Python runs.
-            if !s.lock().await.python_busy().await? {
+            if !s.lock().await.on(doc.as_deref())?.python_busy().await? {
                 break;
             }
             if start.elapsed() > std::time::Duration::from_secs(120) {
@@ -706,7 +769,7 @@ async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> R
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     }
-    let (report, files) = s.lock().await.report_at(&at).await?;
+    let (report, files) = s.lock().await.on(doc.as_deref())?.report_at(&at).await?;
     let problems = report
         .blocks
         .iter()
@@ -745,8 +808,8 @@ async fn export_report(path: PathBuf, at: Option<At>, s: State<'_, Shared>) -> R
 /// The figures a report of `at` needs drawn first (ADR-0017 §4): the front end draws each in
 /// a figure frame and hands back its SVG with `put_figure`.
 #[tauri::command]
-async fn figures_to_render(at: Option<At>, s: State<'_, Shared>) -> Result<Vec<figures::FigureJob>> {
-    s.lock().await.figures_to_render(&at.unwrap_or_default()).await
+async fn figures_to_render(at: Option<At>, doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<figures::FigureJob>> {
+    s.lock().await.on(doc.as_deref())?.figures_to_render(&at.unwrap_or_default()).await
 }
 
 #[tauri::command]
@@ -820,30 +883,30 @@ fn markdown_cells(markdown: String) -> Vec<PastedCell> {
 
 /// The open document's proposals (ADR-0016), newest first, with "if accepted" results.
 #[tauri::command]
-async fn proposals(s: State<'_, Shared>) -> Result<Vec<proposals::ProposalView>> {
-    s.lock().await.proposals().await
+async fn proposals(doc: Option<String>, s: State<'_, Shared>) -> Result<Vec<proposals::ProposalView>> {
+    s.lock().await.on(doc.as_deref())?.proposals().await
 }
 
 /// Accept a proposal: one commit by the user. `force` accepts a stale one anyway.
 #[tauri::command]
-async fn accept_proposal(id: String, force: bool, s: State<'_, Shared>) -> Result<CommitView> {
-    s.lock().await.accept_proposal(&id, force).await
+async fn accept_proposal(id: String, force: bool, doc: Option<String>, s: State<'_, Shared>) -> Result<CommitView> {
+    s.lock().await.on(doc.as_deref())?.accept_proposal(&id, force).await
 }
 
 #[tauri::command]
-async fn reject_proposal(id: String, note: String, s: State<'_, Shared>) -> Result<proposals::ProposalView> {
-    s.lock().await.reject_proposal(&id, &note).await
+async fn reject_proposal(id: String, note: String, doc: Option<String>, s: State<'_, Shared>) -> Result<proposals::ProposalView> {
+    s.lock().await.on(doc.as_deref())?.reject_proposal(&id, &note).await
 }
 
 #[tauri::command]
-async fn prune_now(s: State<'_, Shared>) -> Result<Option<PruneView>> {
-    s.lock().await.prune_now().await
+async fn prune_now(doc: Option<String>, s: State<'_, Shared>) -> Result<Option<PruneView>> {
+    s.lock().await.on(doc.as_deref())?.prune_now().await
 }
 
 /// Drop the open document's stored code-cell results (ADR-0018).
 #[tauri::command]
-async fn clear_results(s: State<'_, Shared>) -> Result<DocInfo> {
-    s.lock().await.clear_results().await
+async fn clear_results(doc: Option<String>, s: State<'_, Shared>) -> Result<DocInfo> {
+    s.lock().await.on(doc.as_deref())?.clear_results().await
 }
 
 pub fn run() {
@@ -862,12 +925,17 @@ pub fn run() {
                 .with_figure_cache(app.path().app_cache_dir()?.join("figures"));
             let handle = app.handle().clone();
             session.on_results(move |ev| {
+                let doc_id = ev.doc_id.clone();
                 let _ = handle.emit("results", ev);
-                // Keep finished runs with the document (ADR-0018), off the run loop.
+                // Keep finished runs with their document (ADR-0018), off the run loop. With
+                // several tabs open, that's the run's document, not whichever is selected.
                 if let Some(shared) = handle.try_state::<Shared>() {
                     let shared = shared.inner().clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = shared.lock().await.flush_results().await {
+                        let mut s = shared.lock().await;
+                        if s.select(Some(&doc_id)).is_ok()
+                            && let Err(e) = s.flush_results().await
+                        {
                             eprintln!("cruncha: storing results failed: {e}");
                         }
                     });
@@ -884,6 +952,22 @@ pub fn run() {
                 eprintln!("cruncha: couldn't open {}: {e}", PathBuf::from(&path).display());
             }
             app.manage::<Shared>(std::sync::Arc::new(Mutex::new(session)));
+            #[cfg(target_os = "macos")]
+            app.set_menu(app_menu(app.handle())?)?;
+            app.on_menu_event(|app, event| match event.id().as_ref() {
+                "close_tab" => {
+                    let _ = app.emit("menu", "close-tab");
+                }
+                "open" => {
+                    let _ = app.emit("menu", "open");
+                }
+                "close_window" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.close();
+                    }
+                }
+                _ => {}
+            });
             app.manage(AgentServer::default());
             app.manage::<PanelState>(Default::default());
             Ok(())
@@ -901,6 +985,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            open_documents,
+            activate_document,
             create_document,
             create_sample_document,
             commit,
@@ -979,7 +1065,7 @@ pub fn run() {
                     if let Some(server) = a.0.lock().await.take() {
                         stop_server(app, &server);
                     }
-                    s.lock().await.close().await;
+                    s.lock().await.close_all().await;
                 });
             }
         });

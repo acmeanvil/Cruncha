@@ -8,8 +8,6 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 
 | ADR | Item | Status | What's left |
 | --- | --- | --- | --- |
-| 0024 | 2. `Session` with several documents; document IDs on commands and events | Not started | |
-| 0024 | 3. Tab bar, per-tab editor state, keys, reopen at launch | Not started | |
 | 0024 | 4. Workers per document, on demand, stopped after 10 minutes idle | Not started | |
 | 0024 | 5. Agents across open documents: `documents`, `document` argument, `propose_copy` | Not started | |
 | 0024 | 6. Name clashes on paste through ADR-0014's clash dialog | Not started | With ADR-0014 item 3 |

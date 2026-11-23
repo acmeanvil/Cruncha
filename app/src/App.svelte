@@ -3,9 +3,11 @@
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     api,
+    setActiveDocument,
+    type OpenDocView,
     DEFAULT_TEXT_SIZES,
     KEEP_EVERYTHING,
     type Cell,
@@ -51,6 +53,11 @@
     modal = "doc";
   }
   let doc = $state<DocInfo | null>(null);
+  /** The open documents, in tab order (ADR-0024). */
+  let tabs = $state.raw<OpenDocView[]>([]);
+  /** What each tab was showing when it was left: the version or snapshot, and the scroll. */
+  const tabMemory = new Map<string, { selected: Selection; scroll: number }>();
+  let mainEl = $state<HTMLElement | undefined>();
   let history = $state<VersionView[]>([]);
   let selected = $state<Selection>({ kind: "latest" });
   let cells = $state.raw<Cell[]>([]);
@@ -196,7 +203,10 @@
 
   const restartPython = () => attempt(async () => editor?.applyResults(await api.restartPython()));
 
-  const loadKey = $derived(`${doc?.id ?? ""}:${loads}`);
+  // The editor reloads only when `show` has fetched a version's cells. (Keyed on the document
+  // too, it reloaded as soon as a tab switch changed `doc`, before the cells arrived, and so
+  // used up the tab's kept state and undo history on the wrong content.)
+  const loadKey = $derived(String(loads));
   const editable = $derived(selected.kind === "latest");
 
   async function attempt(f: () => Promise<void>) {
@@ -230,17 +240,59 @@
 
   async function load(info: DocInfo | null) {
     doc = info;
+    setActiveDocument(info?.id ?? null);
+    tabs = await api.openDocuments();
     history = info ? await api.history() : [];
     docSizes = info ? ((await api.documentSettings().catch(() => null))?.textSizes ?? null) : null;
-    if (info) await show({ kind: "latest" });
+    const memory = info ? tabMemory.get(info.id) : undefined;
+    if (info) await show(memory?.selected ?? { kind: "latest" });
     await refreshPython();
     await refreshProposals();
     prefs = await api.getPrefs(); // the recent list changed
+    await tick();
+    if (mainEl) mainEl.scrollTop = memory?.scroll ?? 0;
+  }
+
+  /** Before another tab shows: save pending edits, and keep this tab's editor state (undo
+   *  history, selection), the version on screen and the scroll position. */
+  async function leaveTab() {
+    if (!doc) return;
+    await flush();
+    if (selected.kind === "latest") editor?.stash(`${doc.id}@${doc.version}`);
+    tabMemory.set(doc.id, { selected, scroll: mainEl?.scrollTop ?? 0 });
+  }
+
+  const switchTab = (id: string) =>
+    attempt(async () => {
+      if (doc?.id === id) return;
+      await leaveTab();
+      await load(await api.activateDocument(id));
+    });
+
+  const closeTab = (id: string) =>
+    attempt(async () => {
+      const active = doc?.id === id;
+      if (active) await flush();
+      await api.closeDocument(id);
+      tabMemory.delete(id);
+      // The closed tab's ID mustn't go with the next calls: the backend's active tab is now
+      // its neighbour (or none).
+      if (active) setActiveDocument(null);
+      // The backend made a neighbouring tab active (or none is left).
+      if (doc?.id === id) await load(await api.documentInfo());
+      else tabs = await api.openDocuments();
+    });
+
+  /** The next (+1) or previous (−1) tab, wrapping around. */
+  function cycleTab(step: number) {
+    if (!doc || tabs.length < 2) return;
+    const i = tabs.findIndex((t) => t.id === doc!.id);
+    void switchTab(tabs[(i + step + tabs.length) % tabs.length].id);
   }
 
   const openRecent = (path: string) =>
     attempt(async () => {
-      await flush();
+      await leaveTab();
       try {
         await load(await api.openDocument(path));
       } catch (e) {
@@ -256,7 +308,16 @@
   onMount(() => {
     void attempt(async () => {
       prefs = await api.getPrefs();
+      // Reopen last session's tabs (ADR-0024); one that moved or is open elsewhere is skipped.
+      const reopen = prefs.openTabs ?? [];
+      const failed: string[] = [];
+      for (const path of reopen) {
+        await api.openDocument(path).catch(() => failed.push(path));
+      }
+      const active = (await api.openDocuments()).find((t) => t.path === prefs.activeTab);
+      if (active) await api.activateDocument(active.id);
       await load(await api.documentInfo());
+      if (failed.length) error = `Couldn't reopen ${failed.map(fileName).join(", ")}`;
     });
     // Save pending edits before the window closes (the backend then releases the document).
     const unlisten = getCurrentWindow().onCloseRequested(async () => {
@@ -273,37 +334,45 @@
     });
     const unSetup = listen<SetupProgress>("python-setup", (e) => (setup = SETUP_LABEL[e.payload.step]));
     const unRustSetup = listen<string>("rust-setup", (e) => (setup = RUST_SETUP_LABEL[e.payload] ?? setup));
+    // The app menu: File → Open… (⌘O) and Close Tab (⌘W).
+    const unMenu = listen<string>("menu", (e) => {
+      if (e.payload === "open") openDocument();
+      if (e.payload === "close-tab" && doc) void closeTab(doc.id);
+    });
     return () => {
       void unlisten.then((f) => f());
       void unResults.then((f) => f());
       void unSetup.then((f) => f());
       void unRustSetup.then((f) => f());
       void unProposals.then((f) => f());
+      void unMenu.then((f) => f());
     };
   });
 
   const openDocument = () =>
     attempt(async () => {
-      await flush();
+      await leaveTab();
       const path = await openDialog({ directory: true, title: "Open a Cruncha document (.cruncha)" });
       if (typeof path === "string") await load(await api.openDocument(path));
     });
 
   const newDocument = () =>
     attempt(async () => {
-      await flush();
+      await leaveTab();
       const path = await saveDialog({ title: "New Cruncha document", defaultPath: "Untitled.cruncha" });
       if (path) await load(await api.createDocument(path));
     });
 
   const createSample = () =>
     attempt(async () => {
-      await flush();
+      await leaveTab();
       const path = await saveDialog({ title: "Create a sample document", defaultPath: "beam-check.cruncha" });
       if (path) await load(await api.createSampleDocument(path));
     });
 
   async function committed(v: CommitView) {
+    // A save that finished after its tab was left belongs to that tab, not this one.
+    if (doc && v.info.id !== doc.id) return;
     doc = v.info;
     history = await api.history();
     if (!python?.hasPython && !python?.hasRust) await refreshPython();
@@ -414,6 +483,15 @@
       e.preventDefault();
       reference("units");
     }
+    // Tabs (ADR-0024): ⌘T opens a document in a new tab; ⌘⇧[ and ⌘⇧] switch.
+    if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      openDocument();
+    }
+    if ((e.key === "[" || e.key === "{" || e.key === "]" || e.key === "}") && (e.metaKey || e.ctrlKey) && e.shiftKey && doc) {
+      e.preventDefault();
+      cycleTab(e.key === "]" || e.key === "}" ? 1 : -1);
+    }
     if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
       bottomOpen = !bottomOpen;
@@ -470,6 +548,20 @@
     </button>
   </header>
 
+  {#if tabs.length}
+    <nav class="tabs" aria-label="Open documents">
+      {#each tabs as t (t.id)}
+        <div class="tab" class:active={t.id === doc?.id} title={t.path}>
+          <button class="tname" onclick={() => switchTab(t.id)} aria-current={t.id === doc?.id ? "page" : undefined}>
+            {t.name.replace(/\.cruncha$/, "")}
+          </button>
+          <button class="tclose" aria-label="Close {t.name}" title="Close tab (⌘W)" onclick={() => closeTab(t.id)}>×</button>
+        </div>
+      {/each}
+      <button class="tnew" title="Open a document in a new tab (⌘T)" aria-label="Open a document in a new tab" onclick={openDocument}>+</button>
+    </nav>
+  {/if}
+
   {#if error}
     <div class="error" role="alert">
       {error} <button class="link" onclick={() => (error = null)}>Dismiss</button>
@@ -504,7 +596,7 @@
           bind:tab={sidebarTab}
         />
       {/if}
-      <main style="--bar-h: {barH}px; --text-size: {sizes.text}px; --calc-size: {sizes.calc}px; --code-size: {sizes.code}px">
+      <main bind:this={mainEl} style="--bar-h: {barH}px; --text-size: {sizes.text}px; --calc-size: {sizes.calc}px; --code-size: {sizes.code}px">
         <div class="viewing" bind:offsetHeight={barH}>
           <span>{heading}</span>
           {#if selected.kind !== "latest"}
@@ -570,6 +662,8 @@
             onfunctions={() => reference("functions")}
             onunits={() => reference("units")}
             origin={doc ? `document:${doc.id}@v${selected.kind === "version" ? selected.version : doc.version}` : null}
+            docId={doc?.id ?? null}
+            stashKey={doc && selected.kind === "latest" ? `${doc.id}@${doc.version}` : null}
           />
         </div>
       </main>
@@ -683,6 +777,25 @@
   .menu hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .menu .label { padding: 2px 10px; }
   .error { background: var(--danger-bg); color: var(--danger); padding: 6px 12px; }
+  .tabs {
+    display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; overflow-x: auto;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    display: flex; align-items: center; max-width: 220px; min-width: 0; border: 1px solid transparent;
+    border-bottom: none; border-radius: 6px 6px 0 0; margin-bottom: -1px; color: var(--muted);
+  }
+  .tab:hover { background: var(--sunken); }
+  .tab.active { background: var(--bg); border-color: var(--border); color: var(--text); }
+  .tname {
+    border: none; background: none; padding: 5px 4px 5px 12px; font-size: 13px; color: inherit;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .tab.active .tname { font-weight: 500; }
+  .tclose { border: none; background: none; padding: 2px 8px; color: var(--muted); font-size: 15px; line-height: 1; border-radius: 4px; }
+  .tclose:hover { color: var(--text); background: var(--sunken); }
+  .tnew { border: none; background: none; padding: 4px 10px; color: var(--muted); font-size: 16px; }
+  .tnew:hover { color: var(--text); }
   .agents-on { border-color: var(--accent); color: var(--accent); }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 1px; }
   .notice {

@@ -43,6 +43,8 @@
     onfunctions,
     onunits,
     origin = null,
+    docId = null,
+    stashKey = null,
   }: {
     cells: Cell[];
     results: Record<string, CellResult>;
@@ -62,7 +64,20 @@
     onunits?: () => void;
     /** The shown document version (`document:<id>@v<n>`): copied cells carry it (ADR-0024). */
     origin?: string | null;
+    /** The document shown: saves and runs go to it, whichever tab is active (ADR-0024). */
+    docId?: string | null;
+    /** `<doc id>@<version>` for the latest version: a state kept with [`stash`] under this key
+     *  is put back instead of rebuilding from `cells` (a tab's undo history and selection). */
+    stashKey?: string | null;
   } = $props();
+
+  /** Editor states of tabs that aren't showing, by `stashKey`. */
+  const stashes = new Map<string, EditorState>();
+
+  /** Keep this editor's state (with its undo history) for when its tab shows again. */
+  export function stash(key: string) {
+    if (view) stashes.set(key, view.state);
+  }
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -75,6 +90,7 @@
       refreshOutline();
     },
     (s) => onsavestate(s),
+    () => docId,
   );
 
   /** Commit pending edits now. */
@@ -92,7 +108,7 @@
   export async function runPython(ids?: string[]) {
     await sync.flush();
     try {
-      applyResults(await api.runPython(ids));
+      applyResults(await api.runPython(ids, docId ?? undefined));
     } catch (e) {
       onerror?.(String(e));
     }
@@ -100,7 +116,7 @@
 
   const codeActions = {
     run: (id: string) => void runPython([id]),
-    stop: () => void api.stopPython().catch((e) => onerror?.(String(e))),
+    stop: () => void api.stopPython(docId ?? undefined).catch((e) => onerror?.(String(e))),
   };
 
   /** Put the cursor at the block at `pos` and scroll it into view. */
@@ -260,10 +276,15 @@
   }
 
   function load() {
-    const state = EditorState.create({
-      doc: docFromCells(cells),
-      plugins: [...editorPlugins(() => void sync.flush(), (id) => void runPython([id])), placeholder, proposalMarks],
-    });
+    const kept = stashKey ? stashes.get(stashKey) : undefined;
+    if (stashKey) stashes.delete(stashKey);
+    // A tab's kept state comes back only if the document is still at that version.
+    const state =
+      kept ??
+      EditorState.create({
+        doc: docFromCells(cells),
+        plugins: [...editorPlugins(() => void sync.flush(), (id) => void runPython([id])), placeholder, proposalMarks],
+      });
     sync.load(cells);
     store.set(results, sourcesOf(cells));
     if (!view) {
@@ -326,6 +347,11 @@
     } else {
       view.updateState(state);
       view.setProps({ editable: () => editable });
+    }
+    // A tab coming back resumes where it was: focused at its cursor, so ⌘Z undoes its edits.
+    if (kept && editable) {
+      const v = view;
+      requestAnimationFrame(() => v?.focus());
     }
     hovered = null;
     menu = false;

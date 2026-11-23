@@ -69,6 +69,8 @@ export class DocSync {
     private getDoc: () => Node,
     private onCommitted: (v: CommitView, sources: Map<string, string>) => void,
     private onState: (s: SaveState) => void,
+    /** The document these edits belong to (ADR-0024), so a save never lands in another tab's. */
+    private docId: () => string | null = () => null,
   ) {}
 
   /** The committed source of each cell (results are for these). */
@@ -158,7 +160,7 @@ export class DocSync {
     ];
     this.set({ status: "saving", error: null });
     try {
-      const v = await api.commit(changes, describe(adds, edits, deletes));
+      const v = await api.commit(changes, describe(adds, edits, deletes), this.docId() ?? undefined);
       for (const c of cells) {
         this.committed.set(c.id, c);
         this.sigs.set(c.id, signature(c));
