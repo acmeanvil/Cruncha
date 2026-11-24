@@ -63,6 +63,8 @@ export class DocSync {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private chain: Promise<void> = Promise.resolve();
   private dirty = false;
+  /** The next commit inserts a template (ADR-0014 §3): its new cells are Imported from it. */
+  private importing: { source: string; message: string } | null = null;
   state: SaveState = { status: "saved", error: null };
 
   constructor(
@@ -107,6 +109,16 @@ export class DocSync {
     return this.chain;
   }
 
+  /** Insert cells from a template as one version of their own: pending edits are committed
+   *  first, then `insert` runs and its new cells commit with `message`, provenance `source`. */
+  async insertAs(source: string, message: string, insert: () => void): Promise<void> {
+    await this.flush();
+    insert();
+    this.importing = { source, message };
+    this.dirty = true;
+    await this.flush();
+  }
+
   private diff() {
     const doc = this.getDoc();
     const seen = new Set<string>();
@@ -129,15 +141,17 @@ export class DocSync {
     return { adds, edits, deletes, sources };
   }
 
-  private toCell(c: CellContent): Cell {
+  private toCell(c: CellContent, imported: string | null = null): Cell {
     const prev = this.committed.get(c.id);
     const { from, ...content } = c;
+    const origin = from ?? imported;
     return {
       parent_id: null,
       defines: [],
       reads: [],
-      // A new cell pasted from a document records where it came from (ADR-0024).
-      provenance: from ? { state: "imported", source: from } : { state: "human" },
+      // A new cell pasted from a document, or inserted from a template, records where it came
+      // from (ADR-0024, ADR-0014).
+      provenance: origin ? { state: "imported", source: origin } : { state: "human" },
       modified_by: "",
       modified_at_us: 0,
       ...prev,
@@ -148,19 +162,21 @@ export class DocSync {
   private async commitOnce() {
     if (!this.dirty && this.state.status !== "error") return;
     this.dirty = false;
+    const importing = this.importing;
+    this.importing = null;
     const { adds, edits, deletes, sources } = this.diff();
     if (adds.length + edits.length + deletes.length === 0) {
       if (!this.dirty) this.set({ status: "saved", error: null });
       return;
     }
-    const cells = [...adds, ...edits].map((c) => this.toCell(c));
+    const cells = [...adds.map((c) => this.toCell(c, importing?.source ?? null)), ...edits.map((c) => this.toCell(c))];
     const changes: Change[] = [
       ...cells.map((cell) => ({ op: "upsert" as const, cell })),
       ...deletes.map((c) => ({ op: "delete" as const, id: c.id })),
     ];
     this.set({ status: "saving", error: null });
     try {
-      const v = await api.commit(changes, describe(adds, edits, deletes), this.docId() ?? undefined);
+      const v = await api.commit(changes, importing?.message ?? describe(adds, edits, deletes), this.docId() ?? undefined);
       for (const c of cells) {
         this.committed.set(c.id, c);
         this.sigs.set(c.id, signature(c));
@@ -173,6 +189,7 @@ export class DocSync {
       this.set({ status: this.dirty ? "pending" : "saved", error: null });
     } catch (e) {
       this.dirty = true;
+      this.importing ??= importing; // a retry still commits the insert as imported
       this.set({ status: "error", error: String(e) });
     }
   }

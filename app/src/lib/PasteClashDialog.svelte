@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Names that pasted cells define and the document already defines (ADR-0024 §1, the clash
-     dialog ADR-0014's insert will use too). For each: rename it in the pasted cells (the
+<!-- Names that pasted cells, or an inserted template, define and the document already defines
+     (ADR-0024 §1, ADR-0014 §3). For each: rename it in the pasted cells (the
      suggestion reads the same in calcs, Python and Rust), or use the document's own value and
      leave the pasted definition out. A cell that also defines names that don't clash can only
      be renamed. -->
@@ -27,11 +27,21 @@
     error = null,
     onpaste,
     oncancel,
+    title = "These names are already defined",
+    what = "pasted cells",
+    action = "Paste",
+    canUse = () => true,
   }: {
     clashes: Clash[];
     error?: string | null;
     onpaste: (choices: Choice[]) => void;
     oncancel: () => void;
+    title?: string;
+    /** What the cells are, in the explanation ("pasted cells", "template"). */
+    what?: string;
+    action?: string;
+    /** Whether "use the document's" is offered for a name (a template offers it for inputs only, ADR-0014 §3). */
+    canUse?: (name: string) => boolean;
   } = $props();
 
   // The choices start from the clashes the dialog opened with.
@@ -39,10 +49,10 @@
   const valid = $derived(choices.every((c) => c.use || /^[\p{L}][\p{L}\p{N}_′]*$/u.test(c.to.trim())));
 </script>
 
-<Modal title="These names are already defined" onclose={oncancel} width={560}>
+<Modal {title} onclose={oncancel} width={560}>
   <p class="small muted">
-    A name is defined once per document. Rename it in the pasted cells (uses included), or keep the document's own value
-    and leave the pasted definition out.
+    A name is defined once per document. Rename it in the {what} (uses included), or keep the document's own value
+    and leave the {what}'s definition out.
   </p>
   <table>
     <thead><tr><th>Name</th><th>Rename to</th><th>Or</th></tr></thead>
@@ -52,10 +62,14 @@
           <td class="mono">{c.name}</td>
           <td><input class="mono" bind:value={choices[i].to} disabled={choices[i].use} aria-label="New name for {c.name}" /></td>
           <td>
-            <label title={c.others.length ? `That cell also defines ${c.others.join(", ")}, so it can't be left out` : ""}>
-              <input type="checkbox" bind:checked={choices[i].use} disabled={c.others.length > 0} />
-              use the document's
-            </label>
+            {#if canUse(c.name)}
+              <label title={c.others.length ? `That cell also defines ${c.others.join(", ")}, so it can't be left out` : ""}>
+                <input type="checkbox" bind:checked={choices[i].use} disabled={c.others.length > 0} />
+                use the document's
+              </label>
+            {:else}
+              <span class="small muted" title="Only an input can use the document's value">rename only</span>
+            {/if}
           </td>
         </tr>
       {/each}
@@ -68,7 +82,7 @@
       class="primary"
       disabled={!valid}
       onclick={() => onpaste(choices.map((c) => ({ name: c.name, rename: c.use ? null : c.to.trim() })))}
-    >Paste</button>
+    >{action}</button>
   {/snippet}
 </Modal>
 

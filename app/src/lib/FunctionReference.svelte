@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The function reference: every built-in function, operator and constant of the calc language,
+<!-- The reference panel: functions, units (UnitReference) and templates (TemplateLibrary).
+     The function reference: every built-in function, operator and constant of the calc language,
      searchable and by category, with a signature, what it does and a worked example (each
      example's result is checked by cruncha-eval's tests/reference.rs). Insert types it into the
      calc being edited, or into a new calc. Its buttons don't take focus, so the calc stays open. -->
@@ -8,17 +9,25 @@
   import { api, type FunctionReference } from "./api";
   import { findEntries, insertion } from "./functionRef";
   import UnitReference from "./UnitReference.svelte";
+  import TemplateLibrary from "./TemplateLibrary.svelte";
+  import type { TemplateCell, TemplateDetail } from "./api";
 
   let {
     editable,
     oninsert,
     onclose,
+    oninserttemplate,
+    selection,
     tab = $bindable("functions"),
   }: {
     editable: boolean;
     oninsert: (text: string, back: number) => void;
     onclose: () => void;
-    tab?: "functions" | "units";
+    /** Insert a template into the document (ADR-0014 §3). */
+    oninserttemplate: (t: TemplateDetail) => Promise<void> | void;
+    /** The editor's selected blocks, for Save as snippet. */
+    selection: () => TemplateCell[];
+    tab?: "functions" | "units" | "templates";
   } = $props();
 
   let reference = $state<FunctionReference | null>(null);
@@ -57,17 +66,20 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<aside class="ref" aria-label="Functions and units" onkeydown={(e) => e.key === "Escape" && onclose()}>
+<aside class="ref" aria-label="Functions, units and templates" onkeydown={(e) => e.key === "Escape" && onclose()}>
   <header>
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected={tab === "functions"} class:on={tab === "functions"} onmousedown={keep} onclick={() => (tab = "functions")}><i>ƒ</i>x Functions</button>
       <button role="tab" aria-selected={tab === "units"} class:on={tab === "units"} onmousedown={keep} onclick={() => (tab = "units")}>Units</button>
+      <button role="tab" aria-selected={tab === "templates"} class:on={tab === "templates"} onmousedown={keep} onclick={() => (tab = "templates")} title="Templates and snippets (⌘⇧T)">Templates</button>
     </div>
     <span class="spacer"></span>
     <button class="x" aria-label="Close the function reference" onclick={onclose}>×</button>
   </header>
   {#if tab === "units"}
     <UnitReference {editable} {oninsert} />
+  {:else if tab === "templates"}
+    <TemplateLibrary {editable} oninsert={oninserttemplate} {selection} />
   {:else}
   <div class="tools">
     <input bind:this={search} type="search" placeholder="Find a function: sqrt, degrees, interpolate…" aria-label="Find a function" bind:value={query} />

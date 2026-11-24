@@ -120,6 +120,36 @@ describe("saving", () => {
     };
   }
 
+  test("a template inserts as one version of its own, its cells imported from it", async () => {
+    commit.mockResolvedValue({ info: {}, results: {} });
+    const t = setup(SAMPLE);
+    // A pending edit is committed first, on its own.
+    let pos = 0;
+    t.get().doc.forEach((n, p) => {
+      if (n.attrs.id === "C") pos = p;
+    });
+    let s = t.get();
+    t.set(s.apply(s.tr.setNodeMarkup(pos, undefined, { ...s.doc.nodeAt(pos)!.attrs, source: "M = 3 = ?" })));
+    await t.sync.insertAs("template:test.beam@1.0.0", "Insert template Beam 1.0.0", () => {
+      s = t.get();
+      const nodes = [cellToNode(cell(null as unknown as string, "prose", null as unknown as string, para("Beam"))), cellToNode(cell(null as unknown as string, "calc", null as unknown as string, "w = 1 kN/m_"))];
+      t.set(s.apply(s.tr.insert(s.doc.content.size, nodes)));
+    });
+    expect(commit).toHaveBeenCalledTimes(2);
+    expect(commit.mock.calls[0][1]).toBe("edit calc M = 3 = ?");
+    const [changes, message] = commit.mock.calls[1];
+    expect(message).toBe("Insert template Beam 1.0.0");
+    expect(changes.map((c: { cell: Cell }) => [c.cell.kind, c.cell.provenance])).toEqual([
+      ["prose", { state: "imported", source: "template:test.beam@1.0.0" }],
+      ["calc", { state: "imported", source: "template:test.beam@1.0.0" }],
+    ]);
+    // Later edits are the user's own again.
+    s = t.get();
+    t.set(s.apply(s.tr.insertText("x", 1)));
+    await t.sync.flush();
+    expect(commit.mock.calls[2][0][0].cell.provenance).toEqual({ state: "human" });
+  });
+
   test("only changed cells are sent, keeping their bookkeeping", async () => {
     commit.mockResolvedValue({ info: {}, results: {} });
     const t = setup(SAMPLE);

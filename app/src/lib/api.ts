@@ -28,6 +28,57 @@ export interface Prefs {
   /** The open tabs (paths, in order) and the active one, reopened at launch (kept by the backend). */
   openTabs?: string[];
   activeTab?: string | null;
+  /** The user's template library folder (null: the default) and hidden built-in templates (kept by the backend). */
+  libraryDir?: string | null;
+  hiddenTemplates?: string[];
+}
+
+/** A template or snippet as the Templates tab lists it (ADR-0014 §5). */
+export interface TemplateSummary {
+  /** `builtin:<path>` or `user:<path>`. */
+  key: string;
+  library: "builtin" | "user";
+  path: string;
+  id: string;
+  version: string;
+  title: string;
+  summary: string | null;
+  category: string[];
+  tags: string[];
+  inputs: string[];
+  outputs: string[];
+  hidden: boolean;
+  /** Why the file doesn't read. */
+  error: string | null;
+}
+
+export interface TemplateCell {
+  kind: string;
+  source: string;
+  attrs: Record<string, unknown>;
+}
+
+export interface TemplateDetail extends TemplateSummary {
+  from: string | null;
+  license: string | null;
+  references: { work: string; edition: string | null; locator: string | null; url: string | null }[];
+  tests: { name: string; source: string | null; passed: boolean; skipped: string | null; lines: string[] }[];
+  problems: string[];
+  cells: TemplateCell[];
+}
+
+export interface SnippetDetails {
+  title: string;
+  summary: string | null;
+  category: string[];
+  tags: string[];
+}
+
+export interface LibraryInfo {
+  dir: string;
+  defaultDir: string;
+  custom: boolean;
+  builtinDir: string;
 }
 
 export interface KnownModel {
@@ -616,6 +667,22 @@ export const api = {
    *  and python/rust/tex blocks as their cells. */
   markdownCells: (markdown: string) =>
     call<{ kind: string; source: string; attrs: Record<string, unknown> }[]>("markdown_cells", { markdown }),
+  templates: () => call<TemplateSummary[]>("templates"),
+  template: (key: string) => call<TemplateDetail>("template", { key }),
+  templateSave: (details: SnippetDetails, cells: TemplateCell[]) => call<string>("template_save", { details, cells }),
+  templateUpdateCells: (key: string, cells: TemplateCell[]) => call<string>("template_update_cells", { key, cells }),
+  templateUpdateDetails: (key: string, details: SnippetDetails) => call<string>("template_update_details", { key, details }),
+  templateDuplicate: (key: string) => call<string>("template_duplicate", { key }),
+  templateDelete: (key: string) => call<void>("template_delete", { key }),
+  templateHide: (id: string, hidden: boolean) => call<void>("template_hide", { id, hidden }),
+  templateTrash: () => call<{ name: string; title: string; id: string | null }[]>("template_trash"),
+  templateRestore: (name: string) => call<string>("template_restore", { name }),
+  templateEmptyTrash: () => call<void>("template_empty_trash"),
+  templateImport: (paths: string[]) => call<string[]>("template_import", { paths }),
+  templateExport: (key: string, dest: string) => call<void>("template_export", { key, dest }),
+  libraryInfo: () => call<LibraryInfo>("library_info"),
+  setLibraryDir: (dir: string | null) => call<LibraryInfo>("set_library_dir", { dir }),
+  libraryReveal: () => call<void>("library_reveal"),
   agentServerStatus: () => call<AgentServerView | null>("agent_server_status"),
   agentServerStart: () => call<AgentServerView>("agent_server_start"),
   agentServerStop: () => call<void>("agent_server_stop"),

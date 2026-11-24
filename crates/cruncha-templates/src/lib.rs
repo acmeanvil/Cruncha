@@ -38,9 +38,9 @@ pub struct Manifest {
     #[serde(default)]
     pub summary: Option<String>,
     /// The category path (`["Structural engineering", "Connections"]`).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub category: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Where it was converted from (`lacewing:structural.bolts`).
     #[serde(default)]
@@ -48,14 +48,14 @@ pub struct Manifest {
     #[serde(default)]
     pub license: Option<String>,
     /// Names the template defines with a placeholder value, for the user to set.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
     /// Names the template promises.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<Reference>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<TestCase>,
 }
 
@@ -82,10 +82,10 @@ pub struct TestCase {
     #[serde(default)]
     pub source: Option<String>,
     /// Input values as calc literals (`"0.75 in"`), replacing the placeholders.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<String, String>,
     /// Expected values as calc literals (`"17.9 kips"`).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub expect: BTreeMap<String, String>,
     /// Relative tolerance: `"0.3%"` or `"0.003"`. Default 1e-9.
     #[serde(default)]
@@ -134,6 +134,112 @@ pub enum Cell {
 pub struct Template {
     pub manifest: Manifest,
     pub cells: Vec<Cell>,
+}
+
+/// A template as a `.cruncha.md` file that [`parse`] reads back as the same template: the
+/// manifest as TOML, then each cell (prose as Markdown, one fence per calc or code cell).
+pub fn write(t: &Template) -> Result<String, String> {
+    let front = toml::to_string(&t.manifest).map_err(|e| format!("front matter: {e}"))?;
+    let mut out = format!("+++\n{}+++\n", front);
+    for c in &t.cells {
+        let block = match c {
+            Cell::Prose { source } => {
+                let md = cruncha_prose::to_markdown(&cruncha_prose::parse_json(source));
+                if md.trim().is_empty() {
+                    continue;
+                }
+                md
+            }
+            Cell::Calc { source, description } => fence("calc", source, description.as_deref()),
+            Cell::Code { lang, source, description } => fence(lang, source, description.as_deref()),
+        };
+        out.push('\n');
+        out.push_str(block.trim_end());
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// A fenced cell, its description as an attribute; the fence is longer than any run of its
+/// character in the source. CommonMark reads backslash escapes in the info string, so the
+/// attribute's own escapes (`\"`, `\\`) are escaped again; a description with a backtick
+/// takes a `~~~` fence, since a backtick fence's info string can't hold one.
+fn fence(lang: &str, source: &str, description: Option<&str>) -> String {
+    let description = description.map(str::trim).filter(|d| !d.is_empty());
+    let mark = if description.is_some_and(|d| d.contains('`')) { '~' } else { '`' };
+    let mut longest = 0;
+    let mut run = 0;
+    for ch in source.chars() {
+        run = if ch == mark { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let ticks = mark.to_string().repeat(longest.max(2) + 1);
+    let attrs = match description {
+        Some(d) => {
+            let attr = d.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(" {{description=\"{}\"}}", attr.replace('\\', "\\\\"))
+        }
+        None => String::new(),
+    };
+    format!("{ticks}{lang}{attrs}\n{}\n{ticks}", source.trim_end_matches('\n'))
+}
+
+/// The names calcs define with a placeholder value (`h = 4 in _`): a snippet's inputs, in
+/// document order.
+pub fn placeholder_inputs(cells: &[Cell]) -> Vec<String> {
+    let o = opts();
+    let mut out = Vec::new();
+    for c in cells {
+        if let Cell::Calc { source, .. } = c
+            && source.trim_end().ends_with('_')
+            && let Ok(stmt) = cruncha_eval::prepare(source, &o)
+        {
+            for n in stmt.defines {
+                if !out.contains(&n) {
+                    out.push(n);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A template file found in a library folder.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    /// Relative to the folder, with `/` separators.
+    pub path: String,
+    /// The template, or why it doesn't read.
+    pub template: Result<Template, String>,
+}
+
+/// Every `*.cruncha.md` file under `dir` (sorted by path; hidden folders such as `.trash`
+/// skipped). A missing folder is an empty library.
+pub fn load_dir(dir: &std::path::Path) -> Vec<Entry> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<Entry>) {
+        let Ok(read) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = e.path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else if name.ends_with(".cruncha.md") {
+                let rel = path.strip_prefix(root).unwrap_or(&path);
+                let rel = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+                let template = std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| parse(&t));
+                out.push(Entry { path: rel, template });
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
 }
 
 /// Read a `.cruncha.md` file.

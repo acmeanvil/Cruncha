@@ -64,3 +64,16 @@ fn every_built_in_template_is_valid_and_passes_its_examples() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+#[test]
+fn every_built_in_template_writes_back_as_itself() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../templates");
+    let entries = cruncha_templates::load_dir(&root);
+    assert!(entries.len() >= 13, "load_dir found {}", entries.len());
+    for e in entries {
+        let t = e.template.unwrap_or_else(|err| panic!("{}: {err}", e.path));
+        let text = cruncha_templates::write(&t).unwrap();
+        let back = cruncha_templates::parse(&text).unwrap_or_else(|err| panic!("{}: {err}\n{text}", e.path));
+        assert_eq!(back, t, "{} doesn't write back as itself:\n{text}", e.path);
+    }
+}

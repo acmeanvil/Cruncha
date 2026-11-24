@@ -39,7 +39,8 @@
     "resources": {
       "../../python/cruncha_worker/*.py": "python/cruncha_worker/",
       "../../python/cruncha/*.py": "python/cruncha/",
-      "../../skills/": "skills/"
+      "../../skills/": "skills/",
+      "../../templates/": "templates/"
     }
   }
 }

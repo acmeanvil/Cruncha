@@ -87,9 +87,9 @@
   let bottomOpen = $state(false);
   let functions = $state(false);
   /** Which tab of the reference panel is showing. */
-  let refTab = $state<"functions" | "units">("functions");
+  let refTab = $state<"functions" | "units" | "templates">("functions");
   /** Open the reference panel on `tab`, or close it if it's already showing there. */
-  function reference(tab: "functions" | "units") {
+  function reference(tab: "functions" | "units" | "templates") {
     if (functions && refTab === tab) functions = false;
     else {
       refTab = tab;
@@ -487,6 +487,10 @@
       e.preventDefault();
       reference("units");
     }
+    if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
+      e.preventDefault();
+      reference("templates");
+    }
     // Tabs (ADR-0024): ⌘T opens a document in a new tab; ⌘⇧[ and ⌘⇧] switch.
     if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault();
@@ -665,6 +669,7 @@
             onproposal={showProposals}
             onfunctions={() => reference("functions")}
             onunits={() => reference("units")}
+            ontemplates={() => reference("templates")}
             origin={doc ? `document:${doc.id}@v${selected.kind === "version" ? selected.version : doc.version}` : null}
             docId={doc?.id ?? null}
             stashKey={doc && selected.kind === "latest" ? `${doc.id}@${doc.version}` : null}
@@ -682,7 +687,14 @@
         />
       {/if}
       {#if functions}
-        <FunctionReference {editable} bind:tab={refTab} oninsert={(t, back) => editor?.insertInCalc(t, back)} onclose={() => (functions = false)} />
+        <FunctionReference
+          {editable}
+          bind:tab={refTab}
+          oninsert={(t, back) => editor?.insertInCalc(t, back)}
+          oninserttemplate={(t) => editor?.insertTemplate(t)}
+          selection={() => editor?.selectedCells() ?? []}
+          onclose={() => (functions = false)}
+        />
       {/if}
     </div>
     <BottomPanel

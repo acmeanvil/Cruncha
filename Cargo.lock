@@ -1832,6 +1832,7 @@ dependencies = [
  "cruncha-prose",
  "cruncha-report",
  "cruncha-store",
+ "cruncha-templates",
  "cruncha-units",
  "futures",
  "keyring",

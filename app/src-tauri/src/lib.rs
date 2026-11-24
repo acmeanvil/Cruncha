@@ -17,6 +17,7 @@ mod agents;
 mod connection;
 mod engine;
 mod figures;
+mod library;
 mod login_path;
 mod proposals;
 mod python;
@@ -129,6 +130,17 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 
 /// The in-app agent panel for the open document.
 type PanelState = std::sync::Arc<Mutex<agent_panel::Panel>>;
+
+/// The built-in templates (ADR-0014 §4): the bundled resources, or the repository's `templates/`.
+fn templates_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(res) = app.path().resource_dir() {
+        let d = res.join("templates");
+        if d.is_dir() {
+            return d;
+        }
+    }
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates"))
+}
 
 /// Cruncha's skills: `CRUNCHA_SKILLS_DIR`, the bundled resources, or the repository's `skills/`.
 fn skills_dir(app: &AppHandle) -> PathBuf {
@@ -945,6 +957,101 @@ async fn clear_results(doc: Option<String>, s: State<'_, Shared>) -> Result<DocI
     s.lock().await.on(doc.as_deref())?.clear_results().await
 }
 
+// ---------------------------------------------------------------------------------------
+// Templates and snippets (ADR-0014 §4, §5)
+
+/// Both template libraries, the user's first.
+#[tauri::command]
+async fn templates(s: State<'_, Shared>) -> Result<Vec<library::TemplateSummary>> {
+    Ok(s.lock().await.templates())
+}
+
+/// One template: its cells, references, validation and worked examples.
+#[tauri::command]
+async fn template(key: String, s: State<'_, Shared>) -> Result<library::TemplateDetail> {
+    s.lock().await.template(&key)
+}
+
+/// Save cells from the editor as a new snippet; returns its key.
+#[tauri::command]
+async fn template_save(details: library::Details, cells: Vec<library::CellView>, s: State<'_, Shared>) -> Result<String> {
+    s.lock().await.library().save_snippet(&details, &cells)
+}
+
+/// Replace a snippet's cells with the editor's selection.
+#[tauri::command]
+async fn template_update_cells(key: String, cells: Vec<library::CellView>, s: State<'_, Shared>) -> Result<String> {
+    s.lock().await.library().update_cells(&key, &cells)
+}
+
+/// Change a snippet's title, summary, category and tags; returns its (new) key.
+#[tauri::command]
+async fn template_update_details(key: String, details: library::Details, s: State<'_, Shared>) -> Result<String> {
+    s.lock().await.library().update_details(&key, &details)
+}
+
+#[tauri::command]
+async fn template_duplicate(key: String, s: State<'_, Shared>) -> Result<String> {
+    s.lock().await.library().duplicate(&key)
+}
+
+/// Move a snippet to the library's trash.
+#[tauri::command]
+async fn template_delete(key: String, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.library().delete(&key)
+}
+
+#[tauri::command]
+async fn template_hide(id: String, hidden: bool, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.hide_template(&id, hidden)
+}
+
+#[tauri::command]
+async fn template_trash(s: State<'_, Shared>) -> Result<Vec<library::TrashedView>> {
+    Ok(s.lock().await.library().trash())
+}
+
+#[tauri::command]
+async fn template_restore(name: String, s: State<'_, Shared>) -> Result<String> {
+    s.lock().await.library().restore(&name)
+}
+
+#[tauri::command]
+async fn template_empty_trash(s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.library().empty_trash()
+}
+
+/// Copy `.cruncha.md` files into the user's library.
+#[tauri::command]
+async fn template_import(paths: Vec<PathBuf>, s: State<'_, Shared>) -> Result<Vec<String>> {
+    s.lock().await.library().import(&paths)
+}
+
+/// Copy a template's file out.
+#[tauri::command]
+async fn template_export(key: String, dest: PathBuf, s: State<'_, Shared>) -> Result<()> {
+    s.lock().await.library().export(&key, &dest)
+}
+
+#[tauri::command]
+async fn library_info(s: State<'_, Shared>) -> Result<session::LibraryInfo> {
+    Ok(s.lock().await.library_info())
+}
+
+/// Keep the user's library in another folder (`None`: the default).
+#[tauri::command]
+async fn set_library_dir(dir: Option<String>, s: State<'_, Shared>) -> Result<session::LibraryInfo> {
+    s.lock().await.set_library_dir(dir)
+}
+
+/// Show the user's library folder in Finder (made if it doesn't exist yet).
+#[tauri::command]
+async fn library_reveal(s: State<'_, Shared>) -> Result<()> {
+    let dir = s.lock().await.library().user;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    open_path(dir)
+}
+
 pub fn run() {
     // Opened from Finder: take the login shell's PATH, so agents and tools are found.
     login_path::adopt_login_path();
@@ -958,7 +1065,8 @@ pub fn run() {
             let mut session = Session::new(Some(prefs))
                 .with_python(python, worker_dir(app))
                 .with_rust(app.path().app_data_dir()?.join("rust"))
-                .with_figure_cache(app.path().app_cache_dir()?.join("figures"));
+                .with_figure_cache(app.path().app_cache_dir()?.join("figures"))
+                .with_library(templates_dir(app.handle()), app.path().app_data_dir()?.join("library"));
             let handle = app.handle().clone();
             session.on_results(move |ev| {
                 let doc_id = ev.doc_id.clone();
@@ -1091,6 +1199,22 @@ pub fn run() {
             open_path,
             open_url,
             markdown_cells,
+            templates,
+            template,
+            template_save,
+            template_update_cells,
+            template_update_details,
+            template_duplicate,
+            template_delete,
+            template_hide,
+            template_trash,
+            template_restore,
+            template_empty_trash,
+            template_import,
+            template_export,
+            library_info,
+            set_library_dir,
+            library_reveal,
             agent_server_status,
             agent_server_start,
             agent_server_stop,

@@ -96,6 +96,12 @@ pub struct Prefs {
     pub open_tabs: Vec<String>,
     #[serde(default)]
     pub active_tab: Option<String>,
+    /// The user's template library (ADR-0014 §4); `None`: `<app data>/library/`.
+    #[serde(default)]
+    pub library_dir: Option<String>,
+    /// Built-in templates the user hid, by id.
+    #[serde(default)]
+    pub hidden_templates: Vec<String>,
 }
 
 /// A document's own settings, kept in its meta cell (so they are versioned like any edit).
@@ -389,6 +395,20 @@ pub struct Session {
     on_results: Option<Arc<dyn Fn(ResultsEvent) + Send + Sync>>,
     /// Told (with the document id) when proposals change, also when an agent made them.
     on_proposals: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    /// The built-in templates, and the user's library unless the preferences say otherwise.
+    templates_builtin: PathBuf,
+    library_default: PathBuf,
+}
+
+/// Where the template libraries are (Settings).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryInfo {
+    pub dir: String,
+    pub default_dir: String,
+    /// The preferences set `dir` (it isn't the default).
+    pub custom: bool,
+    pub builtin_dir: String,
 }
 
 impl Session {
@@ -412,7 +432,63 @@ impl Session {
             figures: crate::figures::Cache::new(std::env::temp_dir().join("cruncha-figures")),
             on_results: None,
             on_proposals: None,
+            templates_builtin: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../templates")),
+            library_default: std::env::temp_dir().join("cruncha-library"),
         }
+    }
+
+    /// The built-in templates in `builtin`; the user's library in `user` unless the
+    /// preferences set another folder.
+    pub fn with_library(mut self, builtin: PathBuf, user: PathBuf) -> Session {
+        self.templates_builtin = builtin;
+        self.library_default = user;
+        self
+    }
+
+    /// The two template libraries (ADR-0014 §4).
+    pub fn library(&self) -> crate::library::Library {
+        let user = self.prefs.library_dir.as_deref().filter(|d| !d.trim().is_empty()).map(PathBuf::from);
+        crate::library::Library { builtin: self.templates_builtin.clone(), user: user.unwrap_or_else(|| self.library_default.clone()) }
+    }
+
+    pub fn library_info(&self) -> LibraryInfo {
+        let l = self.library();
+        LibraryInfo {
+            dir: l.user.display().to_string(),
+            default_dir: self.library_default.display().to_string(),
+            custom: l.user != self.library_default,
+            builtin_dir: l.builtin.display().to_string(),
+        }
+    }
+
+    /// Keep the user's library in `dir` (`None`: the default folder).
+    pub fn set_library_dir(&mut self, dir: Option<String>) -> Result<LibraryInfo> {
+        let mut prefs = self.prefs.clone();
+        prefs.library_dir = dir.filter(|d| !d.trim().is_empty() && Path::new(d) != self.library_default);
+        self.set_prefs(prefs)?;
+        Ok(self.library_info())
+    }
+
+    fn hidden_templates(&self) -> BTreeSet<String> {
+        self.prefs.hidden_templates.iter().cloned().collect()
+    }
+
+    pub fn templates(&self) -> Vec<crate::library::TemplateSummary> {
+        self.library().list(&self.hidden_templates())
+    }
+
+    pub fn template(&self, key: &str) -> Result<crate::library::TemplateDetail> {
+        self.library().detail(key, &self.hidden_templates())
+    }
+
+    /// Hide a built-in template from the Templates tab, or show it again.
+    pub fn hide_template(&mut self, id: &str, hidden: bool) -> Result<()> {
+        let mut prefs = self.prefs.clone();
+        prefs.hidden_templates.retain(|x| x != id);
+        if hidden {
+            prefs.hidden_templates.push(id.to_owned());
+        }
+        self.set_prefs(prefs)
     }
 
     /// Keep figures' static renderings (ADR-0017 §4) in `dir`.

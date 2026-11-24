@@ -88,3 +88,20 @@ fn front_matter_errors_say_where() {
     assert!(parse("+++\nid = 1\n").unwrap_err().contains("ends with a +++"));
     assert!(parse("+++\ncruncha-template = 1\nid = \"a\"\nversion = \"1.0.0\"\ntitle = \"t\"\ncolour = \"red\"\n+++\n").unwrap_err().contains("colour"));
 }
+
+#[test]
+fn a_written_snippet_reads_back_with_its_inputs() {
+    let cells = vec![
+        Cell::Prose { source: r#"{"type":"paragraph","content":[{"type":"text","text":"Load \"case\" A"}]}"#.into() },
+        Cell::Calc { source: "w = 2 kN/m_".into(), description: Some(r#"Uniform "dead" load \ per `metre`"#.into()) },
+        Cell::Calc { source: "L = 6 m_".into(), description: None },
+        Cell::Calc { source: "M = w L^2 / 8 = ?? kN·m".into(), description: None },
+        Cell::Code { lang: "python".into(), source: "s = \"```\"\nprint(s)".into(), description: None },
+    ];
+    assert_eq!(cruncha_templates::placeholder_inputs(&cells), ["w", "L"]);
+    let manifest = parse("+++\ncruncha-template = 1\nid = \"user.load\"\nversion = \"1.0.0\"\ntitle = \"Load\"\n+++\n").unwrap().manifest;
+    let t = cruncha_templates::Template { manifest, cells };
+    let text = cruncha_templates::write(&t).unwrap();
+    assert!(!text.contains("inputs ="), "empty lists aren't written:\n{text}");
+    assert_eq!(parse(&text).unwrap(), t, "{text}");
+}

@@ -6,11 +6,11 @@
   import { EditorState, NodeSelection, Plugin, TextSelection } from "prosemirror-state";
   import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
   import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
-  import type { Cell, CellResult, CommitView } from "./api";
+  import type { Cell, CellResult, CommitView, TemplateCell, TemplateDetail } from "./api";
   import { CalcView } from "./editor/calcView";
   import { CodeView } from "./editor/codeView";
   import { api } from "./api";
-  import { cellToNode, docFromCells, withDescription } from "./editor/cells";
+  import { cellToNode, docFromCells, nodeToContent, withDescription } from "./editor/cells";
   import { markdownPaste } from "./editor/paste";
   import { adaptPasted, pastedCells, plainText, stampOrigin, withSources } from "./editor/clipboard";
   import PasteClashDialog, { type Choice, type Clash } from "./PasteClashDialog.svelte";
@@ -44,6 +44,7 @@
     onproposal,
     onfunctions,
     onunits,
+    ontemplates,
     origin = null,
     docId = null,
     stashKey = null,
@@ -64,6 +65,8 @@
     onfunctions?: () => void;
     /** The toolbar's units button. */
     onunits?: () => void;
+    /** The toolbar's templates button. */
+    ontemplates?: () => void;
     /** The shown document version (`document:<id>@v<n>`): copied cells carry it (ADR-0024). */
     origin?: string | null;
     /** The document shown: saves and runs go to it, whichever tab is active (ADR-0024). */
@@ -104,6 +107,95 @@
     } catch (e) {
       clash = { ...c, error: String(e) };
     }
+  }
+
+  /** A template waiting on the clash dialog (ADR-0014 §3). */
+  let templateClash = $state<{ t: TemplateDetail; clashes: Clash[]; error: string | null } | null>(null);
+
+  const CODE = new Set(["calc", "python", "rust"]);
+
+  /**
+   * Insert a template (ADR-0014 §3) after the current block: its names are checked against
+   * the document's first, and any that clash are renamed or (inputs only) bound to the
+   * document's own value. The cells commit as one version, "Insert template <title> <version>",
+   * each Imported from `template:<id>@<version>`. Code cells arrive not run.
+   */
+  export async function insertTemplate(t: TemplateDetail) {
+    if (!view || !editable) return;
+    const code = t.cells.filter((c) => CODE.has(c.kind)).map((c) => ({ kind: c.kind, source: c.source }));
+    let clashes: Clash[] = [];
+    try {
+      clashes = code.length ? await api.pasteClashes(code, docId ?? undefined) : [];
+    } catch (e) {
+      onerror?.(`Couldn't check the template's names: ${e}`);
+      return;
+    }
+    if (clashes.length === 0) await placeTemplate(t, t.cells);
+    else templateClash = { t, clashes, error: null };
+  }
+
+  async function finishTemplate(choices: Choice[]) {
+    if (!templateClash) return;
+    const pending = templateClash;
+    const { t, clashes } = pending;
+    const names: Record<string, string> = {};
+    for (const ch of choices) if (ch.rename && ch.rename !== ch.name) names[ch.name] = ch.rename;
+    const kept = new Set(choices.filter((ch) => ch.rename == null).map((ch) => ch.name));
+    const code = t.cells.filter((c) => CODE.has(c.kind));
+    try {
+      const renamed = Object.keys(names).length
+        ? await api.renameCells(code.map((c) => ({ kind: c.kind, source: c.source })), names, docId ?? undefined)
+        : code.map((c) => c.source);
+      // An input that uses the document's value leaves its definition out.
+      const out: TemplateCell[] = [];
+      let k = 0;
+      for (const c of t.cells) {
+        if (!CODE.has(c.kind)) {
+          out.push(c);
+          continue;
+        }
+        const i = k++;
+        const its = clashes.filter((x) => x.cells.includes(i));
+        if (its.length > 0 && its.every((x) => kept.has(x.name))) continue;
+        out.push({ ...c, source: renamed[i] });
+      }
+      templateClash = null;
+      await placeTemplate(t, out);
+    } catch (e) {
+      templateClash = { ...pending, error: String(e) };
+    }
+  }
+
+  async function placeTemplate(t: TemplateDetail, cells: TemplateCell[]) {
+    if (!view) return;
+    const nodes = cells.map((c) => cellToNode({ id: null, order_key: null, kind: c.kind, source: c.source, attrs: c.attrs ?? {} } as unknown as Cell));
+    if (nodes.length === 0) return;
+    await sync.insertAs(`template:${t.id}@${t.version}`, `Insert template ${t.title} ${t.version}`, () => {
+      const v = view!;
+      const { pos, node: cur } = currentBlock(v.state);
+      const empty = cur.type === schema.nodes.paragraph && cur.content.size === 0;
+      const at = empty ? pos : pos + cur.nodeSize;
+      const tr = empty ? v.state.tr.replaceWith(pos, pos + cur.nodeSize, nodes) : v.state.tr.insert(at, nodes);
+      v.dispatch(tr.scrollIntoView());
+      (v.nodeDOM(at) as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
+  /** The whole blocks the selection touches (the current block when nothing is selected), as
+   *  a snippet's cells (ADR-0014 §5, Save as snippet). */
+  export function selectedCells(): TemplateCell[] {
+    if (!view) return [];
+    const { doc, selection } = view.state;
+    const { from: a, to: b, empty } = selection;
+    const out: TemplateCell[] = [];
+    doc.forEach((n, pos) => {
+      const end = pos + n.nodeSize;
+      const touched = empty ? pos <= a && a < end : pos < b && end > a;
+      if (!touched || (n.type === schema.nodes.paragraph && n.content.size === 0)) return;
+      const c = nodeToContent(n);
+      out.push({ kind: c.kind, source: c.source, attrs: (c.attrs as Record<string, unknown>) ?? {} });
+    });
+    return out;
   }
 
   /** Editor states of tabs that aren't showing, by `stashKey`. */
@@ -549,6 +641,19 @@
 {#if clash}
   <PasteClashDialog clashes={clash.clashes} error={clash.error} onpaste={finishPaste} oncancel={() => (clash = null)} />
 {/if}
+{#if templateClash}
+  {@const inputs = new Set(templateClash.t.inputs)}
+  <PasteClashDialog
+    title="Names in “{templateClash.t.title}” are already defined"
+    what="template"
+    action="Insert"
+    canUse={(n) => inputs.has(n)}
+    clashes={templateClash.clashes}
+    error={templateClash.error}
+    onpaste={finishTemplate}
+    oncancel={() => (templateClash = null)}
+  />
+{/if}
 
 {#if editable}
   <div class="tools" role="toolbar" aria-label="Insert" bind:this={toolsEl}>
@@ -563,6 +668,9 @@
     {/if}
     {#if onunits}
       <button onclick={onunits} title="Units: lengths, forces, pressures… (⌘⇧U)">Units</button>
+    {/if}
+    {#if ontemplates}
+      <button onclick={ontemplates} title="Templates and snippets: insert a checked calculation, or save cells as a snippet (⌘⇧T)">Templates</button>
     {/if}
     <span class="sep"></span>
     <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>

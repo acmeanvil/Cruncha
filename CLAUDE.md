@@ -36,7 +36,8 @@ crates/cruncha-prose/      prose cells: the stored ProseMirror JSON (one block: 
 crates/cruncha-templates/  templates and snippets (ADR-0014): the `<id>.cruncha.md` format (TOML front matter + Markdown cells via cruncha-prose), validate, run_tests
                            (run_tests_with: code cells through a CodeRunner; tests/support/py.rs runs them on the real worker); examples/check.rs checks files while writing them
                            (worked examples evaluated with cruncha-eval, compared in SI); tests/library.rs checks every built-in template under templates/
-templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md
+                           write (a template back to its file) and load_dir (a library folder) for the app's library
+templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md (bundled with the app as a resource)
 crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluation order, duplicate names, cycles, use-above-definition lint, affected cells
 crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing, sandbox.rs (macOS profile),
                            env.rs (uv + python-build-standalone environment per lockfile); examples/setup_env.rs, examples/py_bench.rs (S4)
@@ -89,11 +90,13 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
                            outline.ts and variables.ts (sidebar models), figures.ts (ADR-0017/0020: sanitizer, sandboxed FigureFrame, report drawing)
   src/lib/*.svelte         Sidebar (Outline, History tabs), HistoryPanel (versions grouped by snapshot, "Rev A · 3": history.ts), SnapshotDialog,
                            BottomPanel (full width, ⌘J: Variables = VariableTable + VariableInspector (head/tail of frames from the engine's `Preview`), Proposals = ProposalsPanel),
-                           FunctionReference (⌘⇧F; functionRef.ts; inserts into the calc being edited) with a Units tab (⌘⇧U; UnitReference, unitRef.ts),
+                           FunctionReference (⌘⇧F; functionRef.ts; inserts into the calc being edited) with a Units tab (⌘⇧U; UnitReference, unitRef.ts)
+                           and a Templates tab (⌘⇧T; TemplateLibrary, templateRef.ts, SnippetDialog, LibraryDialog: ADR-0014 insert, snippets, trash),
                            RetentionControl, SettingsPage (this computer: agents, connections, agents outside Cruncha, defaults, report style,
                            Python, trusted documents; ⌘,), DocumentSettings (tabs: Document, Report, History; kept in the document), …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
                            src/python.rs the document's two workers (runner, scanner) and the background run loop (`results` events),
+                           src/library.rs the template libraries (ADR-0014: built-in read-only, the user's folder; save, update, duplicate, trash, import, export),
                            src/rename.rs renames in pasted or copied cells (ADR-0024: calcs lexically, Python by the worker's tokenizer, Rust by proc_macro2; every rename re-scanned and checked),
                            src/proposals.rs agents' edits → proposals, apply/what-if, staleness, key_between (the editor's keyBetween), cards,
                            src/stored.rs stored results (ADR-0018): look up before running, flush finished runs, trim after a prune,
