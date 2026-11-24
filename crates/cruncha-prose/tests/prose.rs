@@ -155,3 +155,23 @@ fn a_group_describes_each_calc_on_the_line_before_it() {
         [("A_n = 2 in²_", Some("Internal thread shear area")), ("B = 3", None), ("A_s = 3 in²_", Some("External thread shear area"))]
     );
 }
+
+#[test]
+fn a_data_frame_or_a_function_keeps_its_lines() {
+    let md = "```calc\n> Grades\nmat = ``#grade\tF_y\n\tksi\nA36\t36`` = !\nfunction f(x)\n    if x > 1\n        return 2\n    end\n    return 1\nend\ny = f(3) = ?\n```\n";
+    let got: Vec<String> = from_markdown(md)
+        .into_iter()
+        .map(|p| match p {
+            Piece::Calc { source, .. } => source,
+            p => panic!("{p:?}"),
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "mat = ``#grade\tF_y\n\tksi\nA36\t36`` = !",
+            "function f(x)\n    if x > 1\n        return 2\n    end\n    return 1\nend",
+            "y = f(3) = ?"
+        ]
+    );
+}

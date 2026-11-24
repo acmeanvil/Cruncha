@@ -44,6 +44,12 @@ pub fn rename_calc(source: &str, names: &BTreeMap<String, String>, reads: &BTree
             while i < chars.len() && (i == start || is_part(chars[i])) {
                 i += 1;
             }
+            // A parenthesized subscript is part of the name: `X_(CO2,dry)`.
+            if chars[i - 1] == '_' && chars.get(i) == Some(&'(')
+                && let Some(close) = chars[i..].iter().position(|&c| c == ')')
+            {
+                i += close + 1;
+            }
             let word: String = chars[start..i].iter().collect();
             let before = chars[..start].iter().rev().find(|c| !c.is_whitespace()).copied();
             let after_number = before.is_some_and(|b| b.is_ascii_digit());
@@ -128,6 +134,8 @@ mod tests {
         assert_eq!(rename_calc("A = beam.area = ?", &names, &set(&["beam"])), "A = beam.area = ?");
         assert_eq!(rename_calc("s = \"M\" & string(M) = ?", &names, &set(&["M"])), "s = \"M\" & string(M_2) = ?");
         assert_eq!(rename_calc("Mσ = M + σ = ?", &names, &set(&["M", "σ"])), "Mσ = M_2 + σ = ?");
+        let sub = map(&[("X_(CO2,dry)", "X2_(CO2,dry)"), ("X", "X2")]);
+        assert_eq!(rename_calc("y = X_(CO2,dry) + X = ?", &sub, &set(&["X_(CO2,dry)", "X"])), "y = X2_(CO2,dry) + X2 = ?");
     }
 
     #[test]

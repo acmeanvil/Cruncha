@@ -11,8 +11,9 @@
 //! Snippets use the same format with only `id`, `version` and `title` required.
 //!
 //! This crate reads the format ([`parse`]), checks it ([`validate`]) and runs its worked
-//! examples with Cruncha's own calc engine ([`run_tests`]). Inserting a template into a
-//! document (renames, provenance) is the app's (ADR-0014 §3).
+//! examples with Cruncha's own calc engine ([`run_tests`]; code cells through a
+//! [`CodeRunner`], [`run_tests_with`]). Inserting a template into a document (renames,
+//! provenance) is the app's (ADR-0014 §3).
 
 use std::collections::BTreeMap;
 
@@ -92,6 +93,31 @@ pub struct TestCase {
     /// `"pass"`: every `@test` holds; `"fail"`: at least one doesn't.
     #[serde(default)]
     pub checks: Option<String>,
+    /// How many figures the code cells show (ADR-0017).
+    #[serde(default)]
+    pub figures: Option<usize>,
+}
+
+/// Runs a template's code cells for its worked examples. The library test gives it a real
+/// Python worker; without one, templates with code cells are skipped.
+pub trait CodeRunner {
+    /// Start a test case afresh (no names left from the last one).
+    fn reset(&mut self) -> Result<(), String>;
+    /// What the cell defines and reads.
+    fn scan(&mut self, lang: &str, source: &str) -> Result<(Vec<String>, Vec<String>), String>;
+    /// Run the cell. `inputs` are the calc values it reads; `code_inputs` are names it reads
+    /// that earlier code cells defined (already in the worker).
+    fn run(&mut self, lang: &str, source: &str, defines: &[String], inputs: BTreeMap<String, Plain>, code_inputs: Vec<String>)
+    -> Result<CodeOutcome, String>;
+}
+
+/// What a code cell gave back.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CodeOutcome {
+    /// Each name it defined that converts to a calc value.
+    pub defined: BTreeMap<String, Plain>,
+    /// How many figures it showed.
+    pub figures: usize,
 }
 
 /// One cell of a template, without an id or order key (those are made on insert).
@@ -122,7 +148,15 @@ pub fn parse(text: &str) -> Result<Template, String> {
         .or_else(|| rest.find("\n+++\r\n"))
         .or_else(|| rest.strip_suffix("\n+++").map(|r| r.len()))
         .ok_or("the front matter ends with a +++ line")?;
-    let manifest: Manifest = toml::from_str(&rest[..end]).map_err(|e| format!("front matter: {e}"))?;
+    let mut manifest: Manifest = toml::from_str(&rest[..end]).map_err(|e| format!("front matter: {e}"))?;
+    // Names as a calc reads them: `λ_1` is `λ₁` (a trailing numeric subscript).
+    let name = |n: &String| cruncha_lang::hurmet::check_for_numeric_subscript(n);
+    manifest.inputs = manifest.inputs.iter().map(name).collect();
+    manifest.outputs = manifest.outputs.iter().map(name).collect();
+    for t in &mut manifest.tests {
+        t.inputs = std::mem::take(&mut t.inputs).into_iter().map(|(k, v)| (name(&k), v)).collect();
+        t.expect = std::mem::take(&mut t.expect).into_iter().map(|(k, v)| (name(&k), v)).collect();
+    }
     let body = rest[end + 4..].trim_start_matches(['\r', '\n']);
     let cells = cruncha_prose::from_markdown(body)
         .into_iter()
@@ -278,8 +312,13 @@ fn si(v: &cruncha_eval::Value) -> Option<(f64, Vec<f64>)> {
 
 /// Run every worked example: each test's inputs replace the placeholders, the calcs are
 /// evaluated in order, and the expected outputs are compared in SI within the tolerance.
-/// Templates with code cells are skipped here (the app's tests run them with real workers).
+/// Templates with code cells are skipped (see [`run_tests_with`]).
 pub fn run_tests(t: &Template) -> Vec<TestReport> {
+    run_tests_with(t, None)
+}
+
+/// [`run_tests`], with code cells run by `runner` in document order between the calcs.
+pub fn run_tests_with(t: &Template, mut runner: Option<&mut dyn CodeRunner>) -> Vec<TestReport> {
     let has_code = t.cells.iter().any(|c| matches!(c, Cell::Code { .. }));
     let defines = calc_defines(t);
     let o = opts();
@@ -287,19 +326,61 @@ pub fn run_tests(t: &Template) -> Vec<TestReport> {
         .tests
         .iter()
         .map(|case| {
-            if has_code {
+            if has_code && runner.is_none() {
                 return TestReport {
                     name: case.name.clone(),
                     passed: false,
                     lines: Vec::new(),
-                    skipped: Some("the template has code cells; the app's tests run it".into()),
+                    skipped: Some("the template has code cells and no worker was given".into()),
                 };
             }
             let mut lines = Vec::new();
             let mut passed = true;
             let mut vars = Vars::new();
             let mut checks: Vec<(String, Option<bool>)> = Vec::new();
+            let mut figures = 0;
+            let mut code_names: Vec<String> = Vec::new();
+            if let Some(r) = runner.as_deref_mut()
+                && let Err(e) = r.reset()
+            {
+                passed = false;
+                lines.push(format!("the worker didn't reset: {e}"));
+            }
             for (i, c) in t.cells.iter().enumerate() {
+                if let (Cell::Code { lang, source, .. }, Some(r)) = (c, runner.as_deref_mut()) {
+                    let first = source.lines().next().unwrap_or_default();
+                    let ran = r.scan(lang, source).and_then(|(defs, reads)| {
+                        let mut inputs = BTreeMap::new();
+                        let mut from_code = Vec::new();
+                        for n in reads {
+                            if code_names.contains(&n) {
+                                from_code.push(n);
+                            } else if let Some(v) = vars.get(&n) {
+                                inputs.insert(n, v.to_plain());
+                            }
+                        }
+                        r.run(lang, source, &defs, inputs, from_code).map(|out| (defs, out))
+                    });
+                    match ran {
+                        Err(e) => {
+                            passed = false;
+                            lines.push(format!("{lang} cell \"{first}\": {e}"));
+                        }
+                        Ok((defs, out)) => {
+                            code_names.extend(defs);
+                            figures += out.figures;
+                            for (n, p) in out.defined {
+                                match cruncha_eval::Value::from_plain(&p) {
+                                    Ok(v) => {
+                                        vars.insert(n, v);
+                                    }
+                                    Err(e) => lines.push(format!("note: {n} from the {lang} cell isn't a calc value ({e})")),
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let Cell::Calc { source, .. } = c else { continue };
                 let defs = defines.iter().find(|(j, _)| *j == i).map(|(_, d)| d.as_slice()).unwrap_or(&[]);
                 let source = match defs {
@@ -353,6 +434,11 @@ pub fn run_tests(t: &Template) -> Vec<TestReport> {
                         lines.push(format!("FAIL {name}: the expected value {want:?} doesn't evaluate"));
                     }
                 }
+            }
+            if let Some(want) = case.figures {
+                let ok = figures == want;
+                passed &= ok;
+                lines.push(format!("{} figures: expected {want}, got {figures}", if ok { "ok" } else { "FAIL" }));
             }
             if let Some(want) = &case.checks {
                 let all = checks.iter().all(|(_, c)| *c == Some(true));

@@ -62,6 +62,51 @@ pub enum Piece {
     Calc { source: String, attrs: BTreeMap<String, String> },
 }
 
+/// A calc fence's statements: one per line, except that a data frame literal (` `` `… ` `` `)
+/// keeps its lines (tab-separated rows) until it closes, and `function …` keeps its lines to
+/// its matching `end`. A `>` line (a description) is returned as it is.
+fn calc_statements(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut open: Option<String> = None;
+    let mut depth = 0usize;
+    for raw in text.lines() {
+        let line = raw.trim_end();
+        if let Some(mut cur) = open.take() {
+            cur.push('\n');
+            cur.push_str(if depth > 0 { line } else { raw });
+            let in_literal = cur.matches("``").count() % 2 == 1;
+            if depth > 0 {
+                let word = line.split_whitespace().next().unwrap_or("");
+                match word {
+                    "if" | "while" | "for" => depth += 1,
+                    "end" => depth -= 1,
+                    _ => {}
+                }
+            }
+            if in_literal || depth > 0 {
+                open = Some(cur);
+            } else {
+                out.push(cur);
+            }
+            continue;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("function ") {
+            depth = 1;
+            open = Some(line.to_owned());
+        } else if line.matches("``").count() % 2 == 1 {
+            open = Some(line.to_owned());
+        } else {
+            out.push(line.to_owned());
+        }
+    }
+    out.extend(open);
+    out
+}
+
 /// A fence's info string: its language and `{key="value" key2=value2}` attributes
 /// (```` ```calc {description="Radial depth"} ````, ADR-0014).
 pub fn fence_info(info: &str) -> (String, BTreeMap<String, String>) {
@@ -524,8 +569,8 @@ impl Builder {
                         "calc" if self.at_root() => {
                             let mut attrs = Some(attrs);
                             let mut description: Option<String> = None;
-                            for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                                if let Some(d) = line.strip_prefix('>') {
+                            for source in calc_statements(&text) {
+                                if let Some(d) = source.strip_prefix('>') {
                                     description = Some(d.trim().to_owned());
                                     continue;
                                 }
@@ -533,7 +578,7 @@ impl Builder {
                                 if let Some(d) = description.take() {
                                     attrs.insert("description".to_owned(), d);
                                 }
-                                self.pieces.push(Piece::Calc { source: line.to_owned(), attrs });
+                                self.pieces.push(Piece::Calc { source, attrs });
                             }
                         }
                         _ => {

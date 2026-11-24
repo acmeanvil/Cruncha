@@ -217,7 +217,11 @@ pub(crate) fn compile(input: &str, ctx: &Ctx) -> Result<Compiled, String> {
                     };
                     lead_str = js_trim(&inner).to_string();
                 }
-                if lead_str.contains([',', ';']) {
+                // A single name first: `X_(CO2,dry)` has a comma in its subscript (Cruncha;
+                // Hurmet took any comma for a multiple assignment and refused the statement).
+                if is_identifier(&lead_str) {
+                    name = Names::One(check_for_numeric_subscript(&lead_str));
+                } else if lead_str.contains([',', ';']) {
                     let candidates: Vec<&str> = lead_str.split([',', ';']).collect();
                     for c in &candidates {
                         let c = js_trim(c);
@@ -231,8 +235,6 @@ pub(crate) fn compile(input: &str, ctx: &Ctx) -> Result<Compiled, String> {
                             .map(|e| check_for_numeric_subscript(js_trim(e)))
                             .collect(),
                     );
-                } else if is_identifier(&lead_str) {
-                    name = Names::One(check_for_numeric_subscript(&lead_str));
                 } else {
                     expression = main_str.clone();
                 }

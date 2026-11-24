@@ -40,7 +40,7 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 ## Names
 
 - Names can be Unicode with subscripts: `f_c′`, `ϕM_n`, `L_b`, `Δ_max`. Case and boldface matter.
-- **Each name is defined exactly once in the whole document** (ADR-0004). For a second check of the same quantity, use a qualified name (`M_u,2`, `V_u,end`), not a redefinition.
+- **Each name is defined exactly once in the whole document** (ADR-0004). For a second check of the same quantity, use a qualified name (`M_(u,2)`, `V_(u,end)`: a subscript with a comma goes in parentheses), not a redefinition. `M_u,2` is not one name.
 - Define inputs above their use. Upward references still compute, but they get a lint badge.
 
 ## Descriptions
@@ -51,7 +51,7 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 
 ## Data frames
 
-A literal data frame has headings in row 1, an optional **units row** in row 2, and data after that. `#` in the first heading makes column 1 the row key.
+A literal data frame has headings in row 1, an optional **units row** in row 2, and data after that. Leave a unitless column's entry in the units row empty: anything that isn't a unit (such as `1`) makes row 2 data, and every column loses its unit. `#` in the first heading makes column 1 the row key.
 
 ```
 beam = ``#name	A	Ix	weight

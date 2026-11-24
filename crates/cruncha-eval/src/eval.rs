@@ -1552,12 +1552,19 @@ pub(crate) fn eval_rpn(
                 | "in" | "∉" | "!in" | "∋" | "∌" | "⊂" | "⊄" | "⊃" | "⊅" => {
                     let o2 = pop!();
                     let o1 = pop!();
+                    // In a chain (`0 ≤ x ≤ 1`) the left side is the previous comparison's result;
+                    // its units are those of the previous right-hand operand (Cruncha; Hurmet
+                    // compared the result's missing unit and failed).
+                    let left = match &o_prev {
+                        Some(p) if o1.dtype & dt::BOOLEANFROMCOMPARISON != 0 => p,
+                        _ => &o1,
+                    };
                     if unit_aware
-                        && !(o1.dtype & dt::STRING != 0
+                        && !(left.dtype & dt::STRING != 0
                             || o2.dtype & dt::STRING != 0
-                            || o1.dtype == dt::NULL
+                            || left.dtype == dt::NULL
                             || o2.dtype == dt::NULL)
-                        && !units_are_compatible(o1.unit.get_expos(), o2.unit.get_expos())
+                        && !units_are_compatible(left.unit.get_expos(), o2.unit.get_expos())
                     {
                         return err0("UNIT_COMP");
                     }

@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Every built-in template (`templates/**/*.cruncha.md`) parses, validates, and passes its
-//! worked examples (ADR-0014 §6). Templates with code cells are run by the app's tests.
+//! worked examples (ADR-0014 §6). Code cells run on the real Python worker when the
+//! environment is set up (see `support/py.rs`); without it, those templates are skipped.
 
 use std::path::{Path, PathBuf};
+
+mod support {
+    pub mod py;
+}
 
 fn templates(dir: &Path, out: &mut Vec<PathBuf>) {
     for e in std::fs::read_dir(dir).unwrap() {
@@ -24,6 +29,10 @@ fn every_built_in_template_is_valid_and_passes_its_examples() {
     assert!(!files.is_empty(), "no templates under {}", root.display());
     let mut failures = Vec::new();
     let mut ids = std::collections::BTreeSet::new();
+    let mut py = support::py::PyRunner::start();
+    if py.is_none() {
+        eprintln!("no Python environment: templates with code cells are skipped");
+    }
     for f in &files {
         let name = f.strip_prefix(&root).unwrap().display().to_string();
         let t = match cruncha_templates::parse(&std::fs::read_to_string(f).unwrap()) {
@@ -45,7 +54,8 @@ fn every_built_in_template_is_valid_and_passes_its_examples() {
         if t.manifest.tests.is_empty() {
             failures.push(format!("{name}: a built-in template carries at least one worked example"));
         }
-        for r in cruncha_templates::run_tests(&t) {
+        let runner = py.as_mut().map(|r| r as &mut dyn cruncha_templates::CodeRunner);
+        for r in cruncha_templates::run_tests_with(&t, runner) {
             if r.skipped.is_none() && !r.passed {
                 failures.push(format!("{name}: test {:?}:\n    {}", r.name, r.lines.join("\n    ")));
             }

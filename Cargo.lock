@@ -1963,8 +1963,12 @@ name = "cruncha-templates"
 version = "0.0.1"
 dependencies = [
  "cruncha-eval",
+ "cruncha-kernel-py",
+ "cruncha-lang",
  "cruncha-prose",
  "serde",
+ "serde_json",
+ "tokio",
  "toml 1.2.1+spec-1.1.0",
 ]
 

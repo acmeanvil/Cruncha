@@ -34,6 +34,7 @@ crates/cruncha-lang/       Hurmet lexer + parser port (spike S1; MIT notice in L
 crates/cruncha-prose/      prose cells: the stored ProseMirror JSON (one block: paragraph, heading, list, quote, rule) as a tree, written back exactly as the editor writes it
                            (tests/fixtures/canonical.json, also checked by app's markdown.test.ts), Markdown in (pulldown-cmark; fenced calc/python/rust/tex become cells) and out
 crates/cruncha-templates/  templates and snippets (ADR-0014): the `<id>.cruncha.md` format (TOML front matter + Markdown cells via cruncha-prose), validate, run_tests
+                           (run_tests_with: code cells through a CodeRunner; tests/support/py.rs runs them on the real worker); examples/check.rs checks files while writing them
                            (worked examples evaluated with cruncha-eval, compared in SI); tests/library.rs checks every built-in template under templates/
 templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md
 crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluation order, duplicate names, cycles, use-above-definition lint, affected cells
@@ -126,7 +127,8 @@ cargo test  -p cruncha-units -p cruncha-eval   # Hurmet evaluator goldens (249/2
 cargo run   -p cruncha-eval --release --example eval_bench -- 300
 cargo test  -p cruncha-graph                   # graph rules; fast
 cargo test  -p cruncha-prose                   # prose JSON <-> tree <-> Markdown; fast
-cargo test  -p cruncha-templates               # the format, and every built-in template's worked examples
+cargo test  -p cruncha-templates               # the format, and every built-in template's worked examples (Python ones need the environment)
+cargo run   -p cruncha-templates --example check -- templates/…/<id>.cruncha.md   # one template's validation and worked examples
 cargo test  -p cruncha-report                  # TeX -> Typst corpus (371 strings) and converter tests
 cargo test  -p cruncha-mcp                     # MCP tools over real HTTP with rmcp's client; auth guard
 cargo test  -p cruncha-acp                     # ACP client against looking_glass's lg-agent demo (skips without it)

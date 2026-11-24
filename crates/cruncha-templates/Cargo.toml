@@ -8,5 +8,11 @@ license.workspace = true
 [dependencies]
 cruncha-prose = { path = "../cruncha-prose" }
 cruncha-eval = { path = "../cruncha-eval" }
+cruncha-lang = { path = "../cruncha-lang" }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
+
+[dev-dependencies]
+cruncha-kernel-py = { path = "../cruncha-kernel-py" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }

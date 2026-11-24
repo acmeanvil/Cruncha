@@ -203,3 +203,22 @@ fn vectors_matrices_and_frames() {
     assert_eq!(calc(&[plain, "a = p[1, 2:3] = ?"]).replace('\n', "/"), "``B\tC/2\t3``");
     assert_eq!(calc(&[plain, "a = p[\"x\"] = ?"]), "Error. Data frame does not have a column named x.");
 }
+
+#[test]
+fn chained_comparisons_check_units_pairwise() {
+    // The middle operand is compared with each side; plain numbers and units both work.
+    check(&[
+        ("0 ≤ 0.5 ≤ 1", "true"),
+        ("0 ≤ 1.5 ≤ 1", "false"),
+        ("1 'm' < 150 'cm' < 2 'm'", "true"),
+        ("1 'm' < 250 'cm' < 2 'm'", "false"),
+    ]);
+    assert_eq!(calc(&["a = 1 'm' < 150 'cm' < 2 's' = ?"]), "Error. Comparing incompatible units.");
+}
+
+#[test]
+fn a_subscript_with_a_comma_is_one_name_in_a_calculation() {
+    assert_eq!(calc(&["X_(CO2,dry) = 2 + 2 = ?", "y = X_(CO2,dry) + 1 = ?"]), "5");
+    // A multiple assignment still unpacks.
+    assert_eq!(calc(&["a, b = (1, 2) = ?", "c = a + b = ?"]), "3");
+}

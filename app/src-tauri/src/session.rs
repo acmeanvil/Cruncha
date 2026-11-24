@@ -584,8 +584,14 @@ impl Session {
         }
         // A suggestion reads the same in every language: `M2`, `M3`, … (in a calc `M_2` is
         // the name `M₂`, in Python `M_2`), or `x1_b`, `x1_c`, … for a name ending in a digit.
+        // A calc's parenthesized subscript takes the number inside: `X_(CO2,dry,2)`.
         for x in &mut out {
-            let candidates: Box<dyn Iterator<Item = String>> = if x.name.chars().last().is_some_and(char::is_numeric) {
+            let candidates: Box<dyn Iterator<Item = String>> = if let Some(open) =
+                x.name.strip_suffix(')').filter(|n| n.contains("_("))
+            {
+                let open = open.to_owned();
+                Box::new((2..).map(move |k| format!("{open},{k})")))
+            } else if x.name.chars().last().is_some_and(char::is_numeric) {
                 Box::new(('b'..='z').map(|c| format!("{}_{c}", x.name)))
             } else {
                 Box::new((2..).map(|k| format!("{}{k}", x.name)))

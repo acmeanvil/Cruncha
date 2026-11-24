@@ -37,6 +37,13 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | Data frames | A column name first in `df[…, …]` spanned the number of columns as rows; a column range looked up `columnMap[NaN]`; columns by a row of names were undefined; a selection's columns were keyed by the source's first headings; a frame without units printed a row of "undefined". | Each selects what it says; a missing column on a frame without row names says "no column named". |
 | `e` | Not a constant ("Variable e not found"). | Euler's number unless the document defines `e`; a definition wins and gets a warning (as for `j`). |
 
+## Statements
+
+| Statement | Hurmet | Cruncha |
+| --- | --- | --- |
+| A chained comparison, `0 ≤ x ≤ 1` (unit-aware) | "Comparing incompatible units", even for plain numbers: the second comparison checked the first one's result, which has no unit. | Each comparison checks its own pair: `x` against 0, then `x` against 1. |
+| A name with a comma in its subscript, `X_(CO2,dry) = … = ?` | Read as a multiple assignment (`a, b = …`) and refused; only a literal assignment worked. | One name, as the lexer reads it; a multiple assignment still needs names that are valid on their own. |
+
 ## Units (ADR-0022)
 
 - **A unit's own name wins.** Hurmet stripped a plural *s* and an SI prefix before looking a name up, so names in its own table were unknown: `Celsius`, `gauss`, `kilogram`, `kilobyte`, `centistoke`, `dekan` and `megaton TNT`. And `mas` (milliarcsecond) read as milli-annum. Cruncha looks up the whole name first, then the singular, then prefixes.
