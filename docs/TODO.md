@@ -10,7 +10,7 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 | --- | --- | --- | --- |
 | 0024 | 5. (rest) Agent-panel conversations listed per tab (the panel shows the running one and notes its tab) | **Partial** | |
 | 0014 | 2. `cruncha-templates`: the format, validation, preview, the test runner | Partial | Done: format, validation, test runner (calcs and Python). Left: preview, Rust cells in tests, CI |
-| 0014 | 7. Convert Lacewing Lab section by section; the gap templates (uncertainty, atmosphere and moist air, chemistry) | Started | Mechanical first, a group per change: Stress and failure, Strain measurement and Fastening done (47 templates); next Springs. Research 02 §5 tracks it |
+| 0014 | 7. Convert Lacewing Lab section by section; the gap templates (uncertainty, atmosphere and moist air, chemistry) | Started | Mechanical first, a group per change: Stress and failure, Strain measurement, Fastening and Springs done (61 templates); next Pressure vessels. Research 02 §5 tracks it |
 | 0021 | 5. Recent-version time travel: tombstone expiry (needs its own ADR) against checkpointing more often, on a quiet machine | Not started | |
 
 ## Later

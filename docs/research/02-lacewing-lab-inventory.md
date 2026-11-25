@@ -839,13 +839,13 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 
 <!-- status:begin (scripts/lacewing-status.py writes this table) -->
 
-29 of 286 calculators have at least one template (56 templates).
+39 of 286 calculators have at least one template (70 templates).
 
 | Section | Calculators | With templates |
 |---|---|---|
 | Materials | 10 | 0 |
 | Geometry | 6 | 1 |
-| Mechanical engineering | 101 | 23 |
+| Mechanical engineering | 101 | 33 |
 | Machining | 7 | 0 |
 | Structural engineering | 30 | 4 |
 | Thermal engineering | 18 | 0 |
@@ -894,16 +894,16 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Mechanical engineering | `mechanical.weldCapacity` | Templates | `mechanical.weldCapacity.fillet`, `mechanical.weldCapacity.filletFatigue` |
 | Mechanical engineering | `mechanical.intermittentWelds` | Templates | `mechanical.intermittentWelds.lengthPitch` |
 | Mechanical engineering | `mechanical.adhesiveJoints` | Templates | `mechanical.adhesiveJoints.doubleLap`, `mechanical.adhesiveJoints.singleLap` |
-| Mechanical engineering | `mechanical.compressionSprings` | Not started |  |
-| Mechanical engineering | `mechanical.extensionSprings` | Not started |  |
-| Mechanical engineering | `mechanical.torsionSprings` | Not started |  |
-| Mechanical engineering | `mechanical.discSprings` | Not started |  |
-| Mechanical engineering | `mechanical.waveSprings` | Not started |  |
-| Mechanical engineering | `mechanical.conicalSprings` | Not started |  |
-| Mechanical engineering | `mechanical.flatSprings` | Not started |  |
-| Mechanical engineering | `mechanical.spiralSprings` | Not started |  |
-| Mechanical engineering | `mechanical.leafSprings` | Not started |  |
-| Mechanical engineering | `mechanical.torsionBars` | Not started |  |
+| Mechanical engineering | `mechanical.compressionSprings` | Templates | `mechanical.compressionSprings.fatigue`, `mechanical.compressionSprings.static` |
+| Mechanical engineering | `mechanical.extensionSprings` | Templates | `mechanical.extensionSprings.fatigue`, `mechanical.extensionSprings.static` |
+| Mechanical engineering | `mechanical.torsionSprings` | Templates | `mechanical.torsionSprings.helical` |
+| Mechanical engineering | `mechanical.discSprings` | Templates | `mechanical.discSprings.single`, `mechanical.discSprings.stack` |
+| Mechanical engineering | `mechanical.waveSprings` | Templates | `mechanical.waveSprings.smalley` |
+| Mechanical engineering | `mechanical.conicalSprings` | Templates | `mechanical.conicalSprings.uniformPitch` |
+| Mechanical engineering | `mechanical.flatSprings` | Templates | `mechanical.flatSprings.table19` |
+| Mechanical engineering | `mechanical.spiralSprings` | Templates | `mechanical.spiralSprings.uniformBending` |
+| Mechanical engineering | `mechanical.leafSprings` | Templates | `mechanical.leafSprings.multiLeaf` |
+| Mechanical engineering | `mechanical.torsionBars` | Templates | `mechanical.torsionBars.rectangle`, `mechanical.torsionBars.round` |
 | Mechanical engineering | `mechanical.pressureVessels` | Not started |  |
 | Mechanical engineering | `mechanical.pressureHeads` | Not started |  |
 | Mechanical engineering | `mechanical.rectangularPlates` | Not started |  |
