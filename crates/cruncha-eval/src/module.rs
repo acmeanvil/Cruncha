@@ -106,7 +106,8 @@ fn scan_function(lines: &[&str], start: usize, ctx: &Ctx) -> Result<(Udf, usize)
         static EQ_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" *= *").unwrap());
         for p in SPLIT_RE.split(param_str) {
             let parts: Vec<&str> = EQ_RE.split(p).collect();
-            let pname = parts[0].to_string();
+            // Named as the body reads it (`u_1` is `u₁`), as locals are (ADR-0025).
+            let pname = check_for_numeric_subscript(parts[0]);
             let default = match parts.get(1).filter(|s| !s.is_empty()) {
                 Some(lit) => {
                     let (value, unit, dtype, display) = value_from_literal(lit, "", ctx);

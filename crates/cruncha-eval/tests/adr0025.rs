@@ -169,3 +169,16 @@ fn a_range_index_is_a_plain_number() {
     let g = "function g(a)\n    s = 0\n    for k in 1:2\n        s = s + sin(k)\n    end\n    return s\nend";
     assert!(value(&[g, "q = g(0) = ??"]).starts_with("1.75076"), "{}", value(&[g, "q = g(0) = ??"]));
 }
+
+#[test]
+fn a_defined_e_is_used_before_a_power() {
+    assert_eq!(value(&["e = 0.5", "b = e^2 = ??"]), "0.25");
+    assert_eq!(value(&["e = 0.5", "b = (1 - e^2) / 2 = ??"]), "0.375");
+    assert!(value(&["b = e^2 = ??"]).starts_with("7.389056"), "Euler's number when e isn't defined");
+}
+
+#[test]
+fn function_parameters_with_subscripts() {
+    let f = "function f(u_1, θ_0)\n    return u_1 + θ_0\nend";
+    assert_eq!(value(&[f, "y = f(2, 3) = ??"]), "5");
+}

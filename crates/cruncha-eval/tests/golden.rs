@@ -9,6 +9,12 @@ use std::sync::Arc;
 
 /// Inputs whose expected output the port does not reproduce, with the reason. Deliberate
 /// corrections of Hurmet (ADR-0022) are listed here too, so the rest stay pinned.
+/// Cases whose RPN differs from Hurmet's on purpose, with the same result. (input, reason)
+const RPN_CORRECTIONS: &[(&str, &str)] = &[(
+    "e^z1 = @",
+    "ADR-0025: `e` before `^` stays a variable (Euler's number when the document doesn't define e)",
+)];
+
 const KNOWN_GAPS: &[(&str, &str)] = &[(
     "|matrix| = @",
     "ADR-0022 item 11: |A| is the determinant, 184.05; Hurmet gave its reciprocal, 0.0054333",
@@ -102,7 +108,10 @@ fn run_all() -> Run {
             .map(|c| c.rpn)
             .unwrap_or_default();
         let output = calculate(input, &mut run.vars, &run.opts);
-        if output == expected && rpn == expected_rpn {
+        // An RPN Cruncha corrects on purpose (cruncha-lang's golden CORRECTIONS) still has to
+        // give Hurmet's result.
+        let rpn_corrected = RPN_CORRECTIONS.iter().any(|(i, _)| *i == input);
+        if output == expected && (rpn == expected_rpn || rpn_corrected) {
             run.passed += 1;
         } else {
             run.failures

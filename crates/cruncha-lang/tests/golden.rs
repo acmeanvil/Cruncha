@@ -12,6 +12,15 @@ const KNOWN_GAPS: &[(&str, &str, &str)] = &[(
     "data frame literal: Hurmet renders it with DataFrame.display(dataFrameFromTSV(…)), which needs the evaluator's data frame model and number formatting",
 )];
 
+/// Goldens that encode a Hurmet bug Cruncha corrects on purpose: (suite, input, Cruncha's
+/// output, reason). The differences list (`docs/design/03-hurmet-differences.md`) has each.
+const CORRECTIONS: &[(&str, &str, &str, &str)] = &[(
+    "rpn",
+    "e^z1",
+    "¿e\u{a0}¿z1\u{a0}^",
+    "ADR-0025: `e` before `^` stays a variable, so a document's own e (an eccentricity) is used; the evaluator gives Euler's number when e isn't defined",
+)];
+
 fn load(name: &str) -> Vec<Vec<String>> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -45,6 +54,10 @@ impl Suite {
 
     fn check(&mut self, input: &str, expected: &str, actual: Result<String, String>) {
         self.total += 1;
+        let expected = CORRECTIONS
+            .iter()
+            .find(|(s, i, _, _)| *s == self.name && *i == input)
+            .map_or(expected, |(_, _, ours, _)| *ours);
         let gap = KNOWN_GAPS
             .iter()
             .find(|(s, i, _)| *s == self.name && *i == input);

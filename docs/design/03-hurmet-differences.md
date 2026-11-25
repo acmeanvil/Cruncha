@@ -53,6 +53,7 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | A display unit with parentheses, `= ?? 1/(N·m)`, `(N·m)^-1` (ADR-0025) | Not a calculation (the selector's unit couldn't contain parentheses), and `(N·m)^2` was a malformed unit. | Works. |
 | `1/in`, `1/Δ°F` after a number (ADR-0025) | "Unrecognized unit name" (the 1 read as an exponent). | A reciprocal unit. |
 | A `for` loop over a range, unit-aware (ADR-0025) | The index had no unit, so `sin(k)` or `k + 0` failed. | The index is a plain number. |
+| `e^x` where the document defines `e` (ADR-0025) | Always Euler's number: the parser replaced `e` before `^` with its value (Hurmet's golden `e^z1` expects that). | The document's `e`; Euler's number only when the document doesn't define `e`, as everywhere else (ADR-0022). |
 | A unit after a power, `(…)^2 'in'` (ADR-0025) | "Calculated units are not compatible…": `2 'in'` is read as the exponent. | The grammar is the same; the error says to write `(…)^2 × 1 'in'`. |
 | A name with a comma in its subscript, `X_(CO2,dry) = … = ?` | Read as a multiple assignment (`a, b = …`) and refused; only a literal assignment worked. | One name, as the lexer reads it; a multiple assignment still needs names that are valid on their own. |
 

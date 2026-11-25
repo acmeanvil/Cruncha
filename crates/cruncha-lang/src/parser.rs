@@ -154,7 +154,6 @@ const VERBATIMS: &[&str] = &[
 /// An RPN token that marks the start of the argument of `isnan()`.
 const ISNAN_MARKER: &str = "⁅isnan";
 const NBSP: &str = "\u{a0}";
-const E_RPN: &str = "®27182818284590452353602874713527/10000000000000000000000000000000";
 
 #[rustfmt::skip]
 const RPN_PREC_FROM_TYPE: [i32; 45] = [
@@ -1402,11 +1401,10 @@ impl<'a> Parser<'a> {
             Tt::Sup | Tt::SupChar => {
                 let is_char = self.token.ttype == Tt::SupChar;
                 if is_calc {
-                    if self.rpn.ends_with("¿e") {
-                        // e^3: replace e with its value.
-                        self.rpn.truncate(self.rpn.len() - "¿e".len());
-                        self.rpn.push_str(E_RPN);
-                    }
+                    // Hurmet replaced `e` before `^` with Euler's number here, so `e^2` was e²
+                    // even where the document defines e (an eccentricity, a coefficient of
+                    // restitution). The evaluator resolves `e` instead: Euler's number only
+                    // when the document doesn't define it (ADR-0022, ADR-0025).
                     self.rpn.push_str(self.token_sep);
                     self.pop_rpn_tokens(rpn_prec(self.token.ttype));
                 }

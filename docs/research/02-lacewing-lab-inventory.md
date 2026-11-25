@@ -839,13 +839,13 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 
 <!-- status:begin (scripts/lacewing-status.py writes this table) -->
 
-39 of 286 calculators have at least one template (70 templates).
+95 of 286 calculators have at least one template (203 templates).
 
 | Section | Calculators | With templates |
 |---|---|---|
 | Materials | 10 | 0 |
 | Geometry | 6 | 1 |
-| Mechanical engineering | 101 | 33 |
+| Mechanical engineering | 101 | 89 |
 | Machining | 7 | 0 |
 | Structural engineering | 30 | 4 |
 | Thermal engineering | 18 | 0 |
@@ -904,75 +904,75 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Mechanical engineering | `mechanical.spiralSprings` | Templates | `mechanical.spiralSprings.uniformBending` |
 | Mechanical engineering | `mechanical.leafSprings` | Templates | `mechanical.leafSprings.multiLeaf` |
 | Mechanical engineering | `mechanical.torsionBars` | Templates | `mechanical.torsionBars.rectangle`, `mechanical.torsionBars.round` |
-| Mechanical engineering | `mechanical.pressureVessels` | Not started |  |
-| Mechanical engineering | `mechanical.pressureHeads` | Not started |  |
-| Mechanical engineering | `mechanical.rectangularPlates` | Not started |  |
-| Mechanical engineering | `mechanical.stiffenedPlates` | Not started |  |
-| Mechanical engineering | `mechanical.rollingBearings` | Not started |  |
-| Mechanical engineering | `mechanical.hertzContact` | Not started |  |
-| Mechanical engineering | `mechanical.wear` | Not started |  |
-| Mechanical engineering | `mechanical.bearingFits` | Not started |  |
-| Mechanical engineering | `mechanical.journalBearings` | Not started |  |
-| Mechanical engineering | `mechanical.boundaryBearings` | Not started |  |
-| Mechanical engineering | `mechanical.lubricantViscosity` | Not started |  |
-| Mechanical engineering | `mechanical.shaftDesign` | Not started |  |
-| Mechanical engineering | `mechanical.shaftCriticalSpeed` | Not started |  |
-| Mechanical engineering | `mechanical.keysSplines` | Not started |  |
-| Mechanical engineering | `mechanical.interferenceFits` | Not started |  |
-| Mechanical engineering | `mechanical.couplings` | Not started |  |
-| Mechanical engineering | `mechanical.fits` | Not started |  |
-| Mechanical engineering | `mechanical.iso2768` | Not started |  |
-| Mechanical engineering | `mechanical.gdtFrame` | Not started |  |
-| Mechanical engineering | `mechanical.gdtSymbols` | Not started |  |
-| Mechanical engineering | `mechanical.gdtBonus` | Not started |  |
-| Mechanical engineering | `mechanical.gdtPosition` | Not started |  |
-| Mechanical engineering | `mechanical.gdtFasteners` | Not started |  |
-| Mechanical engineering | `mechanical.toleranceStack` | Not started |  |
-| Mechanical engineering | `mechanical.diskClutches` | Not started |  |
-| Mechanical engineering | `mechanical.coneClutches` | Not started |  |
-| Mechanical engineering | `mechanical.drumBrakes` | Not started |  |
-| Mechanical engineering | `mechanical.bandBrakes` | Not started |  |
-| Mechanical engineering | `mechanical.brakeEnergy` | Not started |  |
-| Mechanical engineering | `mechanical.flywheels` | Not started |  |
-| Mechanical engineering | `mechanical.flatBelts` | Not started |  |
-| Mechanical engineering | `mechanical.vBelts` | Not started |  |
-| Mechanical engineering | `mechanical.timingBelts` | Not started |  |
-| Mechanical engineering | `mechanical.rollerChains` | Not started |  |
-| Mechanical engineering | `mechanical.wireRope` | Not started |  |
-| Mechanical engineering | `mechanical.gearGeometry` | Not started |  |
-| Mechanical engineering | `mechanical.gearRating` | Not started |  |
-| Mechanical engineering | `mechanical.bevelGears` | Not started |  |
-| Mechanical engineering | `mechanical.wormGears` | Not started |  |
-| Mechanical engineering | `mechanical.gearTrains` | Not started |  |
-| Mechanical engineering | `mechanical.toothThickness` | Not started |  |
-| Mechanical engineering | `fluids.depthPressure` | Not started |  |
-| Mechanical engineering | `fluids.buoyancy` | Not started |  |
-| Mechanical engineering | `fluids.drag` | Not started |  |
+| Mechanical engineering | `mechanical.pressureVessels` | Templates | `mechanical.pressureVessels.thickCylinder`, `mechanical.pressureVessels.thickSphere`, `mechanical.pressureVessels.thinCone`, `mechanical.pressureVessels.thinCylinder`, `mechanical.pressureVessels.thinSphere` |
+| Mechanical engineering | `mechanical.pressureHeads` | Templates | `mechanical.pressureHeads.ellipsoidal`, `mechanical.pressureHeads.hemispherical`, `mechanical.pressureHeads.torispherical` |
+| Mechanical engineering | `mechanical.rectangularPlates` | Templates | `mechanical.rectangularPlates.coefficients`, `mechanical.rectangularPlates.simplySupported` |
+| Mechanical engineering | `mechanical.stiffenedPlates` | Templates | `mechanical.stiffenedPlates.frame`, `mechanical.stiffenedPlates.pitch`, `mechanical.stiffenedPlates.stiffener` |
+| Mechanical engineering | `mechanical.rollingBearings` | Templates | `mechanical.rollingBearings.dutyCycle`, `mechanical.rollingBearings.life`, `mechanical.rollingBearings.lubrication`, `mechanical.rollingBearings.taperedPair` |
+| Mechanical engineering | `mechanical.hertzContact` | Templates | `mechanical.hertzContact.cylinders`, `mechanical.hertzContact.elliptical`, `mechanical.hertzContact.spheres`, `mechanical.hertzContact.surfaceFatigue` |
+| Mechanical engineering | `mechanical.wear` | Templates | `mechanical.wear.archard`, `mechanical.wear.pinOnDisk` |
+| Mechanical engineering | `mechanical.bearingFits` | Templates | `mechanical.bearingFits.seats` |
+| Mechanical engineering | `mechanical.journalBearings` | Templates | `mechanical.journalBearings.lengthRatio`, `mechanical.journalBearings.petroff`, `mechanical.journalBearings.pressureFed`, `mechanical.journalBearings.raimondiBoyd` |
+| Mechanical engineering | `mechanical.boundaryBearings` | Templates | `mechanical.boundaryBearings.temperature`, `mechanical.boundaryBearings.wear` |
+| Mechanical engineering | `mechanical.lubricantViscosity` | Templates | `mechanical.lubricantViscosity.roelands`, `mechanical.lubricantViscosity.saeGrade`, `mechanical.lubricantViscosity.saybolt`, `mechanical.lubricantViscosity.viscosityIndex`, `mechanical.lubricantViscosity.walther` |
+| Mechanical engineering | `mechanical.shaftDesign` | Templates | `mechanical.shaftDesign.diameter`, `mechanical.shaftDesign.factorOfSafety`, `mechanical.shaftDesign.stiffness` |
+| Mechanical engineering | `mechanical.shaftCriticalSpeed` | Templates | `mechanical.shaftCriticalSpeed.influence`, `mechanical.shaftCriticalSpeed.simplySupported` |
+| Mechanical engineering | `mechanical.keysSplines` | Templates | `mechanical.keysSplines.involuteSpline`, `mechanical.keysSplines.parallelKey`, `mechanical.keysSplines.pin`, `mechanical.keysSplines.straightSpline` |
+| Mechanical engineering | `mechanical.interferenceFits` | Templates | `mechanical.interferenceFits.pressFit` |
+| Mechanical engineering | `mechanical.couplings` | Templates | `mechanical.couplings.flangeBolts`, `mechanical.couplings.hookeJoint`, `mechanical.couplings.twoJoints` |
+| Mechanical engineering | `mechanical.fits` | Templates | `mechanical.fits.iso286Formulas`, `mechanical.fits.limits` |
+| Mechanical engineering | `mechanical.iso2768` | Templates | `mechanical.iso2768.general` |
+| Mechanical engineering | `mechanical.gdtFrame` | Templates | `mechanical.gdtFrame.virtualSize` |
+| Mechanical engineering | `mechanical.gdtSymbols` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.gdtBonus` | Templates | `mechanical.gdtBonus.lmc`, `mechanical.gdtBonus.mmc`, `mechanical.gdtBonus.rfs` |
+| Mechanical engineering | `mechanical.gdtPosition` | Templates | `mechanical.gdtPosition.coordinates`, `mechanical.gdtPosition.cylindrical`, `mechanical.gdtPosition.spherical` |
+| Mechanical engineering | `mechanical.gdtFasteners` | Templates | `mechanical.gdtFasteners.coaxial`, `mechanical.gdtFasteners.fixed`, `mechanical.gdtFasteners.fixedTilt`, `mechanical.gdtFasteners.floating` |
+| Mechanical engineering | `mechanical.toleranceStack` | Templates | `mechanical.toleranceStack.worstCaseRss` |
+| Mechanical engineering | `mechanical.diskClutches` | Templates | `mechanical.diskClutches.annularPad`, `mechanical.diskClutches.buttonPad`, `mechanical.diskClutches.plate` |
+| Mechanical engineering | `mechanical.coneClutches` | Templates | `mechanical.coneClutches.capacity` |
+| Mechanical engineering | `mechanical.drumBrakes` | Templates | `mechanical.drumBrakes.longShoe`, `mechanical.drumBrakes.pivotedShoe`, `mechanical.drumBrakes.shortShoe` |
+| Mechanical engineering | `mechanical.bandBrakes` | Templates | `mechanical.bandBrakes.fromForce`, `mechanical.bandBrakes.fromPressure` |
+| Mechanical engineering | `mechanical.brakeEnergy` | Templates | `mechanical.brakeEnergy.clutchEngagement`, `mechanical.brakeEnergy.movingStop`, `mechanical.brakeEnergy.repeatedStops`, `mechanical.brakeEnergy.rotatingStop` |
+| Mechanical engineering | `mechanical.flywheels` | Templates | `mechanical.flywheels.energyFluctuation`, `mechanical.flywheels.punchPress` |
+| Mechanical engineering | `mechanical.flatBelts` | Templates | `mechanical.flatBelts.capacity`, `mechanical.flatBelts.design`, `mechanical.flatBelts.metal` |
+| Mechanical engineering | `mechanical.vBelts` | Templates | `mechanical.vBelts.drive` |
+| Mechanical engineering | `mechanical.timingBelts` | Templates | `mechanical.timingBelts.drive` |
+| Mechanical engineering | `mechanical.rollerChains` | Templates | `mechanical.rollerChains.drive` |
+| Mechanical engineering | `mechanical.wireRope` | Templates | `mechanical.wireRope.hoist` |
+| Mechanical engineering | `mechanical.gearGeometry` | Templates | `mechanical.gearGeometry.centreDistance`, `mechanical.gearGeometry.external` |
+| Mechanical engineering | `mechanical.gearRating` | Templates | `mechanical.gearRating.agma`, `mechanical.gearRating.juvinall` |
+| Mechanical engineering | `mechanical.bevelGears` | Templates | `mechanical.bevelGears.geometry`, `mechanical.bevelGears.rating` |
+| Mechanical engineering | `mechanical.wormGears` | Templates | `mechanical.wormGears.agma` |
+| Mechanical engineering | `mechanical.gearTrains` | Templates | `mechanical.gearTrains.differential`, `mechanical.gearTrains.ordinary`, `mechanical.gearTrains.planetary` |
+| Mechanical engineering | `mechanical.toothThickness` | Templates | `mechanical.toothThickness.chordal`, `mechanical.toothThickness.overPins`, `mechanical.toothThickness.span` |
+| Mechanical engineering | `fluids.depthPressure` | Templates | `fluids.depthPressure.depth`, `fluids.depthPressure.gate`, `fluids.depthPressure.pressure` |
+| Mechanical engineering | `fluids.buoyancy` | Templates | `fluids.buoyancy.floatingBox`, `fluids.buoyancy.immersed` |
+| Mechanical engineering | `fluids.drag` | Templates | `fluids.drag.body`, `fluids.drag.cylinder`, `fluids.drag.sphereTerminal` |
 | Mechanical engineering | `fluids.pipeFlow` | Templates | `fluids.pipes.darcyColebrook` |
-| Mechanical engineering | `dynamics.singleDof` | Not started |  |
-| Mechanical engineering | `dynamics.absorber` | Not started |  |
-| Mechanical engineering | `dynamics.naturalFrequencies` | Not started |  |
-| Mechanical engineering | `dynamics.torsional` | Not started |  |
-| Mechanical engineering | `dynamics.criticalSpeeds` | Not started |  |
-| Mechanical engineering | `dynamics.balancing` | Not started |  |
-| Mechanical engineering | `mechanics.capstan` | Not started |  |
-| Mechanical engineering | `mechanics.impact` | Not started |  |
-| Mechanical engineering | `mechanical.impactLoading` | Not started |  |
-| Mechanical engineering | `mechanics.gyroscope` | Not started |  |
-| Mechanical engineering | `mechanical.oRings` | Not started |  |
-| Mechanical engineering | `mechanical.quadRings` | Not started |  |
-| Mechanical engineering | `mechanical.lipSeals` | Not started |  |
-| Mechanical engineering | `mechanical.hexScrews` | Not started |  |
-| Mechanical engineering | `mechanical.heavyHexScrews` | Not started |  |
-| Mechanical engineering | `mechanical.socketHeadScrews` | Not started |  |
-| Mechanical engineering | `mechanical.lowHeadScrews` | Not started |  |
-| Mechanical engineering | `mechanical.buttonHeadScrews` | Not started |  |
-| Mechanical engineering | `mechanical.flatHeadScrews` | Not started |  |
-| Mechanical engineering | `mechanical.hexNuts` | Not started |  |
-| Mechanical engineering | `mechanical.washers` | Not started |  |
-| Mechanical engineering | `mechanical.boltGrades` | Not started |  |
-| Mechanical engineering | `mechanical.discSpringSizes` | Not started |  |
-| Mechanical engineering | `mechanical.pipeSizes` | Not started |  |
+| Mechanical engineering | `dynamics.singleDof` | Templates | `dynamics.singleDof.forced` |
+| Mechanical engineering | `dynamics.absorber` | Templates | `dynamics.absorber.optimum`, `dynamics.absorber.response` |
+| Mechanical engineering | `dynamics.naturalFrequencies` | Templates | `dynamics.naturalFrequencies.bar`, `dynamics.naturalFrequencies.beam`, `dynamics.naturalFrequencies.circularPlate`, `dynamics.naturalFrequencies.rectangularPlate`, `dynamics.naturalFrequencies.springMass` |
+| Mechanical engineering | `dynamics.torsional` | Templates | `dynamics.torsional.holzer` |
+| Mechanical engineering | `dynamics.criticalSpeeds` | Templates | `dynamics.criticalSpeeds.shaft` |
+| Mechanical engineering | `dynamics.balancing` | Templates | `dynamics.balancing.iso1940`, `dynamics.balancing.singlePlane`, `dynamics.balancing.twoPlane` |
+| Mechanical engineering | `mechanics.capstan` | Templates | `mechanics.capstan.tension`, `mechanics.capstan.wrap` |
+| Mechanical engineering | `mechanics.impact` | Templates | `mechanics.impact.central` |
+| Mechanical engineering | `mechanical.impactLoading` | Templates | `mechanical.impactLoading.beam`, `mechanical.impactLoading.drop`, `mechanical.impactLoading.energyCapacity`, `mechanical.impactLoading.moving`, `mechanical.impactLoading.torsion` |
+| Mechanical engineering | `mechanics.gyroscope` | Templates | `mechanics.gyroscope.roll`, `mechanics.gyroscope.turning` |
+| Mechanical engineering | `mechanical.oRings` | Templates | `mechanical.oRings.faceGland`, `mechanical.oRings.radialGland` |
+| Mechanical engineering | `mechanical.quadRings` | Templates | `mechanical.quadRings.radialGland` |
+| Mechanical engineering | `mechanical.lipSeals` | Templates | `mechanical.lipSeals.speed` |
+| Mechanical engineering | `mechanical.hexScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.heavyHexScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.socketHeadScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.lowHeadScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.buttonHeadScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.flatHeadScrews` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.hexNuts` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.washers` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.boltGrades` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.discSpringSizes` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.pipeSizes` | Data, not a template: owner's decision |  |
 | Machining | `mechanical.turning` | Not started |  |
 | Machining | `mechanical.milling` | Not started |  |
 | Machining | `mechanical.drilling` | Not started |  |

@@ -36,6 +36,8 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 - Mixing systems is fine (`2 m × 4 ft`); conversion is automatic. Pick a display unit that suits the reader's practice.
 - Temperatures: `°C` and `°F` are absolute; `Δ°C`, `Δ°F` and `ΔK` are differences (`10 Δ°C` = 10 K). Don't add two absolute temperatures.
 - Half-integer powers work in units: `MPa·√m`, `ksi·√in`, `m^0.5`, `m^(3/2)`. Give stress intensity and fracture toughness their units (`K_Ic = 50 MPa·√m`). `kpsi` and `Mpsi` are Shigley's spellings of ksi and 10⁶ psi.
+- `rpm`, `rev/s` and `Hz` are angular rates: `300 rpm` is 31.4 rad/s. A formula written for revolutions (Sommerfeld's N, V = πDN) needs `n = N / (1 'rev')`; pitch-line speed is `V = n d / 2`. A result in rad/s shown in Hz is not divided by 2π: write `f = ω / (2π)`.
+- Loops in a function work on exact fractions that grow; round each step of a long iteration (`x = roundSig(…, 15)`) or it slows down and can overflow.
 - Display units may use parentheses and reciprocals: `= ?? 1/(N·m)`, `= ?? W/(m^2·K)`, `4 1/in`. The ohm is `Ω` or `ohm` (`kΩ`).
 - Inside an expression a unit is quoted (`2 'in'`), and it binds to the number before it, so `(…)^2 'in'` makes `2 'in'` the exponent: write `(…)^2 × 1 'in'`.
 - Unitless ratios (utilization, `ϕ`, `t / r`) are plain numbers, also inside a matrix literal. A result of `0.87` that should be unitless but carries `in/ft` means the formula is wrong.
@@ -76,6 +78,7 @@ end
 
 - Functions are pure: they see only their parameters, not the document's other values. They can be defined anywhere, and can call other user functions (not themselves, directly or through another). Locals may have subscripts (`k_1`).
 - An expression needs a display selector to define its name: `x = t / r` defines nothing (a lint says so); write `x = t / r = ??`, or `= !` to hide the result. Only a literal (`x = 5 mm`) assigns without one.
+- Element-wise products of two vectors use `∘` (`s ∘ t`); juxtaposition is a matrix product and refuses mismatched lengths.
 - `[403]` is a one-entry vector; `vcat([1; 2], 3)` stacks numbers and columns.
 - A piecewise may end without `otherwise` (`{1 if k == 1; 2 if k == 2}`); if no condition holds, it's an error. Comparisons in conditions use `==`, not `=`.
 - Assertions: `@test ϕM_n ≥ M_u`, or a range `@test 0.1 ≤ t/r ≤ 40` (or `and`/`or`); chains work in piecewise conditions too. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions. The report's cover lists every `@test` with OK or NOT OK and the sheet it is on. A test that couldn't be evaluated (an error, or an input from Python that hasn't run) is listed as ERROR or NOT CALCULATED, never as OK.
