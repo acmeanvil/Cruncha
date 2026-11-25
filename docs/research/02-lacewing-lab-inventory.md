@@ -832,3 +832,315 @@ Not implemented: there is no Science section, group or calculator id anywhere in
 - Inputs and outputs above are names and symbols from the help files. Several lists were truncated where they are very long (GD&T frame, VDI 2230, rolling bearings, thread strength, fatigue); the full lists are in each `H/<id>.md`.
 - **Units:** the engines work in SI base units and the page shows the unit by `Dim` (`S/dims.dart`). Help files do not state units. Electrical and physics values are SI with prefixes. Mechanical pages switch SI/Imperial.
 - The formulas shown are the compact ones from help and code. The complete per-calculator formula strings are in the `Formula(...)` and `WorkingLine(...)` calls of the files named, and the grep command in section 1 pulls them.
+
+## 5. Conversion status (ADR-0014 item 7)
+
+A calculator has "Templates" once at least one built-in template names it in `from`; what each template leaves out is in its own prose. Each converted template gets the owner's review.
+
+<!-- status:begin (scripts/lacewing-status.py writes this table) -->
+
+15 of 286 calculators have at least one template (31 templates).
+
+| Section | Calculators | With templates |
+|---|---|---|
+| Materials | 10 | 0 |
+| Geometry | 6 | 1 |
+| Mechanical engineering | 101 | 9 |
+| Machining | 7 | 0 |
+| Structural engineering | 30 | 4 |
+| Thermal engineering | 18 | 0 |
+| Electrical engineering | 50 | 0 |
+| Mathematics | 23 | 0 |
+| Physics | 40 | 1 |
+| Unit converter | 1 | 0 |
+
+| Section | Calculator | Status | Templates |
+|---|---|---|---|
+| Materials | `materials.library` | Not started |  |
+| Materials | `materials.rambergOsgood` | Not started |  |
+| Materials | `materials.periodicTable` | Not started |  |
+| Materials | `materials.selection` | Not started |  |
+| Materials | `materials.composites` | Not started |  |
+| Materials | `materials.creepRate` | Not started |  |
+| Materials | `materials.diffusion` | Not started |  |
+| Materials | `materials.weibull` | Not started |  |
+| Materials | `materials.corrosion` | Not started |  |
+| Materials | `materials.pitting` | Not started |  |
+| Geometry | `geometry.area` | Not started |  |
+| Geometry | `geometry.secondMoment` | Templates | `geometry.sections.iSection`, `geometry.sections.rectangularTube` |
+| Geometry | `geometry.sectionModulus` | Not started |  |
+| Geometry | `geometry.sectionStiffness` | Not started |  |
+| Geometry | `geometry.solids` | Not started |  |
+| Geometry | `geometry.compositeSolids` | Not started |  |
+| Mechanical engineering | `mechanical.staticFailure` | Templates | `mechanical.staticFailure.brittle`, `mechanical.staticFailure.planeStress`, `mechanical.staticFailure.triaxial` |
+| Mechanical engineering | `mechanical.fatigue` | Templates | `mechanical.fatigue.enduranceLimit`, `mechanical.fatigue.fluctuating`, `mechanical.fatigue.life`, `mechanical.fatigue.notchFactor` |
+| Mechanical engineering | `mechanical.stressConcentration` | Templates | `mechanical.stressConcentration.plateHole`, `mechanical.stressConcentration.shaftGroove`, `mechanical.stressConcentration.shaftShoulder` |
+| Mechanical engineering | `mechanical.curvedBeams` | Templates | `mechanical.curvedBeams.rectangle`, `mechanical.curvedBeams.round`, `mechanical.curvedBeams.trapezoid` |
+| Mechanical engineering | `mechanical.residualStresses` | Templates | `mechanical.residualStresses.rectangularBeam`, `mechanical.residualStresses.shaftTorsion` |
+| Mechanical engineering | `mechanical.fractureMechanics` | Templates | `mechanical.fracture.leakBeforeBreak`, `mechanical.fracture.parisLife` |
+| Mechanical engineering | `mechanical.kIcSolver` | Templates | `mechanical.fracture.criticalCrack`, `mechanical.fracture.thickPlateSurfaceCrack` |
+| Mechanical engineering | `mechanical.reliability` | Templates | `mechanical.reliability.allowableStress`, `mechanical.reliability.designFactor`, `mechanical.reliability.interference` |
+| Mechanical engineering | `mechanical.strainGauges` | Not started |  |
+| Mechanical engineering | `mechanical.strainRosettes` | Not started |  |
+| Mechanical engineering | `mechanical.threads` | Not started |  |
+| Mechanical engineering | `mechanical.threadsAnySize` | Not started |  |
+| Mechanical engineering | `mechanical.powerScrews` | Not started |  |
+| Mechanical engineering | `mechanical.boltTorqueSimple` | Not started |  |
+| Mechanical engineering | `mechanical.boltedJoint` | Not started |  |
+| Mechanical engineering | `mechanical.vdi2230` | Not started |  |
+| Mechanical engineering | `mechanical.boltGroups` | Not started |  |
+| Mechanical engineering | `mechanical.rivetedJoints` | Not started |  |
+| Mechanical engineering | `mechanical.weldGroup` | Not started |  |
+| Mechanical engineering | `mechanical.weldCapacity` | Not started |  |
+| Mechanical engineering | `mechanical.intermittentWelds` | Not started |  |
+| Mechanical engineering | `mechanical.adhesiveJoints` | Not started |  |
+| Mechanical engineering | `mechanical.compressionSprings` | Not started |  |
+| Mechanical engineering | `mechanical.extensionSprings` | Not started |  |
+| Mechanical engineering | `mechanical.torsionSprings` | Not started |  |
+| Mechanical engineering | `mechanical.discSprings` | Not started |  |
+| Mechanical engineering | `mechanical.waveSprings` | Not started |  |
+| Mechanical engineering | `mechanical.conicalSprings` | Not started |  |
+| Mechanical engineering | `mechanical.flatSprings` | Not started |  |
+| Mechanical engineering | `mechanical.spiralSprings` | Not started |  |
+| Mechanical engineering | `mechanical.leafSprings` | Not started |  |
+| Mechanical engineering | `mechanical.torsionBars` | Not started |  |
+| Mechanical engineering | `mechanical.pressureVessels` | Not started |  |
+| Mechanical engineering | `mechanical.pressureHeads` | Not started |  |
+| Mechanical engineering | `mechanical.rectangularPlates` | Not started |  |
+| Mechanical engineering | `mechanical.stiffenedPlates` | Not started |  |
+| Mechanical engineering | `mechanical.rollingBearings` | Not started |  |
+| Mechanical engineering | `mechanical.hertzContact` | Not started |  |
+| Mechanical engineering | `mechanical.wear` | Not started |  |
+| Mechanical engineering | `mechanical.bearingFits` | Not started |  |
+| Mechanical engineering | `mechanical.journalBearings` | Not started |  |
+| Mechanical engineering | `mechanical.boundaryBearings` | Not started |  |
+| Mechanical engineering | `mechanical.lubricantViscosity` | Not started |  |
+| Mechanical engineering | `mechanical.shaftDesign` | Not started |  |
+| Mechanical engineering | `mechanical.shaftCriticalSpeed` | Not started |  |
+| Mechanical engineering | `mechanical.keysSplines` | Not started |  |
+| Mechanical engineering | `mechanical.interferenceFits` | Not started |  |
+| Mechanical engineering | `mechanical.couplings` | Not started |  |
+| Mechanical engineering | `mechanical.fits` | Not started |  |
+| Mechanical engineering | `mechanical.iso2768` | Not started |  |
+| Mechanical engineering | `mechanical.gdtFrame` | Not started |  |
+| Mechanical engineering | `mechanical.gdtSymbols` | Not started |  |
+| Mechanical engineering | `mechanical.gdtBonus` | Not started |  |
+| Mechanical engineering | `mechanical.gdtPosition` | Not started |  |
+| Mechanical engineering | `mechanical.gdtFasteners` | Not started |  |
+| Mechanical engineering | `mechanical.toleranceStack` | Not started |  |
+| Mechanical engineering | `mechanical.diskClutches` | Not started |  |
+| Mechanical engineering | `mechanical.coneClutches` | Not started |  |
+| Mechanical engineering | `mechanical.drumBrakes` | Not started |  |
+| Mechanical engineering | `mechanical.bandBrakes` | Not started |  |
+| Mechanical engineering | `mechanical.brakeEnergy` | Not started |  |
+| Mechanical engineering | `mechanical.flywheels` | Not started |  |
+| Mechanical engineering | `mechanical.flatBelts` | Not started |  |
+| Mechanical engineering | `mechanical.vBelts` | Not started |  |
+| Mechanical engineering | `mechanical.timingBelts` | Not started |  |
+| Mechanical engineering | `mechanical.rollerChains` | Not started |  |
+| Mechanical engineering | `mechanical.wireRope` | Not started |  |
+| Mechanical engineering | `mechanical.gearGeometry` | Not started |  |
+| Mechanical engineering | `mechanical.gearRating` | Not started |  |
+| Mechanical engineering | `mechanical.bevelGears` | Not started |  |
+| Mechanical engineering | `mechanical.wormGears` | Not started |  |
+| Mechanical engineering | `mechanical.gearTrains` | Not started |  |
+| Mechanical engineering | `mechanical.toothThickness` | Not started |  |
+| Mechanical engineering | `fluids.depthPressure` | Not started |  |
+| Mechanical engineering | `fluids.buoyancy` | Not started |  |
+| Mechanical engineering | `fluids.drag` | Not started |  |
+| Mechanical engineering | `fluids.pipeFlow` | Templates | `fluids.pipes.darcyColebrook` |
+| Mechanical engineering | `dynamics.singleDof` | Not started |  |
+| Mechanical engineering | `dynamics.absorber` | Not started |  |
+| Mechanical engineering | `dynamics.naturalFrequencies` | Not started |  |
+| Mechanical engineering | `dynamics.torsional` | Not started |  |
+| Mechanical engineering | `dynamics.criticalSpeeds` | Not started |  |
+| Mechanical engineering | `dynamics.balancing` | Not started |  |
+| Mechanical engineering | `mechanics.capstan` | Not started |  |
+| Mechanical engineering | `mechanics.impact` | Not started |  |
+| Mechanical engineering | `mechanical.impactLoading` | Not started |  |
+| Mechanical engineering | `mechanics.gyroscope` | Not started |  |
+| Mechanical engineering | `mechanical.oRings` | Not started |  |
+| Mechanical engineering | `mechanical.quadRings` | Not started |  |
+| Mechanical engineering | `mechanical.lipSeals` | Not started |  |
+| Mechanical engineering | `mechanical.hexScrews` | Not started |  |
+| Mechanical engineering | `mechanical.heavyHexScrews` | Not started |  |
+| Mechanical engineering | `mechanical.socketHeadScrews` | Not started |  |
+| Mechanical engineering | `mechanical.lowHeadScrews` | Not started |  |
+| Mechanical engineering | `mechanical.buttonHeadScrews` | Not started |  |
+| Mechanical engineering | `mechanical.flatHeadScrews` | Not started |  |
+| Mechanical engineering | `mechanical.hexNuts` | Not started |  |
+| Mechanical engineering | `mechanical.washers` | Not started |  |
+| Mechanical engineering | `mechanical.boltGrades` | Not started |  |
+| Mechanical engineering | `mechanical.discSpringSizes` | Not started |  |
+| Mechanical engineering | `mechanical.pipeSizes` | Not started |  |
+| Machining | `mechanical.turning` | Not started |  |
+| Machining | `mechanical.milling` | Not started |  |
+| Machining | `mechanical.drilling` | Not started |  |
+| Machining | `mechanical.chipThinning` | Not started |  |
+| Machining | `mechanical.speedTables` | Not started |  |
+| Machining | `machining.gcodeInterpreter` | Not started |  |
+| Machining | `machining.gcodeDictionary` | Not started |  |
+| Structural engineering | `structural.loadCombinations` | Not started |  |
+| Structural engineering | `structural.snow` | Not started |  |
+| Structural engineering | `structural.seismic` | Not started |  |
+| Structural engineering | `structural.beam` | Templates | `structural.beams.simpleUniformDiagrams` |
+| Structural engineering | `structural.frames` | Not started |  |
+| Structural engineering | `structural.catenary` | Not started |  |
+| Structural engineering | `structural.sectionBuilder` | Not started |  |
+| Structural engineering | `structural.tensileFrequency` | Not started |  |
+| Structural engineering | `structural.tensileElongation` | Not started |  |
+| Structural engineering | `structural.bolts` | Templates | `structural.bolts.shearTension` |
+| Structural engineering | `structural.boltedPlate` | Not started |  |
+| Structural engineering | `structural.filletWelds` | Not started |  |
+| Structural engineering | `structural.grooveWelds` | Not started |  |
+| Structural engineering | `structural.basePlates` | Not started |  |
+| Structural engineering | `structural.plateBuckling` | Not started |  |
+| Structural engineering | `structural.columnBuckling` | Templates | `mechanical.columns.eulerJohnson` |
+| Structural engineering | `structural.columnEccentric` | Not started |  |
+| Structural engineering | `structural.columnSlenderness` | Not started |  |
+| Structural engineering | `structural.steelMember` | Templates | `structural.steel.flexureF2` |
+| Structural engineering | `structural.stainlessMember` | Not started |  |
+| Structural engineering | `structural.aluminumMember` | Not started |  |
+| Structural engineering | `structural.lateralBuckling` | Not started |  |
+| Structural engineering | `structural.aiscShapes` | Not started |  |
+| Structural engineering | `structural.enShapes` | Not started |  |
+| Structural engineering | `structural.coldFormedShapes` | Not started |  |
+| Structural engineering | `structural.admShapes` | Not started |  |
+| Structural engineering | `structural.windVelocity` | Not started |  |
+| Structural engineering | `structural.windBuilding` | Not started |  |
+| Structural engineering | `structural.windComponents` | Not started |  |
+| Structural engineering | `structural.windOther` | Not started |  |
+| Thermal engineering | `thermal.steamTables` | Not started |  |
+| Thermal engineering | `thermal.refrigerants` | Not started |  |
+| Thermal engineering | `thermal.idealGases` | Not started |  |
+| Thermal engineering | `thermal.steadyFlow` | Not started |  |
+| Thermal engineering | `thermal.gasProcesses` | Not started |  |
+| Thermal engineering | `thermal.rankine` | Not started |  |
+| Thermal engineering | `thermal.gasCycles` | Not started |  |
+| Thermal engineering | `thermal.combinedCycle` | Not started |  |
+| Thermal engineering | `thermal.vaporCompression` | Not started |  |
+| Thermal engineering | `thermal.gasRefrigeration` | Not started |  |
+| Thermal engineering | `thermal.resistance` | Not started |  |
+| Thermal engineering | `thermal.conduction` | Not started |  |
+| Thermal engineering | `thermal.convection` | Not started |  |
+| Thermal engineering | `thermal.fins` | Not started |  |
+| Thermal engineering | `thermal.radiation` | Not started |  |
+| Thermal engineering | `thermal.heatExchangers` | Not started |  |
+| Thermal engineering | `thermal.transient` | Not started |  |
+| Thermal engineering | `thermal.thermalStress` | Not started |  |
+| Electrical engineering | `electrical.ohmsLaw` | Not started |  |
+| Electrical engineering | `electrical.seriesParallel` | Not started |  |
+| Electrical engineering | `electrical.dividers` | Not started |  |
+| Electrical engineering | `electrical.wheatstone` | Not started |  |
+| Electrical engineering | `electrical.deltaWye` | Not started |  |
+| Electrical engineering | `electrical.wire` | Not started |  |
+| Electrical engineering | `electrical.resistor` | Not started |  |
+| Electrical engineering | `electrical.cableAmpacity` | Not started |  |
+| Electrical engineering | `electrical.ampacity` | Not started |  |
+| Electrical engineering | `electrical.pcbHeater` | Not started |  |
+| Electrical engineering | `electrical.resistorCodes` | Not started |  |
+| Electrical engineering | `electrical.jouleHeating` | Not started |  |
+| Electrical engineering | `electrical.acPower` | Not started |  |
+| Electrical engineering | `electrical.pfCorrection` | Not started |  |
+| Electrical engineering | `electrical.waveforms` | Not started |  |
+| Electrical engineering | `electrical.decibels` | Not started |  |
+| Electrical engineering | `electrical.battery` | Not started |  |
+| Electrical engineering | `electrical.creepage` | Not started |  |
+| Electrical engineering | `electrical.insulationThickness` | Not started |  |
+| Electrical engineering | `electrical.wireInductance` | Not started |  |
+| Electrical engineering | `electrical.loopInductance` | Not started |  |
+| Electrical engineering | `electrical.coilInductance` | Not started |  |
+| Electrical engineering | `electrical.mutualInductance` | Not started |  |
+| Electrical engineering | `electrical.spiralInductance` | Not started |  |
+| Electrical engineering | `electrical.inductorEnergy` | Not started |  |
+| Electrical engineering | `electrical.induction` | Not started |  |
+| Electrical engineering | `electrical.permanentMagnet` | Not started |  |
+| Electrical engineering | `electrical.coilForces` | Not started |  |
+| Electrical engineering | `electrical.magneticCircuits` | Not started |  |
+| Electrical engineering | `electrical.conductorField` | Not started |  |
+| Electrical engineering | `electrical.loopField` | Not started |  |
+| Electrical engineering | `electrical.solenoidField` | Not started |  |
+| Electrical engineering | `electrical.chipPackages` | Not started |  |
+| Electrical engineering | `electrical.sotPackages` | Not started |  |
+| Electrical engineering | `electrical.soPackages` | Not started |  |
+| Electrical engineering | `electrical.qfpPackages` | Not started |  |
+| Electrical engineering | `electrical.qfnPackages` | Not started |  |
+| Electrical engineering | `electrical.powerPackages` | Not started |  |
+| Electrical engineering | `electrical.dipPackages` | Not started |  |
+| Electrical engineering | `electrical.toPackages` | Not started |  |
+| Electrical engineering | `electrical.axialPackages` | Not started |  |
+| Electrical engineering | `electrical.radialPackages` | Not started |  |
+| Electrical engineering | `electrical.ledZener` | Not started |  |
+| Electrical engineering | `electrical.lm317` | Not started |  |
+| Electrical engineering | `electrical.timer555` | Not started |  |
+| Electrical engineering | `electrical.opAmp` | Not started |  |
+| Electrical engineering | `electrical.reactive` | Not started |  |
+| Electrical engineering | `electrical.rlcCircuits` | Not started |  |
+| Electrical engineering | `electrical.adc` | Not started |  |
+| Electrical engineering | `electrical.traceWidth` | Not started |  |
+| Mathematics | `math.rpl` | Not started |  |
+| Mathematics | `math.grapher` | Not started |  |
+| Mathematics | `math.dataPlot` | Not started |  |
+| Mathematics | `math.calculator` | Not started |  |
+| Mathematics | `math.numbers` | Not started |  |
+| Mathematics | `math.combinatorics` | Not started |  |
+| Mathematics | `math.polynomial` | Not started |  |
+| Mathematics | `math.solve` | Not started |  |
+| Mathematics | `math.interpolate` | Not started |  |
+| Mathematics | `math.coordinates` | Not started |  |
+| Mathematics | `math.segment` | Not started |  |
+| Mathematics | `math.triangle` | Not started |  |
+| Mathematics | `math.trig` | Not started |  |
+| Mathematics | `math.calculus` | Not started |  |
+| Mathematics | `math.series` | Not started |  |
+| Mathematics | `math.matrix` | Not started |  |
+| Mathematics | `math.vectors` | Not started |  |
+| Mathematics | `math.ode` | Not started |  |
+| Mathematics | `math.linearOde` | Not started |  |
+| Mathematics | `math.heatEquation` | Not started |  |
+| Mathematics | `math.waveEquation` | Not started |  |
+| Mathematics | `math.laplaceEquation` | Not started |  |
+| Mathematics | `math.fourierSeries` | Not started |  |
+| Physics | `physics.kinematics` | Templates | `physics.kinematics.fromDistance`, `physics.kinematics.fromTime` |
+| Physics | `physics.projectile` | Not started |  |
+| Physics | `physics.circular` | Not started |  |
+| Physics | `physics.gravitation` | Not started |  |
+| Physics | `physics.oscillators` | Not started |  |
+| Physics | `physics.standingWaves` | Not started |  |
+| Physics | `physics.sound` | Not started |  |
+| Physics | `physics.heat` | Not started |  |
+| Physics | `physics.heatTransfer` | Not started |  |
+| Physics | `physics.idealGas` | Not started |  |
+| Physics | `physics.heatEngines` | Not started |  |
+| Physics | `physics.kineticTheory` | Not started |  |
+| Physics | `physics.entropy` | Not started |  |
+| Physics | `physics.phaseChangeCalorimetry` | Not started |  |
+| Physics | `physics.expansionFits` | Not started |  |
+| Physics | `physics.realEngines` | Not started |  |
+| Physics | `physics.charges` | Not started |  |
+| Physics | `physics.pointChargePotential` | Not started |  |
+| Physics | `physics.capacitor` | Not started |  |
+| Physics | `physics.chargeDistributions` | Not started |  |
+| Physics | `physics.capacitance` | Not started |  |
+| Physics | `physics.imageCharges` | Not started |  |
+| Physics | `physics.dielectrics` | Not started |  |
+| Physics | `physics.particleInField` | Not started |  |
+| Physics | `physics.currentResistance` | Not started |  |
+| Physics | `physics.magneticForces` | Not started |  |
+| Physics | `physics.ampereLaw` | Not started |  |
+| Physics | `physics.motorsLc` | Not started |  |
+| Physics | `physics.emWaves` | Not started |  |
+| Physics | `physics.refraction` | Not started |  |
+| Physics | `physics.lenses` | Not started |  |
+| Physics | `physics.interference` | Not started |  |
+| Physics | `physics.relativity` | Not started |  |
+| Physics | `physics.photons` | Not started |  |
+| Physics | `physics.nuclear` | Not started |  |
+| Physics | `physics.blackbody` | Not started |  |
+| Physics | `physics.quantumWells` | Not started |  |
+| Physics | `physics.hydrogen` | Not started |  |
+| Physics | `physics.molecules` | Not started |  |
+| Physics | `physics.nuclearReactions` | Not started |  |
+| Unit converter | `units.converter` | Not started |  |
+
+<!-- status:end -->

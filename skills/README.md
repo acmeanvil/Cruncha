@@ -12,5 +12,6 @@ Skills that teach an AI agent how to work **inside a Cruncha document**: authori
 | [cruncha-code-cells](cruncha-code-cells/SKILL.md) | Writing Python (NumPy/SciPy/Polars) or Rust cells that join the document graph |
 | [cruncha-calc-review](cruncha-calc-review/SKILL.md) | Checking a calc package as a reviewer: units, assumptions, independent re-derivation |
 | [cruncha-history](cruncha-history/SKILL.md) | Questions about what changed, versions, tags, rollback |
+| [cruncha-templates](cruncha-templates/SKILL.md) | Finding and inserting templates and snippets; writing `.cruncha.md` files |
 
 **Status:** the engine isn't built yet. These skills describe the syntax and tools **as designed** in `docs/design/02-document-model.md` and `docs/adr/`. When an implementation diverges, update the skill in the same change. The skills are the agent-facing spec, so they must never drift from the implementation.

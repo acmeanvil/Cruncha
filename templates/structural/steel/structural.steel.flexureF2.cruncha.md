@@ -1,12 +1,12 @@
 +++
 cruncha-template = 1
 id = "structural.steel.flexureF2"
-version = "1.0.0"
+version = "1.0.1"
 title = "W-shape flexure with lateral-torsional buckling, AISC 360 F2 (LRFD)"
 summary = "Design flexural strength of a compact doubly symmetric I-shape about its major axis: yielding, or lateral-torsional buckling by unbraced length, checked against the factored moment."
 category = ["Structural engineering", "Steel members"]
 tags = ["AISC 360", "F2", "flexure", "beam", "lateral-torsional buckling", "LTB", "Lp", "Lr", "Cb", "W-shape", "LRFD"]
-from = "lacewing:structural.aisc360"
+from = "lacewing:structural.steelMember"
 license = "GPL-3.0-or-later"
 inputs = ["F_y", "E", "Z_x", "S_x", "r_y", "r_ts", "J", "h_o", "λ_f", "λ_w", "L_b", "C_b", "M_u"]
 outputs = ["M_p", "L_p", "L_r", "M_n", "ϕM_n"]

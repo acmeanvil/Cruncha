@@ -37,7 +37,7 @@ crates/cruncha-templates/  templates and snippets (ADR-0014): the `<id>.cruncha.
                            (run_tests_with: code cells through a CodeRunner; tests/support/py.rs runs them on the real worker); examples/check.rs checks files while writing them
                            (worked examples evaluated with cruncha-eval, compared in SI); tests/library.rs checks every built-in template under templates/
                            write (a template back to its file) and load_dir (a library folder) for the app's library
-templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md (bundled with the app as a resource)
+templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md (bundled with the app as a resource); `from = "lacewing:<id>"` names a calculator in research 02
 crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluation order, duplicate names, cycles, use-above-definition lint, affected cells
 crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing, sandbox.rs (macOS profile),
                            env.rs (uv + python-build-standalone environment per lockfile); examples/setup_env.rs, examples/py_bench.rs (S4)
@@ -56,7 +56,7 @@ crates/cruncha-report/     reports (spike S6, ADR-0015): model.rs (Report, block
                            tex.rs (the engine's TeX -> Typst math; unknown commands are errors), templates/calc-package.typ (cover, summary, calcs, provenance),
                            tests/tex_corpus.rs (every golden TeX string compiles), tests/figures.rs (Plotly SVG, FIGURE NOT RENDERED), examples/report_demo.rs
 crates/cruncha-mcp/        the MCP server agents use (ADR-0009): lib.rs (Backend trait + view types; no cruncha-store dependency), mirror.rs (text mirror),
-                           tools.rs (read_doc, run, explain, check, history, propose_edit, proposals, withdraw; rmcp), http.rs (Streamable HTTP on 127.0.0.1, bearer token, Host/Origin checks)
+                           tools.rs (read_doc, run, explain, check, history, propose_edit, proposals, withdraw, documents, propose_copy, templates, propose_template; rmcp), http.rs (Streamable HTTP on 127.0.0.1, bearer token, Host/Origin checks)
 crates/cruncha-agent/      the built-in agent, ported from looking_glass's lg-agent (MIT notice in LICENSE-LOOKING-GLASS): providers (anthropic.rs, llm.rs), mcp.rs (Streamable-HTTP MCP
                            client: its tools are the session's MCP servers'), skills.rs (system prompt, AGENTS.md, skills index, load_skill), demo.rs; the app runs it as
                            `cruncha-app --acp-agent`; tests/ drive it through cruncha-acp against a real cruncha-mcp
@@ -111,6 +111,7 @@ docs/spikes/               spike write-ups with measured numbers (s7/: the WKWeb
 docs/adr/  docs/design/  docs/research/
 skills/                    Agent Skills (SKILL.md) for AI agents working inside Cruncha documents
 scripts/run-app.sh         launch the app for review (deps check, npm ci if needed, tauri dev)
+scripts/lacewing-status.py the Lacewing Lab conversion table in docs/research/02 §5 (from each template's `from`; --check fails if stale)
 ```
 
 ## Commands

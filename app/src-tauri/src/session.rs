@@ -481,6 +481,123 @@ impl Session {
         self.library().detail(key, &self.hidden_templates())
     }
 
+    /// A template's file as it is.
+    pub fn template_text(&self, key: &str) -> Result<String> {
+        self.library().text(key)
+    }
+
+    /// A template by id (the user's library first), with its key.
+    pub fn template_by_id(&self, id: &str) -> Result<crate::library::TemplateDetail> {
+        let key = self
+            .templates()
+            .into_iter()
+            .find(|t| t.id == id && !t.hidden && t.error.is_none())
+            .map(|t| t.key)
+            .ok_or_else(|| format!("no template {id}; templates lists them"))?;
+        self.template(&key)
+    }
+
+    /// A template's cells for the selected document (ADR-0014 §3, §7), as a proposal's
+    /// inserts after `after`: inputs in `bindings` (input → the document's name) lose their
+    /// definition and read the document's name, `rename` renames other names, and any name
+    /// still clashing with the document's is refused with suggestions.
+    pub async fn template_edits(
+        &mut self,
+        id: &str,
+        bindings: &BTreeMap<String, String>,
+        rename: &BTreeMap<String, String>,
+        after: Option<String>,
+    ) -> Result<(crate::library::TemplateDetail, Vec<cruncha_mcp::Edit>)> {
+        let t = self.template_by_id(id)?;
+        if !t.problems.is_empty() {
+            return Err(format!("template {id} doesn't validate: {}", t.problems.join("; ")));
+        }
+        let existing: BTreeSet<String> = self.cells(None).await?.into_iter().flat_map(|c| c.defines).collect();
+        for (input, target) in bindings {
+            if !t.summary.inputs.contains(input) {
+                return Err(format!("{input} isn't an input of {id} (its inputs: {})", t.summary.inputs.join(", ")));
+            }
+            if !existing.contains(target) {
+                return Err(format!("the document doesn't define {target}, to bind {input} to"));
+            }
+            if rename.contains_key(input) {
+                return Err(format!("{input} is both bound and renamed; give it in one of them"));
+            }
+        }
+        // Leave out the cells that define only bound inputs.
+        let code = |k: &str| matches!(k, "calc" | "python" | "rust");
+        let mut kept: Vec<&crate::library::CellView> = Vec::new();
+        for c in &t.cells {
+            if code(&c.kind) {
+                let kind = CellKind::parse(&c.kind).ok_or_else(|| format!("unknown kind {}", c.kind))?;
+                let names = self.cell_names(kind, &c.source).await?;
+                let bound: Vec<&String> = names.defines.iter().filter(|n| bindings.contains_key(*n)).collect();
+                if !bound.is_empty() {
+                    if bound.len() < names.defines.len() {
+                        let others: Vec<&str> = names.defines.iter().filter(|n| !bindings.contains_key(*n)).map(String::as_str).collect();
+                        return Err(format!(
+                            "{} is defined in a cell that also defines {}, so it can't be bound; rename it instead",
+                            bound[0],
+                            others.join(", ")
+                        ));
+                    }
+                    continue;
+                }
+            }
+            kept.push(c);
+        }
+        let mut names = rename.clone();
+        names.extend(bindings.iter().filter(|(a, b)| a != b).map(|(a, b)| (a.clone(), b.clone())));
+        let views: Vec<SourceView> =
+            kept.iter().filter(|c| code(&c.kind)).map(|c| SourceView { kind: c.kind.clone(), source: c.source.clone() }).collect();
+        let sources = if names.is_empty() { views.iter().map(|v| v.source.clone()).collect() } else { self.rename_cells(views.clone(), names).await? };
+        let renamed: Vec<SourceView> =
+            views.iter().zip(&sources).map(|(v, s)| SourceView { kind: v.kind.clone(), source: s.clone() }).collect();
+        let clashes = self.paste_clashes(renamed).await?;
+        if !clashes.is_empty() {
+            let (inputs, others): (Vec<_>, Vec<_>) = clashes.iter().partition(|c| t.summary.inputs.contains(&c.name));
+            let mut hint = Vec::new();
+            if !others.is_empty() {
+                hint.push(format!(
+                    "rename, e.g. {{{}}}",
+                    others.iter().map(|c| format!("\"{}\": \"{}\"", c.name, c.suggestion)).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            if !inputs.is_empty() {
+                hint.push(format!(
+                    "bindings to use the document's value, e.g. {{{}}}, or rename",
+                    inputs.iter().map(|c| format!("\"{0}\": \"{0}\"", c.name)).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            return Err(format!(
+                "the document already defines {}; insert again with {}",
+                clashes.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "),
+                hint.join(", and ")
+            ));
+        }
+        // Prose travels as Markdown (proposals take prose as Markdown). Listed in reverse with
+        // the same `after`, the cells land in order.
+        let mut sources = sources.into_iter();
+        let mut edits = Vec::with_capacity(kept.len());
+        for c in kept {
+            let source = if code(&c.kind) {
+                sources.next().expect("a source per code cell")
+            } else if c.kind == "prose" {
+                cruncha_prose::to_markdown(&cruncha_prose::parse_json(&c.source))
+            } else {
+                c.source.clone()
+            };
+            edits.push(cruncha_mcp::Edit::Insert {
+                after: after.clone(),
+                kind: c.kind.clone(),
+                source,
+                description: c.attrs.get("description").and_then(|d| d.as_str()).map(str::to_owned),
+            });
+        }
+        edits.reverse();
+        Ok((t, edits))
+    }
+
     /// Hide a built-in template from the Templates tab, or show it again.
     pub fn hide_template(&mut self, id: &str, hidden: bool) -> Result<()> {
         let mut prefs = self.prefs.clone();
@@ -2156,6 +2273,56 @@ mod tests {
         })
         .await;
         session.close().await;
+    }
+
+    #[tokio::test]
+    async fn an_agent_proposes_a_template_bound_and_renamed() {
+        use cruncha_mcp::Edit;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let setup = vec![
+            Edit::Insert { after: None, kind: "calc".into(), source: "ϕ = 0.9".into(), description: None },
+            Edit::Insert { after: None, kind: "calc".into(), source: "V = 6 kips".into(), description: None },
+        ];
+        let p = session.propose("ai:claude", None, "setup", setup).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        let bolts = "structural.bolts.shearTension";
+        let none = BTreeMap::new();
+
+        let e = session.template_edits(bolts, &none, &none, None).await.unwrap_err();
+        assert!(e.contains("already defines ϕ") && e.contains("\"ϕ\": \"ϕ2\""), "{e}");
+        let bad: BTreeMap<String, String> = [("A_b".to_owned(), "V".to_owned())].into();
+        assert!(session.template_edits(bolts, &bad, &none, None).await.unwrap_err().contains("isn't an input"));
+        let bad: BTreeMap<String, String> = [("V_u".to_owned(), "nope".to_owned())].into();
+        assert!(session.template_edits(bolts, &bad, &none, None).await.unwrap_err().contains("doesn't define nope"));
+
+        let bind: BTreeMap<String, String> = [("V_u".to_owned(), "V".to_owned())].into();
+        let rename: BTreeMap<String, String> = [("ϕ".to_owned(), "ϕ2".to_owned())].into();
+        let (t, edits) = session.template_edits(bolts, &bind, &rename, None).await.unwrap();
+        let sources: Vec<&str> = edits
+            .iter()
+            .rev()
+            .map(|e| match e {
+                Edit::Insert { source, .. } => source.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(!sources.iter().any(|s| s.starts_with("V_u =")), "V_u's definition is left out");
+        assert!(sources.iter().any(|s| s.contains("f_rv = V / (A_b n_s)")), "{sources:?}");
+        assert!(sources.contains(&"ϕ2 = 0.75"), "{sources:?}");
+        assert!(sources[0].starts_with("## "), "prose as Markdown, in order: {sources:?}");
+
+        let msg = format!("Insert template {} {}: bolt check", t.summary.title, t.summary.version);
+        let p = session.propose("ai:claude", None, &msg, edits).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        let cells = session.cells(None).await.unwrap();
+        let r = session.results(&At::default()).await.unwrap();
+        let f_rv = cells.iter().find(|c| c.defines.contains(&"f_rv".to_string())).unwrap();
+        assert!(r[&f_rv.id].error.is_none(), "{:?}", r[&f_rv.id]);
+        assert!(f_rv.reads.contains(&"V".to_string()));
+        assert!(session.history().await.unwrap()[0].message.contains("Insert template Bolt shear and tension"));
     }
 
     #[tokio::test]

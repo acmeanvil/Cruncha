@@ -8,7 +8,8 @@
 //!
 //! The tools follow `skills/cruncha-core`: the read tools `read_doc`, `explain`, `check`,
 //! `history` and `run` (the engine's current results), and `propose_edit`, `proposals` and
-//! `withdraw` (ADR-0016). Agents never write the document: a proposal waits for a human to
+//! `withdraw` (ADR-0016), and `templates` and `propose_template` (ADR-0014 §7). Agents never
+//! write the document, nor the template libraries: a proposal waits for a human to
 //! accept or reject it in the app.
 //!
 //! The engine computes every number: tools return the engine's results verbatim, never a
@@ -206,6 +207,49 @@ pub struct ProposalInfo {
     pub effects: Vec<Effect>,
 }
 
+/// A template or snippet in the libraries (ADR-0014), as `templates` lists it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TemplateInfo {
+    pub id: String,
+    pub version: String,
+    pub title: String,
+    pub summary: Option<String>,
+    /// `builtin` (bundled with Cruncha, read-only) or `user` (the user's own library).
+    pub library: String,
+    pub category: Vec<String>,
+    pub tags: Vec<String>,
+    /// Names the template defines with a `_` placeholder: what the user fills in.
+    pub inputs: Vec<String>,
+    /// Names it promises.
+    pub outputs: Vec<String>,
+}
+
+/// One template: its listing, its file and what validation found.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct TemplateFile {
+    pub info: TemplateInfo,
+    /// The `.cruncha.md` file as it is.
+    pub text: String,
+    /// What validation found wrong (empty: valid).
+    pub problems: Vec<String>,
+    /// Its worked examples, run here: `PASS name`, `FAIL name: …`, `SKIPPED name: …`.
+    pub tests: Vec<String>,
+}
+
+/// How to insert a template (`propose_template`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TemplateInsert {
+    pub id: String,
+    /// Inputs bound to the document's own values: input → the document's name. The input's
+    /// definition is left out and the template reads the document's name instead.
+    pub bindings: std::collections::BTreeMap<String, String>,
+    /// Other names renamed (old → new), for names the document already defines.
+    pub rename: std::collections::BTreeMap<String, String>,
+    /// The cell to insert after; `None`: the start of the document.
+    pub after: Option<String>,
+    pub message: String,
+}
+
 /// What the app provides. Every method acts on the document open in the app; an error
 /// (such as "no document is open") is returned to the agent as the tool's error.
 pub trait Backend: Clone + Send + Sync + 'static {
@@ -257,5 +301,17 @@ pub trait Backend: Clone + Send + Sync + 'static {
     fn archive(&self, cell: Option<String>) -> impl Future<Output = Result<ArchiveView, String>> + Send {
         let _ = cell;
         async { Ok(ArchiveView::default()) }
+    }
+    /// The templates and snippets in both libraries (hidden built-in ones left out).
+    fn templates(&self) -> impl Future<Output = Result<Vec<TemplateInfo>, String>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// One template by id.
+    fn template(&self, id: String) -> impl Future<Output = Result<TemplateFile, String>> + Send {
+        async move { Err(format!("no template {id}")) }
+    }
+    /// Propose inserting a template (ADR-0014 §3, §7) into this document, as one proposal.
+    fn propose_template(&self, insert: TemplateInsert) -> impl Future<Output = Result<ProposalInfo, String>> + Send {
+        async move { Err(format!("this server can't insert template {}", insert.id)) }
     }
 }

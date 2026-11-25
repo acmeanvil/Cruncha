@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
+use cruncha_mcp::{Backend, CellChange, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, TemplateFile, TemplateInfo, TemplateInsert, VersionInfo};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -111,6 +111,36 @@ impl Backend for Fake {
     async fn withdraw(&self, id: String) -> Result<ProposalInfo, String> {
         Err(format!("no open proposal {id} of yours"))
     }
+
+    async fn templates(&self) -> Result<Vec<TemplateInfo>, String> {
+        let t = |id: &str, title: &str, tags: &[&str], inputs: &[&str]| TemplateInfo {
+            id: id.into(),
+            version: "1.0.0".into(),
+            title: title.into(),
+            library: "builtin".into(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            inputs: inputs.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        Ok(vec![
+            t("structural.beam", "Simply supported beam", &["AISC 360"], &["w", "L"]),
+            t("structural.bolts", "Bolt shear", &["AISC 360"], &["d_b"]),
+            t("fluids.pipe", "Pipe friction", &["Colebrook"], &["D"]),
+        ])
+    }
+
+    async fn template(&self, id: String) -> Result<TemplateFile, String> {
+        let info = self.templates().await?.into_iter().find(|t| t.id == id).ok_or(format!("no template {id}"))?;
+        Ok(TemplateFile { info, text: "+++\nid = \"structural.beam\"\n+++\n".into(), problems: vec![], tests: vec!["PASS midspan".into()] })
+    }
+
+    async fn propose_template(&self, insert: TemplateInsert) -> Result<ProposalInfo, String> {
+        if insert.rename.get("M").map(String::as_str) != Some("M2") {
+            return Err("this document already defines M; insert again with rename, e.g. {\"M\": \"M2\"}".into());
+        }
+        assert_eq!(insert.bindings.get("L").map(String::as_str), Some("L"));
+        Ok(ProposalInfo { id: "P2".into(), status: "open".into(), message: insert.message, changes: vec!["insert N1".into()], ..Default::default() })
+    }
 }
 
 /// reqwest is built without a TLS provider (the server is plain HTTP on 127.0.0.1), but it
@@ -133,7 +163,7 @@ async fn tools_over_http() {
     let client = ().serve(transport).await.expect("MCP handshake");
     let tools = client.list_all_tools().await.unwrap();
     let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
-    for t in ["read_doc", "run", "explain", "check", "history", "propose_edit", "proposals", "withdraw"] {
+    for t in ["read_doc", "run", "explain", "check", "history", "propose_edit", "proposals", "withdraw", "templates", "propose_template"] {
         assert!(names.contains(&t.to_string()), "{names:?}");
     }
 
@@ -181,6 +211,20 @@ async fn tools_over_http() {
     })).await;
     assert_eq!(stale.is_error, Some(true));
     assert!(text(&call("proposals", serde_json::json!({})).await).contains("No proposals"));
+
+    let list = text(&call("templates", serde_json::json!({"query": "aisc"})).await);
+    assert!(list.starts_with("2 templates:\n- structural.bolts (builtin 1.0.0, Bolt shear)"), "{list}");
+    let list = text(&call("templates", serde_json::json!({"query": "beam aisc"})).await);
+    assert!(list.contains("structural.beam") && list.contains("inputs: w, L") && !list.contains("bolts"), "{list}");
+    let one = text(&call("templates", serde_json::json!({"id": "structural.beam"})).await);
+    assert!(one.contains("Validation: no problems") && one.contains("- PASS midspan") && one.contains("id = \"structural.beam\""), "{one}");
+    let clash = call("propose_template", serde_json::json!({"id": "structural.beam", "message": "beam", "bindings": {"L": "L"}})).await;
+    assert_eq!(clash.is_error, Some(true));
+    assert!(text(&clash).contains("rename"));
+    let p = text(&call("propose_template", serde_json::json!({
+        "id": "structural.beam", "message": "beam", "bindings": {"L": "L"}, "rename": {"M": "M2"}
+    })).await);
+    assert!(p.contains("Proposal P2 recorded"), "{p}");
 
     let bad = call("explain", serde_json::json!({"cell_id": "nope"})).await;
     assert_eq!(bad.is_error, Some(true));

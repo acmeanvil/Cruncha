@@ -1,12 +1,12 @@
 +++
 cruncha-template = 1
 id = "structural.beams.simpleUniformDiagrams"
-version = "1.0.0"
+version = "1.0.1"
 title = "Simply supported beam, uniform load: reactions, moment, deflection and diagrams"
 summary = "Reactions, maximum shear and moment, end slope and mid-span deflection of a simply supported beam under a uniform load over its whole span, with shear and moment diagrams."
 category = ["Structural engineering", "Beams"]
 tags = ["beam", "simply supported", "uniform load", "UDL", "shear diagram", "moment diagram", "deflection", "Roark", "Plotly", "Python"]
-from = "lacewing:beams.roark"
+from = "lacewing:structural.beam"
 license = "GPL-3.0-or-later"
 inputs = ["w", "L", "E", "I"]
 outputs = ["R", "M_max", "θ_A", "y_max", "M_peak"]

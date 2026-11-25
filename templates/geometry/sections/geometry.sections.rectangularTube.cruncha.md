@@ -1,12 +1,12 @@
 +++
 cruncha-template = 1
 id = "geometry.sections.rectangularTube"
-version = "1.0.0"
+version = "1.0.1"
 title = "Section properties: rectangle and rectangular tube"
 summary = "Area, second moments, elastic and plastic section moduli and radii of gyration of a solid rectangle or a rectangular tube with square corners."
 category = ["Geometry", "Section properties"]
 tags = ["section properties", "rectangle", "hollow rectangle", "tube", "box", "moment of inertia", "section modulus", "plastic modulus"]
-from = "lacewing:geometry.sections"
+from = "lacewing:geometry.secondMoment"
 license = "GPL-3.0-or-later"
 inputs = ["b", "h", "t"]
 outputs = ["A", "I_x", "I_y", "S_x", "S_y", "Z_x", "Z_y", "r_x", "r_y"]

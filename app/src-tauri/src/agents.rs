@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, DocumentInfo, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, VersionInfo};
+use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, DocumentInfo, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, TemplateFile, TemplateInfo, TemplateInsert, VersionInfo};
 use cruncha_store::{CellDiff, CellKind};
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -33,6 +33,20 @@ impl AppBackend {
         let mut s = self.0.lock().await;
         s.select(self.2.as_deref())?;
         Ok(s)
+    }
+}
+
+fn template_info(t: crate::library::TemplateSummary) -> TemplateInfo {
+    TemplateInfo {
+        id: t.id,
+        version: t.version,
+        title: t.title,
+        summary: t.summary,
+        library: t.library.into(),
+        category: t.category,
+        tags: t.tags,
+        inputs: t.inputs,
+        outputs: t.outputs,
     }
 }
 
@@ -335,6 +349,37 @@ impl Backend for AppBackend {
             })
             .collect();
         let message = format!("{} (copied from {} v{})", message.trim(), from_info.name, from_info.version);
+        s.propose(&self.1, None, &message, edits).await.map(proposal_info)
+    }
+
+    async fn templates(&self) -> Result<Vec<TemplateInfo>, String> {
+        let s = self.0.lock().await;
+        Ok(s.templates().into_iter().filter(|t| !t.hidden && t.error.is_none()).map(template_info).collect())
+    }
+
+    async fn template(&self, id: String) -> Result<TemplateFile, String> {
+        let s = self.0.lock().await;
+        let t = s.template_by_id(&id)?;
+        let text = s.template_text(&t.summary.key)?;
+        let tests = t
+            .tests
+            .iter()
+            .map(|x| match (&x.skipped, x.passed) {
+                (Some(why), _) => format!("SKIPPED {}: {why}", x.name),
+                (None, true) => format!("PASS {}", x.name),
+                (None, false) => format!("FAIL {}: {}", x.name, x.lines.join("; ")),
+            })
+            .collect();
+        Ok(TemplateFile { info: template_info(t.summary.clone()), text, problems: t.problems.clone(), tests })
+    }
+
+    async fn propose_template(&self, insert: TemplateInsert) -> Result<ProposalInfo, String> {
+        let mut s = self.session().await?;
+        if !s.is_open() {
+            return Err("no document is open in Cruncha".into());
+        }
+        let (t, edits) = s.template_edits(&insert.id, &insert.bindings, &insert.rename, insert.after).await?;
+        let message = format!("Insert template {} {}: {}", t.summary.title, t.summary.version, insert.message.trim());
         s.propose(&self.1, None, &message, edits).await.map(proposal_info)
     }
 

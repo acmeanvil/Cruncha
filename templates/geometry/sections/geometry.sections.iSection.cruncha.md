@@ -1,12 +1,12 @@
 +++
 cruncha-template = 1
 id = "geometry.sections.iSection"
-version = "1.0.0"
+version = "1.0.1"
 title = "Section properties: doubly symmetric I-section"
 summary = "Area, second moments, section moduli, radii of gyration, torsional and warping constants and r_ts of a welded I-section with equal flanges."
 category = ["Geometry", "Section properties"]
 tags = ["section properties", "I-section", "plate girder", "built-up", "moment of inertia", "section modulus", "plastic modulus", "torsion constant", "warping constant", "rts"]
-from = "lacewing:geometry.sections"
+from = "lacewing:geometry.secondMoment"
 license = "GPL-3.0-or-later"
 inputs = ["d", "b_f", "t_f", "t_w"]
 outputs = ["A", "I_x", "I_y", "S_x", "S_y", "Z_x", "Z_y", "r_x", "r_y", "J", "C_w", "r_ts", "h_o"]

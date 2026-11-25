@@ -248,6 +248,12 @@ impl Library {
         Ok((lib, inside(root, rel)?, rel.to_owned()))
     }
 
+    /// A template's file as it is.
+    pub fn text(&self, key: &str) -> Result<String> {
+        let (_, path, _) = self.file(key)?;
+        fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
     fn read(&self, key: &str) -> Result<(&'static str, PathBuf, Template)> {
         let (lib, path, _) = self.file(key)?;
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;

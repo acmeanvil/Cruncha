@@ -1,12 +1,12 @@
 +++
 cruncha-template = 1
 id = "mechanical.columns.eulerJohnson"
-version = "1.0.0"
+version = "1.0.1"
 title = "Column buckling: Euler or Johnson, by slenderness"
 summary = "Critical load of a centrally loaded column: Euler's formula for long columns, the Johnson parabola for intermediate ones, chosen by comparing the slenderness ratio with the tangent point."
 category = ["Mechanical engineering", "Columns"]
 tags = ["column", "buckling", "Euler", "Johnson", "slenderness", "critical load", "strut"]
-from = "lacewing:structural.columns"
+from = "lacewing:structural.columnBuckling"
 license = "GPL-3.0-or-later"
 inputs = ["E", "S_y", "l_e", "A", "I", "P", "n_d"]
 outputs = ["k", "λ", "λ_1", "P_cr"]

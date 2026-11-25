@@ -12,7 +12,7 @@ use rmcp::{ErrorData, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 
 use crate::mirror::{self, Range};
-use crate::{Backend, DocSnapshot, Edit};
+use crate::{Backend, DocSnapshot, Edit, TemplateInfo, TemplateInsert};
 
 const INSTRUCTIONS: &str = "Tools for the Cruncha calculation document open in the app. \
 The engine computes every number: quote results from these tools with their cell IDs and \
@@ -114,6 +114,38 @@ pub struct ProposeRequest {
 pub struct WithdrawRequest {
     /// The proposal to withdraw (one of yours that is still open).
     pub proposal_id: String,
+    /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
+    /// conversation's document (the app's active tab for agents outside Cruncha).
+    pub document: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct TemplatesRequest {
+    /// Words to search for in titles, summaries, tags, categories, ids and input/output
+    /// names (every word must match). Omit to list every template.
+    pub query: Option<String>,
+    /// Read this template (its id from the list): the whole `.cruncha.md` file, what
+    /// validation found and its worked examples.
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProposeTemplateRequest {
+    /// The template's id, as `templates` lists it.
+    pub id: String,
+    /// Inputs to bind to values the document already has (input → the document's name, e.g.
+    /// {"L": "L_span"}, or {"L": "L"} for the same name). The input's definition is left out
+    /// and the template's cells read the document's name instead.
+    #[serde(default)]
+    pub bindings: std::collections::BTreeMap<String, String>,
+    /// Other names to rename (old → new), for names the document already defines. Applied to
+    /// definitions and uses, and checked.
+    #[serde(default)]
+    pub rename: std::collections::BTreeMap<String, String>,
+    /// The cell to insert after; omit for the start of the document.
+    pub after: Option<String>,
+    /// Why the template goes here, for the engineer who reviews it.
+    pub message: String,
     /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
     /// conversation's document (the app's active tab for agents outside Cruncha).
     pub document: Option<String>,
@@ -475,6 +507,67 @@ impl<B: Backend> CrunchaTools<B> {
         }
     }
 
+    #[tool(description = "The calculation templates and snippets in Cruncha's libraries (the built-in \
+        one and the user's own): search them, or read one by id (its .cruncha.md file: TOML front \
+        matter with inputs, outputs, references and worked examples, then its cells, with the \
+        outcome of its worked examples). Insert one with propose_template. Load the \
+        cruncha-templates skill for the format.")]
+    async fn templates(&self, Parameters(req): Parameters<TemplatesRequest>) -> Result<CallToolResult, ErrorData> {
+        if let Some(id) = req.id {
+            return match self.backend.template(id).await {
+                Ok(t) => ok(template_text(&t)),
+                Err(e) => fail(e),
+            };
+        }
+        let all = match self.backend.templates().await {
+            Ok(t) => t,
+            Err(e) => return fail(e),
+        };
+        let found = find_templates(&all, req.query.as_deref().unwrap_or(""));
+        if found.is_empty() {
+            return ok(if all.is_empty() { "No templates.".into() } else { "No template matches; try fewer words.".into() });
+        }
+        let mut out = format!("{} template{}:\n", found.len(), if found.len() == 1 { "" } else { "s" });
+        for t in found {
+            out.push_str(&format!("- {} ({} {}, {})", t.id, t.library, t.version, t.title));
+            if !t.category.is_empty() {
+                out.push_str(&format!(" [{}]", t.category.join(" / ")));
+            }
+            out.push('\n');
+            if let Some(s) = &t.summary {
+                out.push_str(&format!("  {s}\n"));
+            }
+            if !t.inputs.is_empty() || !t.outputs.is_empty() {
+                out.push_str(&format!("  inputs: {}; outputs: {}\n", t.inputs.join(", "), t.outputs.join(", ")));
+            }
+        }
+        ok(out)
+    }
+
+    #[tool(description = "Propose inserting a template into the document, as one proposal the engineer \
+        accepts or rejects in the app. Bind inputs to values the document already has with \
+        `bindings` (the input's definition is left out); other inputs arrive as placeholders (_) \
+        for the engineer to fill in. If the document already defines a name the template \
+        defines, the proposal is refused and lists the names: call again with `rename` (or \
+        `bindings` for inputs). The reply has the new cells' IDs and the results the insert would \
+        change.")]
+    async fn propose_template(&self, Parameters(req): Parameters<ProposeTemplateRequest>) -> Result<CallToolResult, ErrorData> {
+        let b = match self.on(req.document.as_deref()).await {
+            Ok(b) => b,
+            Err(e) => return fail(e),
+        };
+        let insert = TemplateInsert { id: req.id, bindings: req.bindings, rename: req.rename, after: req.after, message: req.message };
+        match b.propose_template(insert).await {
+            Ok(p) => ok(format!(
+                "Proposal {} recorded; it waits for the engineer to accept or reject it in Cruncha. \
+                 Don't describe it as applied.\n\n{}",
+                p.id,
+                mirror::proposal_text(&p)
+            )),
+            Err(e) => fail(e),
+        }
+    }
+
     #[tool(description = "Propose a change to the document: insert, modify or delete cells, as one \
         unit a human accepts or rejects in the app. Nothing changes until they accept. The reply \
         has the proposal id, the new cells' ids, and every result the change would alter \
@@ -527,6 +620,65 @@ impl<B: Backend> ServerHandler for CrunchaTools<B> {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(INSTRUCTIONS)
     }
+}
+
+fn words(s: &str) -> Vec<String> {
+    s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_owned).collect()
+}
+
+/// Templates matching every word of `query` (a prefix of a word in the title, summary, tags,
+/// category, id or names), title matches first, then by title; as the Templates tab does.
+pub fn find_templates<'a>(all: &'a [TemplateInfo], query: &str) -> Vec<&'a TemplateInfo> {
+    let q = words(query);
+    let mut scored: Vec<(usize, &TemplateInfo)> = Vec::new();
+    'next: for t in all {
+        let title = words(&t.title);
+        let rest = words(
+            &[t.summary.clone().unwrap_or_default(), t.tags.join(" "), t.category.join(" "), t.id.clone(), t.inputs.join(" "), t.outputs.join(" ")]
+                .join(" "),
+        );
+        let mut score = 0;
+        for w in &q {
+            if title.iter().any(|x| x.starts_with(w.as_str())) {
+                score += 2;
+            } else if rest.iter().any(|x| x.starts_with(w.as_str())) {
+                score += 1;
+            } else {
+                continue 'next;
+            }
+        }
+        scored.push((score, t));
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase())));
+    scored.into_iter().map(|(_, t)| t).collect()
+}
+
+/// One template for `templates(id)`: a header, then its file.
+fn template_text(t: &crate::TemplateFile) -> String {
+    let i = &t.info;
+    let mut out = format!("Template {} {} ({} library): {}\n", i.id, i.version, i.library, i.title);
+    if !i.inputs.is_empty() || !i.outputs.is_empty() {
+        out.push_str(&format!("Inputs: {}; outputs: {}\n", i.inputs.join(", "), i.outputs.join(", ")));
+    }
+    if t.problems.is_empty() {
+        out.push_str("Validation: no problems\n");
+    } else {
+        out.push_str("Validation problems:\n");
+        for p in &t.problems {
+            out.push_str(&format!("- {p}\n"));
+        }
+    }
+    if !t.tests.is_empty() {
+        out.push_str("Worked examples:\n");
+        for line in &t.tests {
+            out.push_str(&format!("- {line}\n"));
+        }
+    }
+    out.push_str(&format!("\nThe file:\n\n{}", t.text));
+    if !t.text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
 }
 
 /// The archive as text: kept snapshots, then removed saves, newest first.

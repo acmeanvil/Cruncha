@@ -547,8 +547,11 @@ pub fn run_tests_with(t: &Template, mut runner: Option<&mut dyn CodeRunner>) -> 
                 lines.push(format!("{} figures: expected {want}, got {figures}", if ok { "ok" } else { "FAIL" }));
             }
             if let Some(want) = &case.checks {
+                // "fail" means a check evaluated and doesn't hold; one that wasn't evaluated
+                // (an error before it) is neither.
                 let all = checks.iter().all(|(_, c)| *c == Some(true));
-                let ok = if want == "pass" { all } else { !all };
+                let one_fails = checks.iter().any(|(_, c)| *c == Some(false));
+                let ok = if want == "pass" { all } else { one_fails };
                 passed &= ok;
                 lines.push(format!(
                     "{} checks: expected {want}; {}",
