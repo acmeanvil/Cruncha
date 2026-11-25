@@ -180,7 +180,7 @@ fn rop(op: &str, a: &V, b: &V) -> Result<V, Operand> {
         "subtract" => x.subtract(&y),
         "multiply" | "circ" => x.multiply(&y),
         "divide" => x.divide(&y),
-        "power" => x.power(&y).ok_or_else(|| err0("BAD_ROOT"))?,
+        "power" => x.power(&y).ok_or_else(|| err0(if x.is_zero() { "DIV" } else { "BAD_ROOT" }))?,
         "modulo" | "mod" | "rem" if y.is_zero() => return Err(err0("DIV")),
         "modulo" | "mod" => x.modulo(&y),
         "rem" => x.rem(&y),
@@ -302,7 +302,7 @@ pub(crate) fn binary(s1: Shape, s2: Shape, op: &str, x: &V, y: &V) -> Result<V, 
                     let z = complex::power(&[xr, Rational::zero()], &Exponent::Real(yr))?;
                     Ok(cpx(z[0].clone(), z[1].clone()))
                 } else {
-                    Ok(V::R(xr.power(&yr).ok_or_else(|| err0("BAD_ROOT"))?))
+                    Ok(V::R(xr.power(&yr).ok_or_else(|| err0(if xr.is_zero() { "DIV" } else { "BAD_ROOT" }))?))
                 }
             }
             "concat" | "unshift" => Ok(V::A(vec![x.clone(), y.clone()])),

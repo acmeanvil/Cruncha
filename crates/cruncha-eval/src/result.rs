@@ -552,7 +552,9 @@ pub(crate) fn format_result(
             .as_deref()
             .and_then(comparison_at_end)
             .map(str::to_string);
-        if result.dtype & dt::BOOLEAN != 0 && is_test && comparison.is_some() {
+        // A chain (`a ≤ x ≤ b`) has no single operator to negate: shown as a compound test.
+        let comparisons = stmt.rpn.as_deref().map_or(0, |r| r.split('\u{a0}').filter(|t| comparison_at_end(&format!("\u{a0}{t}")).is_some()).count());
+        if result.dtype & dt::BOOLEAN != 0 && is_test && comparison.is_some() && comparisons == 1 {
             let body = strip_test_prefix(&stmt.entry).to_string();
             stmt.check = Some(test_value(result));
             if test_value(result) {
@@ -570,6 +572,23 @@ pub(crate) fn format_result(
                     rd = tex(&body.replacen(&op, neg_tex, 1), ctx) + ",\\colorbox{Salmon}{ n.g.}";
                     alt = format!("{}, n.g.", body.replacen(&op, neg_alt, 1));
                 }
+            }
+        } else if result.dtype & dt::BOOLEAN != 0 && is_test && !is_matrix(result.dtype) {
+            // A compound condition (`a ≤ x ≤ b`, `p and q`): there's no single operator to
+            // negate, so the condition is shown as written, ok or n.g. (ADR-0025 row 2).
+            let body = strip_test_prefix(&stmt.entry).to_string();
+            let holds = test_value(result);
+            stmt.check = Some(holds);
+            if holds {
+                rd = tex(&body, ctx) + ",\\text{ ok }✓";
+                alt = format!("{body}, ok ✓");
+            } else if let Some(a) = assert {
+                let a = a.strip_suffix('.').unwrap_or(a);
+                rd = format!("\\colorbox{{Salmon}}{{{a}, but not ${}$}}", tex(&body, ctx));
+                alt = format!("{a}, but not {body}");
+            } else {
+                rd = tex(&body, ctx) + ",\\colorbox{Salmon}{ n.g.}";
+                alt = format!("{body}, n.g.");
             }
         } else if is_matrix(result.dtype) {
             let plain_value = match &result.value {

@@ -157,10 +157,12 @@ pub(crate) fn unit_start(s: &str) -> bool {
         || s.starts_with(|c: char| {
             c.is_ascii_alphabetic() || "°′″$£¥₨₪€ÅΩ℃℉\u{2126}\u{212A}\u{212B}".contains(c)
         })
+        || s.starts_with("Δ°")
+        || s.starts_with("ΔK")
 }
 
 static UNIT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    let unit_and_expo = "(?:(?:[A-Za-z][A-Za-zōö]*\\$?|[°′″$£¥₨₪€ÅΩ℃℉\u{2126}\u{212A}\u{212B}]|ʹʹ)(?:(?:(?:(?:\\^|\\^-)[1-9][0-9]*)|(?:\\^\\(-?[1-9][0-9]*\\))|⁻?[¹²³\u{2074}-\u{2079}][⁰¹²³\u{2074}-\u{2079}]*))?)";
+    let unit_and_expo = "(?:(?:Δ(?:°[CF]|K)|[A-Za-z][A-Za-zōö]*\\$?|[°′″$£¥₨₪€ÅΩ℃℉\u{2126}\u{212A}\u{212B}]|ʹʹ)(?:(?:(?:(?:\\^|\\^-)[1-9][0-9]*)|(?:\\^\\(-?[1-9][0-9]*\\))|⁻?[¹²³\u{2074}-\u{2079}][⁰¹²³\u{2074}-\u{2079}]*))?)";
     let product = format!("(?:{unit_and_expo}(?:[*·.•×]{unit_and_expo})*)");
     Regex::new(&format!("^{product}(?:/{product})?")).unwrap()
 });

@@ -1,7 +1,7 @@
 +++
 cruncha-template = 1
 id = "mechanical.stressConcentration.shaftShoulder"
-version = "1.0.0"
+version = "1.0.1"
 title = "Stress concentration: stepped shaft with shoulder fillet"
 summary = "Kt in tension and bending and Kts in torsion of a round shaft with a shoulder fillet, from the curve fits of Peterson's Charts 3.4, 3.10 and 3.12; Neuber notch sensitivity q from Sut for steels; fatigue factors Kf = 1 + q(Kt − 1); nominal, peak and fatigue stresses."
 category = ["Mechanical engineering", "Stress and failure"]
@@ -117,11 +117,11 @@ x = 2 t / D = ??
 ```calc
 function ktPeterson(c, β, x)
     s = sqrt(β)
-    k1 = c[1, 1] + c[1, 2] s + c[1, 3] β
-    k2 = c[2, 1] + c[2, 2] s + c[2, 3] β
-    k3 = c[3, 1] + c[3, 2] s + c[3, 3] β
-    k4 = c[4, 1] + c[4, 2] s + c[4, 3] β
-    return max(1, k1 + k2 x + k3 x^2 + k4 x^3)
+    C_1 = c[1, 1] + c[1, 2] s + c[1, 3] β
+    C_2 = c[2, 1] + c[2, 2] s + c[2, 3] β
+    C_3 = c[3, 1] + c[3, 2] s + c[3, 3] β
+    C_4 = c[4, 1] + c[4, 2] s + c[4, 3] β
+    return max(1, C_1 + C_2 x + C_3 x^2 + C_4 x^3)
 end
 ```
 
@@ -160,20 +160,12 @@ K_ts = ktPeterson(c_s, β, x) = ??
 @test d < D
 ```
 
-```calc {description="Tension and bending fits: t/r from 0.1"}
-@test β ≥ 0.1
+```calc {description="Tension and bending fits: t/r from 0.1 to 20"}
+@test 0.1 ≤ β ≤ 20
 ```
 
-```calc {description="Tension and bending fits: t/r up to 20"}
-@test β ≤ 20
-```
-
-```calc {description="Torsion fit: t/r from 0.25"}
-@test β ≥ 0.25
-```
-
-```calc {description="Torsion fit: t/r up to 4"}
-@test β ≤ 4
+```calc {description="Torsion fit: t/r from 0.25 to 4"}
+@test 0.25 ≤ β ≤ 4
 ```
 
 ```calc {description="Tension and bending charts drawn to D/d = 3"}

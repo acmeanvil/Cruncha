@@ -101,7 +101,7 @@ use cruncha_units::Dims;
 use eval::{Ctx, Scope, eval_rpn};
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use value::{OUnit, UnitObj, V, dt, is_matrix};
 
 pub use cruncha_lang::Formats;
@@ -359,13 +359,63 @@ pub fn prepare(source: &str, opts: &Options) -> Result<Statement, Error> {
     } else {
         Display::None
     };
+    // A function reads the user functions it calls, so the graph orders them and refuses
+    // recursion as a cycle (ADR-0025 row 7).
+    // A calc also reads the user functions it calls (Hurmet's dependencies listed only
+    // variables, so a calc didn't recompute when a function it used changed).
+    let reads = match &c.attrs.value {
+        value::V::Udf(u) if u.calls().contains(&u.name) => {
+            return Err(Error::Parse(format!("Error. Function {} calls itself; recursion isn't supported.", u.name)));
+        }
+        value::V::Udf(u) => u.calls(),
+        _ => {
+            let mut r = c.attrs.dependencies.clone();
+            let toks: Vec<&str> = c.attrs.rpn.as_deref().unwrap_or("").split('\u{a0}').collect();
+            for w in toks.windows(2) {
+                if w[0] == "function" && !r.iter().any(|n| n == w[1]) {
+                    r.push(w[1].to_string());
+                }
+            }
+            r
+        }
+    };
     Ok(Statement {
         defines: c.attrs.name.list(),
-        reads: c.attrs.dependencies.clone(),
+        reads,
         display,
         unit: c.unit_str,
         attrs: Arc::new(c.attrs),
     })
+}
+
+/// Silent mistakes in a prepared calc (ADR-0025 rows 11 and 12), as warnings for the editor,
+/// `check` and template validation:
+/// - `x = t / r`: an expression with no display selector defines nothing (Hurmet's rule:
+///   only a literal assigns without `= ?`);
+/// - `K_Ic,req = …`: a multiple assignment that reads like one subscripted name.
+pub fn lints(source: &str, stmt: &Statement) -> Vec<String> {
+    static ASSIGN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r#"^\s*([^\s=,;(){}\[\]"'@]+)\s*=[^=]"#).unwrap());
+    static SUBSCRIPT_LIST: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^\s*([^\s=,]+_[^\s=,(]+),([^\s=,]+)\s*=").unwrap());
+    let mut out = Vec::new();
+    let line = source.trim();
+    if stmt.defines.is_empty()
+        && stmt.display == Display::None
+        && !line.starts_with("function ")
+        && let Some(c) = ASSIGN.captures(line)
+    {
+        let name = &c[1];
+        out.push(format!("{name} isn't calculated, so it's not defined: add = ?? to show it, or = ! to hide the result"));
+    }
+    if stmt.defines.len() == 2
+        && let Some(c) = SUBSCRIPT_LIST.captures(line)
+    {
+        let (a, b) = (&c[1], &c[2]);
+        let (base, sub) = a.split_once('_').unwrap_or((a, ""));
+        out.push(format!("{a},{b} assigns two names, {a} and {b}; for one name with a subscript write {base}_({sub},{b})"));
+    }
+    out
 }
 
 const BASE_UNITS: [&str; 8] = ["m", "kg", "s", "A", "K", "unit", "cd", "EUR"];

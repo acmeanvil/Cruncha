@@ -28,6 +28,8 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0022](0022-fix-hurmet-function-bugs.md) | Fix the built-in function bugs inherited from Hurmet (`median`, `mod`, `rem`, `hypot`, `rms`, inverse trig, statistics, `e`) | Accepted |
 | [0023](0023-archive-major-versions.md) | Archive major versions (oldest first) from the History tab: snapshots and a save log kept, intermediate saves removed; agents can read archived snapshots (refines 0011) | Accepted |
 | [0024](0024-multiple-documents-and-cell-clipboard.md) | Several open documents in tabs, and cells that survive copy and paste (refines 0008, 0009) | Accepted |
+| [0025](0025-calc-engine-gaps-from-templates.md) | Fix the calc engine gaps found while converting templates: `sqrt(0)`, compound `@test`s, one-entry vectors, functions calling functions, √ units, lints (refines 0022) | Accepted |
+| [0026](0026-help-engine-and-documentation.md) | One help system: bundled Markdown pages, a help engine, inline help in the app (F1, "Why?" on errors, setting popovers), generated references, and a static site | Proposed |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

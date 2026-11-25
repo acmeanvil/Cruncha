@@ -1,7 +1,7 @@
 +++
 cruncha-template = 1
 id = "mechanical.stressConcentration.shaftGroove"
-version = "1.0.0"
+version = "1.0.1"
 title = "Stress concentration: round shaft with U groove"
 summary = "Kt in tension and bending and Kts in torsion of a round shaft with a circumferential U groove, from the curve fits of Peterson's Charts 2.41 and 2.47 and Roark's Table 17.1 case 15a; Neuber notch sensitivity q from Sut for steels; fatigue factors Kf = 1 + q(Kt − 1); nominal, peak and fatigue stresses."
 category = ["Mechanical engineering", "Stress and failure"]
@@ -122,11 +122,11 @@ x = 2 t / D = ??
 ```calc
 function ktPeterson(c, β, x)
     s = sqrt(β)
-    k1 = c[1, 1] + c[1, 2] s + c[1, 3] β
-    k2 = c[2, 1] + c[2, 2] s + c[2, 3] β
-    k3 = c[3, 1] + c[3, 2] s + c[3, 3] β
-    k4 = c[4, 1] + c[4, 2] s + c[4, 3] β
-    return max(1, k1 + k2 x + k3 x^2 + k4 x^3)
+    C_1 = c[1, 1] + c[1, 2] s + c[1, 3] β
+    C_2 = c[2, 1] + c[2, 2] s + c[2, 3] β
+    C_3 = c[3, 1] + c[3, 2] s + c[3, 3] β
+    C_4 = c[4, 1] + c[4, 2] s + c[4, 3] β
+    return max(1, C_1 + C_2 x + C_3 x^2 + C_4 x^3)
 end
 ```
 
@@ -169,12 +169,8 @@ K_ts = ktPeterson({c_(s,1) if β ≤ 2; c_(s,2) otherwise}, β, x) = ??
 @test d < D
 ```
 
-```calc {description="Fits: t/r from 0.25"}
-@test β ≥ 0.25
-```
-
-```calc {description="Fits: t/r up to 50"}
-@test β ≤ 50
+```calc {description="Fits: t/r from 0.25 to 50"}
+@test 0.25 ≤ β ≤ 50
 ```
 
 ```calc {description="Charts drawn to D/d = 2"}

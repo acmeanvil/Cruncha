@@ -1,7 +1,7 @@
 +++
 cruncha-template = 1
 id = "mechanical.fatigue.enduranceLimit"
-version = "1.0.0"
+version = "1.0.1"
 title = "Fatigue: endurance limit with Marin factors (Shigley)"
 summary = "Endurance limit of a steel part: the rotating-beam limit S′e (estimated from Sut or measured) times the Marin factors for surface, size, temperature, reliability and miscellaneous effects."
 category = ["Mechanical engineering", "Stress and failure"]
@@ -148,11 +148,7 @@ S_e = k_a k_b k_d k_e k_f S_e′ = ?? MPa
 ### Range of the fits
 
 ```calc
-@test d_e ≥ 2.79 'mm'
-```
-
-```calc
-@test d_e ≤ 254 'mm'
+@test 2.79 'mm' ≤ d_e ≤ 254 'mm'
 ```
 
 ```calc

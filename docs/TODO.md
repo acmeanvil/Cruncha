@@ -10,7 +10,7 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 | --- | --- | --- | --- |
 | 0024 | 5. (rest) Agent-panel conversations listed per tab (the panel shows the running one and notes its tab) | **Partial** | |
 | 0014 | 2. `cruncha-templates`: the format, validation, preview, the test runner | Partial | Done: format, validation, test runner (calcs and Python). Left: preview, Rust cells in tests, CI |
-| 0014 | 7. Convert Lacewing Lab section by section; the gap templates (uncertainty, atmosphere and moist air, chemistry) | Started | Mechanical first, a group per change: Stress and failure done (22 templates); research 02 §5 tracks it |
+| 0014 | 7. Convert Lacewing Lab section by section; the gap templates (uncertainty, atmosphere and moist air, chemistry) | Started | Mechanical first, a group per change: Stress and failure, Strain measurement and Fastening done (47 templates); next Springs. Research 02 §5 tracks it |
 | 0021 | 5. Recent-version time travel: tombstone expiry (needs its own ADR) against checkpointing more often, on a quiet machine | Not started | |
 
 ## Later
@@ -35,3 +35,4 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 | 0013 | 4. Revisit the deletion-vector layout when delta-rs writes them | Not started | Waits on delta-rs |
 | 0015 | 4. User report templates (ADR-0014) and a report preview in the app | Not started | |
 | 0021 | 4. Remove checkpoints older than the newest few (disk only) | Not started | |
+| 0025 | (deferred) ∞ as a number; assigning elements inside a function | Not started | Revisit when a template can't be written without them |

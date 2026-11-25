@@ -42,7 +42,28 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
 | Statement | Hurmet | Cruncha |
 | --- | --- | --- |
 | A chained comparison, `0 ≤ x ≤ 1` (unit-aware) | "Comparing incompatible units", even for plain numbers: the second comparison checked the first one's result, which has no unit. | Each comparison checks its own pair: `x` against 0, then `x` against 1. |
+| `sqrt(0)`, `0^0.5`, `0^(p/q)` with q even (ADR-0025) | "Error while taking root." | 0. Zero to a negative fractional power is "Divide by zero". |
+| A compound `@test`: a chain (`@test 0.1 ≤ g ≤ 40`) or `and`/`or` (ADR-0025) | Shows `true` or `false` and sets no check, so reports and tests saw "not evaluated". A chain lost its boolean flag (the second comparison added it again). | A check that passes or fails, shown as the condition with "ok ✓" or "n.g."; a chain also works as a piecewise condition. |
+| A local with a numeric subscript in a function (`k_1 = …`, then `k_1`) (ADR-0025) | "Variable k₁ not found": stored as typed, read as `k₁`. | Stored and read as `k₁`, as top-level names are. |
+| `[403]`, a one-entry matrix literal (ADR-0025) | The bare number: `length([403])` = 0, so a loop over it did nothing. | A one-entry column vector. `[v]` of a vector or matrix is still that value. |
+| `vcat` of a column and a number, or a one-entry column (ADR-0025) | "does not understand the expression". | One column. |
+| A ratio whose units cancel (`t / r` in mm/mm) in a matrix literal (ADR-0025) | "Matrix elements cannot contain a unit". | A plain number. |
+| A name with a double prime, `δ_P″ = … = ??` (ADR-0025) | Not an assignment (`″` isn't a name character), and a use read it as `δ_P′′`. | `″` and `‴` after a name are its primes, so definition and use agree; after a number `″` is still the inch. |
+| A piecewise without `otherwise`, `{1 if k == 1; 2 if k == 2}` (ADR-0025) | Always "Logic operation “if” on a non-boolean value": an `otherwise` was added anyway and the last comparison lost. `{a if c; b}` lost the last character of b. | Each condition is tested in order; none holding is an error. `{a if c; b}` still means b otherwise. |
+| A display unit with parentheses, `= ?? 1/(N·m)`, `(N·m)^-1` (ADR-0025) | Not a calculation (the selector's unit couldn't contain parentheses), and `(N·m)^2` was a malformed unit. | Works. |
+| `1/in`, `1/Δ°F` after a number (ADR-0025) | "Unrecognized unit name" (the 1 read as an exponent). | A reciprocal unit. |
+| A `for` loop over a range, unit-aware (ADR-0025) | The index had no unit, so `sin(k)` or `k + 0` failed. | The index is a plain number. |
+| A unit after a power, `(…)^2 'in'` (ADR-0025) | "Calculated units are not compatible…": `2 'in'` is read as the exponent. | The grammar is the same; the error says to write `(…)^2 × 1 'in'`. |
 | A name with a comma in its subscript, `X_(CO2,dry) = … = ?` | Read as a multiple assignment (`a, b = …`) and refused; only a literal assignment worked. | One name, as the lexer reads it; a multiple assignment still needs names that are valid on their own. |
+
+## Language extensions (ADR-0025)
+
+Cruncha accepts these; Hurmet doesn't. A Hurmet document never uses them, so importing one is unaffected.
+
+- **User functions call user functions.** `function outer(x) … inner(x) … end` calls the document's `inner`. A function still sees only its arguments, not the document's other values. A function that calls itself is refused when it's prepared. Two that call each other are a cycle (ADR-0004).
+- **Calls are reads.** A calc reads the user functions it calls, and a function reads those it calls. So changing `inner` recomputes every calc that uses `outer` (in Hurmet a calc's dependencies listed only variables).
+- **Half-integer unit powers:** `MPa·√m`, `ksi·√in`, `m^0.5`, `m^(1/2)`, `m^(3/2)`, `√(N·m)`. Stress intensity and fracture toughness carry their units. Other fractional powers are refused.
+- **Lints** the editor and `check` show: an expression without a display selector defines nothing (`x = t / r`, add `= ??`); `K_Ic,req = …` assigns two names (write `K_(Ic,req)` for one).
 
 ## Units (ADR-0022)
 
@@ -51,6 +72,7 @@ Cruncha's calc engine (`crates/cruncha-lang`, `crates/cruncha-units`, `crates/cr
   - The Fahrenheit gauge is 459.67, not 459.
   - Tesla and gauss are kg·s⁻²·A⁻¹; Hurmet had m⁻²·kg⁻²·s⁻²·A⁻¹.
   - Ampere-turn and gilbert are a current; Hurmet had temperature × luminous intensity.
+- **Added units** (ADR-0025): `Ω` and `Ω` (the ohm by its symbol, with prefixes: `kΩ`), `kpsi` (= ksi) and `Mpsi`, Shigley's spellings; `Δ°C`, `Δ°F` and `ΔK`, temperature differences without an offset (`10 Δ°C` = 10 K, `18 Δ°F` = 10 Δ°C).
 - Unchanged, but worth knowing: `kilobyte` is 1024 bytes (`kB` and `KiB` are separate units), and `kpph` is kilopascals per hour.
 
 Internally, `Rational::power` for a negative base and a fractional exponent p/q now returns the real root only when q is odd (Hurmet's test went through its broken `mod`). Calcs aren't affected: a negative base takes the complex principal root there, as before (`(-8)^(1/3)` = 1 + j 1.732).

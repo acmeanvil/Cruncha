@@ -86,9 +86,22 @@ struct Row {
     expos: Dims,
 }
 
+/// Units Cruncha adds to Hurmet's table (ADR-0025 rows 13 and 14), in the same form: Shigley's
+/// `kpsi` and `Mpsi`, and temperature differences (no offset, unlike °C and °F).
+static CRUNCHA_UNITS: &[crate::table::Row] = &[
+    ("kpsi", "6894757.29316836", "1", "0", "0", [-1, 1, -2, 0, 0, 0, 0, 0]),
+    ("Mpsi", "6894757293.16836", "1", "0", "0", [-1, 1, -2, 0, 0, 0, 0, 0]),
+    ("Δ°C", "1", "1", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    ("Δ°F", "5", "9", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    ("ΔK", "1", "1", "0", "0", [0, 0, 0, 0, 1, 0, 0, 0]),
+    // The ohm by its symbol (Greek capital omega, and the ohm sign), with SI prefixes: `kΩ`.
+    ("Ω", "1", "1", "0", "siSymbol", [2, 1, -3, -2, 0, 0, 0, 0]),
+    ("\u{2126}", "1", "1", "0", "siSymbol", [2, 1, -3, -2, 0, 0, 0, 0]),
+];
+
 static TABLE: LazyLock<HashMap<&'static str, Row>> = LazyLock::new(|| {
-    let mut map = HashMap::with_capacity(UNIT_TABLE.len());
-    for &(name, factor_num, factor_den, gauge, misc, ex) in UNIT_TABLE {
+    let mut map = HashMap::with_capacity(UNIT_TABLE.len() + CRUNCHA_UNITS.len());
+    for &(name, factor_num, factor_den, gauge, misc, ex) in UNIT_TABLE.iter().chain(CRUNCHA_UNITS) {
         let mut expos = ALL_ZEROS;
         for (e, x) in expos.iter_mut().zip(ex) {
             *e = f64::from(x);
@@ -347,8 +360,66 @@ enum Expo {
 /// Hurmet's `unitFromUnitName`: parse a (possibly compound) unit name.
 ///
 /// An empty name gives a dimensionless unit with factor 1.
+/// Half-integer powers written as Cruncha allows them (ADR-0025 row 8), as decimal exponents
+/// the tokenizer reads: `√m` → `m^0.5`, `√(…)` → `(…)^0.5`, `^(1/2)` → `^0.5`, `^(3/2)` →
+/// `^1.5`, `^(-1/2)` → `^-0.5`. `None`: a decimal exponent that isn't a half.
+fn half_powers(s: &str) -> Option<String> {
+    static FRACTION: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\^\((-?)([0-9]+)/2\)").unwrap());
+    static ROOT_WORD: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"√([^·/^()√0-9⁰¹²³⁴⁵⁶⁷⁸⁹⁻-]+)").unwrap());
+    static DECIMAL: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\^-?[0-9]+\.([0-9]+)").unwrap());
+    let mut out = FRACTION
+        .replace_all(s, |c: &regex::Captures| {
+            let n: f64 = c[2].parse().unwrap_or(0.0);
+            format!("^{}{}", &c[1], n / 2.0)
+        })
+        .into_owned();
+    out = ROOT_WORD.replace_all(&out, "${1}^0.5").into_owned();
+    // `√(…)`: the group's closing parenthesis gets the power.
+    while let Some(at) = out.find("√(") {
+        let rest = &out[at + "√".len()..];
+        let mut depth = 0;
+        let mut end = None;
+        for (k, c) in rest.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end?;
+        out = format!("{}{}^0.5{}", &out[..at], &rest[..=end], &rest[end + 1..]);
+    }
+    if DECIMAL.captures_iter(&out).any(|c| c[1].trim_end_matches('0') != "5" && !c[1].trim_end_matches('0').is_empty()) {
+        return None;
+    }
+    Some(out)
+}
+
 pub fn unit_from_name(input: &str, currencies: &Currencies) -> Result<Unit, UnitError> {
+    // `1/in`, `1/(N·m)`: a reciprocal (the tokenizer would read the 1 as an exponent).
+    if let Some(rest) = input.trim().strip_prefix("1/").filter(|r| !r.trim().is_empty()) {
+        let rest = rest.trim();
+        let inner = rest.strip_prefix('(').and_then(|r| r.strip_suffix(')')).unwrap_or(rest);
+        let mut u = unit_from_name(inner, currencies)?;
+        u.name = input.trim().to_string();
+        u.factor = u.factor.reciprocal();
+        u.expos = u.expos.map(|x| -x);
+        return Ok(u);
+    }
     let s = normalize_dots(input.trim());
+    let s = if s.contains(['√', '.']) || s.contains("/2)") {
+        half_powers(&s).ok_or_else(|| UnitError::Malformed(s.clone()))?
+    } else {
+        s
+    };
     let mut u = Unit {
         name: s.clone(),
         factor: Rational::one(),
@@ -382,7 +453,7 @@ pub fn unit_from_name(input: &str, currencies: &Currencies) -> Result<Unit, Unit
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i];
-        if ch.is_ascii_digit() || ch == '-' {
+        if ch.is_ascii_digit() || ch == '-' || (ch == '.' && in_exponent) {
             if !in_exponent {
                 rpn.push(SEP);
                 expo_rpn.push(SEP);
@@ -421,12 +492,14 @@ pub fn unit_from_name(input: &str, currencies: &Currencies) -> Result<Unit, Unit
         } else if ch == '(' {
             op_stack.push(('(', 0));
         } else if ch == ')' {
+            // Each operator gets its separator first, as at `·` (Hurmet wrote `1,1·`, so
+            // `(N·m)^2` was malformed; ADR-0025).
             while op_stack.last().is_some_and(|t| t.1 > 0) {
                 let sym = op_stack.pop().map_or(' ', |t| t.0);
-                rpn.push(sym);
                 rpn.push(SEP);
-                expo_rpn.push(sym);
+                rpn.push(sym);
                 expo_rpn.push(SEP);
+                expo_rpn.push(sym);
             }
             if op_stack.len() > 1 {
                 op_stack.pop();
@@ -523,12 +596,18 @@ pub fn unit_from_name(input: &str, currencies: &Currencies) -> Result<Unit, Unit
                     factors.push(Rational::new(n, d));
                 } else {
                     // BigInt("") is 0n.
-                    let n: BigInt = if tok.is_empty() {
-                        BigInt::from(0)
+                    if tok.contains('.') {
+                        // A half-integer exponent (ADR-0025 row 8).
+                        let x: f64 = tok.parse().map_err(|_| malformed())?;
+                        factors.push(Rational::new(BigInt::from((x * 2.0) as i64), BigInt::from(2)));
                     } else {
-                        tok.parse().map_err(|_| malformed())?
-                    };
-                    factors.push(Rational::new(n, BigInt::from(1)));
+                        let n: BigInt = if tok.is_empty() {
+                            BigInt::from(0)
+                        } else {
+                            tok.parse().map_err(|_| malformed())?
+                        };
+                        factors.push(Rational::new(n, BigInt::from(1)));
+                    }
                 }
                 let et = expo_array.get(k).copied().unwrap_or("");
                 if et.starts_with('¿') {

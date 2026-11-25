@@ -614,6 +614,11 @@ pub(crate) fn eval_rpn(
                     if !((num(o1.dtype) && num(o2.dtype)) || transpose) {
                         return err0("NAN_OP");
                     }
+                    // `(…)^2 'in'` reads `2 'in'` as the exponent (Hurmet's grammar): say how to
+                    // write it (ADR-0025 row 15).
+                    if unit_aware && o2.unit.get_expos().is_some_and(|d| d.iter().any(|e| *e != 0.0)) {
+                        return err0("EXPO_UNIT");
+                    }
                     let unit = if unit_aware {
                         expos_unit(scale_expos(o1.unit.get_expos(), o2.value.r().to_f64()))
                     } else {
@@ -680,6 +685,28 @@ pub(crate) fn eval_rpn(
                             return r;
                         }
                         r
+                    } else if tkn == "vcat"
+                        && [&o1, &o2].iter().all(|o| matches!(shape_of(o), Shape::Scalar) || o.dtype & dt::COLUMNVECTOR != 0)
+                        && [&o1, &o2].iter().any(|o| o.dtype & dt::COLUMNVECTOR != 0)
+                    {
+                        // Column vectors and numbers stack into one column (ADR-0025 row 5b:
+                        // Hurmet had no case for a column and a number, or a one-entry column).
+                        if unit_aware
+                            && !units_are_compatible(o1.unit.get_expos(), o2.unit.get_expos())
+                        {
+                            return err0("UNIT_ADD");
+                        }
+                        let items = |o: &Operand| match &o.value {
+                            V::A(a) if o.dtype & dt::COLUMNVECTOR != 0 => a.clone(),
+                            v => vec![v.clone()],
+                        };
+                        let mut all = items(&o1);
+                        all.extend(items(&o2));
+                        let base = |o: &Operand| o.dtype & !dt::COLUMNVECTOR;
+                        if base(&o1) != base(&o2) {
+                            return err0("ERROR");
+                        }
+                        Operand::new(V::A(all), o1.unit.clone(), base(&o1) + dt::COLUMNVECTOR)
                     } else if o1.dtype & dt::MAP != 0 || o2.dtype & dt::MAP != 0 {
                         // Hurmet's map.append calls `map.value.set`, which maps do not have.
                         return err("NOT_SUPPORTED", "&");
@@ -1539,7 +1566,10 @@ pub(crate) fn eval_rpn(
                             _ => None,
                         })
                     {
-                        eval_custom_function(&udf, args, ctx, unit_aware, None)
+                        // The document's functions are its library, so a function can call
+                        // another (ADR-0025 row 7). It still sees no other document values.
+                        let doc_fns = lib.or(scope.globals.map(|g| &g.map));
+                        eval_custom_function(&udf, args, ctx, unit_aware, doc_fns)
                     } else {
                         return err("BAD_FUN_NM", name);
                     };
@@ -1577,7 +1607,7 @@ pub(crate) fn eval_rpn(
                     let (value, mut dtype) = if set_cmp.contains(&tkn) {
                         (
                             tryv!(ops::compare(tkn, &o1.value, &o2.value, prev_value.as_ref())),
-                            o1.dtype + dt::BOOLEANFROMCOMPARISON,
+                            left.dtype + dt::BOOLEANFROMCOMPARISON,
                         )
                     } else {
                         let (s1, s2, _) = binary_shapes(&o1, &o2);
@@ -1589,7 +1619,10 @@ pub(crate) fn eval_rpn(
                             &o2.value,
                             prev_value.as_ref()
                         ));
-                        let Some(d) = ops::op_dtype(s1, s2, o1.dtype, o2.dtype, tkn) else {
+                        // The flags come from the chain's middle operand, not the previous
+                        // boolean: Hurmet added BOOLEANFROMCOMPARISON twice, so `a ≤ x ≤ b`
+                        // lost its boolean flag (ADR-0025 rows 2 and 3).
+                        let Some(d) = ops::op_dtype(s1, s2, left.dtype, o2.dtype, tkn) else {
                             return err0("ERROR");
                         };
                         (v, d + dt::BOOLEANFROMCOMPARISON)
@@ -1943,7 +1976,10 @@ fn element_from_iterable(
         };
         (v, d)
     };
-    (Operand::new(value, iterable.unit.clone(), dtype), next)
+    // A range's index is a plain number (ADR-0025: Hurmet gave it the range's missing unit, so
+    // `sin(k)` was "Incorrect unit" when unit-aware).
+    let unit = if iterable.dtype == dt::RANGE { OUnit::zeros() } else { iterable.unit.clone() };
+    (Operand::new(value, unit, dtype), next)
 }
 
 #[derive(Clone)]

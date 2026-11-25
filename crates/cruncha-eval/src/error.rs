@@ -13,6 +13,7 @@ fn message(code: &str) -> Option<&'static str> {
         "ERR_FUNC" => "@",
         "BAD_FUN_NM" => "Error. Unrecognized function name \"@\".",
         "DIV" => "Error. Divide by zero.",
+        "EXPO_UNIT" => "Error. An exponent can't have a unit. To multiply a power by a unit, write (…)^2 × 1 'in'.",
         "NAN" => "Error. Value of $@$ is not numeric.",
         "NANARG" => "Error. Argument to function $@$ must be numeric.",
         "NANEL" => {

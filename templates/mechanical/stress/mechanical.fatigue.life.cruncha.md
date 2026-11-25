@@ -1,7 +1,7 @@
 +++
 cruncha-template = 1
 id = "mechanical.fatigue.life"
-version = "1.0.0"
+version = "1.0.1"
 title = "Fatigue: finite life on the S-N line and Miner's rule (Shigley)"
 summary = "The S-N line of a steel part from its endurance limit and ultimate strength (fatigue strength fraction f, Sf = a·N^b), each load level of a duty cycle reduced to an equivalent fully reversed stress by Gerber, and the damage summed by Miner's rule."
 category = ["Mechanical engineering", "Stress and failure"]
@@ -26,8 +26,8 @@ checks = "pass"
 
 [[tests]]
 name = "Shigley Ex. 6-7: reversed 403 MPa on a 690 MPa steel with Se = 280 MPa"
-source = "Lacewing Lab stress_test: about 32 300 cycles at a reversed σ′a = 403 MPa (Shigley reads f = 0.845 off Fig. 6-18; Eqs. 6-10 to 6-12 give 0.8436, so N is about 0.5 % shorter: 32 150). One level, given as two with the second at zero cycles"
-inputs = { S_ut = "690 MPa", S_y = "600 MPa", S_e = "280 MPa", n_i = "[1, 0]", "σ_(a,i)" = "[403, 0] MPa", "σ_(m,i)" = "[0, 0] MPa", N_req = "10000" }
+source = "Lacewing Lab stress_test: about 32 300 cycles at a reversed σ′a = 403 MPa (Shigley reads f = 0.845 off Fig. 6-18; Eqs. 6-10 to 6-12 give 0.8436, so N is about 0.5 % shorter: 32 150)."
+inputs = { S_ut = "690 MPa", S_y = "600 MPa", S_e = "280 MPa", n_i = "[1]", "σ_(a,i)" = "[403] MPa", "σ_(m,i)" = "[0] MPa", N_req = "10000" }
 expect = { f = "0.8436", a_SN = "1210 MPa", b_SN = "-0.1059", D = "3.0960e-5" }
 tolerance = "1%"
 checks = "pass"
@@ -43,7 +43,7 @@ checks = "fail"
 [[tests]]
 name = "Below 10³ cycles: reversed 0.85 Sut, which also yields"
 source = "Lacewing Lab duty-cycle test: below f·Sut the line runs to Sut at one cycle (Eq. 6-17). By hand: Sut 151 kpsi, f = 0.79703, N = 0.85^(3/log 0.79703) = 141.0 cycles, D = 0.007093; σa = 128.35 kpsi exceeds Sy = 120 kpsi, so the yield check fails"
-inputs = { S_ut = "151 ksi", S_y = "120 ksi", S_e = "67.5 ksi", n_i = "[1, 0]", "σ_(a,i)" = "[128.35, 0] ksi", "σ_(m,i)" = "[0, 0] ksi", N_req = "1" }
+inputs = { S_ut = "151 ksi", S_y = "120 ksi", S_e = "67.5 ksi", n_i = "[1]", "σ_(a,i)" = "[128.35] ksi", "σ_(m,i)" = "[0] ksi", N_req = "1" }
 expect = { D = "0.0070934" }
 tolerance = "0.01%"
 checks = "fail"
@@ -94,7 +94,7 @@ b_SN = -log10(f S_ut / S_e) / 3 = ??
 
 ### Duty cycle
 
-One repetition of the duty cycle has load levels i, each with n_i cycles at an alternating stress σ_(a,i) and a mean stress σ_(m,i). Enter the stresses at the critical point as von Mises equivalents with the notch factors applied (σ′a and σ′m of the fluctuating-stress template). Give each level its own entry, at least two: a one-entry vector `[x]` reads as a plain number, so add a level with zero cycles for a single load.
+One repetition of the duty cycle has load levels i, each with n_i cycles at an alternating stress σ_(a,i) and a mean stress σ_(m,i). Enter the stresses at the critical point as von Mises equivalents with the notch factors applied (σ′a and σ′m of the fluctuating-stress template). Give each level its own entry; a single load is a one-entry vector, such as `[403] MPa`.
 
 ```calc {description="Cycles of each level in one repetition of the duty cycle"}
 n_i = [1, 1, 1]_

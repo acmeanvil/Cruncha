@@ -18,7 +18,7 @@ static MATRIX_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^[(\[] *(?:(?:-?[0-9.]+|"(?:[^"]|"")*"|true|false) *[,;\t]? *)+[)\]]"#).unwrap()
 });
 static UNIT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-zäöōA-Z0-9 μµ#$£¥'′″°()Å₨₪€℃℉ΩΩKÅ^+\-/*.•×\-−·₂⁰¹²³\x{2074}-\x{2079}]+$")
+    Regex::new(r"^[a-zäöōA-Z0-9 μµ#$£¥'′″°Δ√()Å₨₪€℃℉ΩΩKÅ^+\-/*.•×\-−·₂⁰¹²³\x{2074}-\x{2079}]+$")
         .unwrap()
 });
 const NUM: &str =

@@ -336,11 +336,24 @@ pub fn validate(t: &Template) -> Vec<String> {
     // Every calc evaluates, in order, at the placeholder values.
     let o = opts();
     let mut vars = Vars::new();
+    let mut defined: Vec<String> = Vec::new();
     for c in &t.cells {
         if let Cell::Calc { source, .. } = c {
             match cruncha_eval::prepare(source, &o) {
                 Err(e) => problems.push(format!("calc {source:?} doesn't parse: {e}")),
                 Ok(stmt) => {
+                    // A document refuses a second definition (ADR-0004), so a template must
+                    // not have one; and the engine's lints are problems here (ADR-0025).
+                    for name in &stmt.defines {
+                        if defined.contains(name) {
+                            problems.push(format!("calc {source:?} defines {name} again"));
+                        } else {
+                            defined.push(name.clone());
+                        }
+                    }
+                    for w in cruncha_eval::lints(source, &stmt) {
+                        problems.push(format!("calc {source:?}: {w}"));
+                    }
                     let out = cruncha_eval::evaluate(&stmt, &vars, &o);
                     // A calc reading a code cell's names can't evaluate here.
                     if let Some(e) = out.error

@@ -20,7 +20,7 @@ static CONTAINS_OPERATOR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[+\-×·*∘⌧/^%‰&√!¡|‖&=<>≟≠≤≥∈∉⋐∧∨⊻¬]|\x{a0}(function|mod|\\atop|root|sum|abs|cos|sin|tan|acos|asin|atan|sec|csc|cot|asec|acsc|acot|exp|log|ln|log10|log2|cosh|sinh|tanh|sech|csch|coth|acosh|asinh|atanh|asech|acsch|acoth|gamma|Γ|lgamma|logΓ|lfact|cosd|sind|tand|acosd|asind|atand|secd|cscd|cotd|asecd|acscd|acotd|real|imag|angle|Char|round|sqrt|sign|\?\{\}|%|⎾⏋|⎿⏌|\[\]|\(\))\x{a0}").unwrap()
 });
 static MUST_DO_CALCULATION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:``.+``|(?:[£¥\x{20A0}-\x{20CF}]|(?:[ACR]|HK|US)?\$)?(?:\?{1,2}|@{1,2}|%{1,3}|!{1,2})[^=!(?@!{})]*)$").unwrap()
+    Regex::new(r"^(?:``.+``|(?:[£¥\x{20A0}-\x{20CF}]|(?:[ACR]|HK|US)?\$)?(?:\?{1,2}|@{1,2}|%{1,3}|!{1,2})[^=!?@{}]*)$").unwrap()
 });
 static PERCENT_OPERATOR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"((?:\?{1,2}|@{1,2}|%%|!{1,2}) *)%").unwrap());
@@ -83,7 +83,33 @@ fn selector_of(trail: &str) -> String {
 }
 
 /// Hurmet's `compile(inputStr, formats)`.
+/// `″` and `‴` after a name's letter, prime or subscript are its primes (`δ_P″` is `δ_P′′`), so
+/// a definition and a use name the same thing (ADR-0025). After a number `″` stays the inch.
+fn fold_name_primes(input: &str) -> std::borrow::Cow<'_, str> {
+    if !input.contains(['″', '‴']) {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    let mut out = String::with_capacity(input.len() + 4);
+    let mut prev: Option<char> = None;
+    let mut in_string = false;
+    for c in input.chars() {
+        if c == '"' {
+            in_string = !in_string;
+        }
+        let after_name = prev.is_some_and(|p| p.is_alphabetic() || p == '′' || ('\u{2080}'..='\u{2089}').contains(&p));
+        match c {
+            '″' if after_name && !in_string => out.push_str("′′"),
+            '‴' if after_name && !in_string => out.push_str("′′′"),
+            _ => out.push(c),
+        }
+        prev = Some(c);
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 pub(crate) fn compile(input: &str, ctx: &Ctx) -> Result<Compiled, String> {
+    let folded = fold_name_primes(input);
+    let input: &str = &folded;
     let parse_err = |e: cruncha_lang::Error| e.to_string();
     let opts = lang_opts(ctx);
 

@@ -287,6 +287,12 @@ impl Rational {
             return Some(Rational::one());
         }
         let b = b.normalize();
+        // Zero to a positive power is zero, whatever the root (ADR-0025 row 1: Hurmet's
+        // `0^(1/2)` fell through to "Error while taking root"). To a negative power: `None`,
+        // which callers report as a division by zero.
+        if self.is_zero() && !b.is_integer() {
+            return if b.is_positive() { Some(Rational::zero()) } else { None };
+        }
         if b.is_integer() {
             let e = idiv(&b.num, &b.den);
             if let Some(exact) = self.exact_power(&e) {

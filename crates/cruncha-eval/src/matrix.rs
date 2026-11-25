@@ -528,6 +528,13 @@ pub(crate) fn operand_from_range(range: &V) -> Operand {
 }
 
 /// Build a vector or matrix from the top of the stack (`matrix numRows numCols`).
+/// An element that carries a unit, which a matrix literal refuses. A quantity whose units
+/// cancel (`t / r` in mm/mm) is a plain number, already in SI (ADR-0025 row 6).
+fn has_unit(token: &Operand) -> bool {
+    token.unit.obj().is_some_and(|u| u.is_converted)
+        && token.unit.get_expos().is_some_and(|d| d.iter().any(|e| *e != 0.0))
+}
+
 pub(crate) fn operand_from_token_stack(
     stack: &mut Vec<Operand>,
     num_rows: usize,
@@ -544,7 +551,20 @@ pub(crate) fn operand_from_token_stack(
         return Operand::new(V::A(Vec::new()), OUnit::Null, dt::COLUMNVECTOR);
     }
     if num_rows == 1 && num_cols == 1 {
-        return stack.pop().unwrap_or_else(|| err0("ERROR"));
+        // `[403]` is a one-entry column vector, so `length`, `sum` and loops see one element
+        // (ADR-0025 row 5; Hurmet returned the bare number). `[v]` of a vector or matrix is
+        // that value, as before.
+        let Some(x) = stack.pop() else { return err0("ERROR") };
+        if has_unit(&x) {
+            return err0("UNIT_IN_MAT");
+        }
+        let scalar = x.dtype & (dt::RATIONAL | dt::COMPLEX | dt::STRING | dt::BOOLEAN) != 0
+            && x.dtype & (dt::ROWVECTOR | dt::COLUMNVECTOR | dt::MATRIX | dt::DATAFRAME | dt::MAP | dt::RANGE | dt::TUPLE) == 0;
+        if !scalar {
+            return x;
+        }
+        let unit = unit_for(x.dtype);
+        return Operand::new(V::A(vec![x.value]), unit, x.dtype + dt::COLUMNVECTOR);
     }
     if stack.len() < num_rows * num_cols {
         return err0("ERROR");
@@ -577,7 +597,7 @@ pub(crate) fn operand_from_token_stack(
             let Some(token) = stack.pop() else {
                 return err0("ERROR");
             };
-            if token.unit.obj().is_some_and(|u| u.is_converted) {
+            if has_unit(&token) {
                 return err0("UNIT_IN_MAT");
             }
             array[j] = token.value;
@@ -591,7 +611,7 @@ pub(crate) fn operand_from_token_stack(
             let Some(token) = stack.pop() else {
                 return err0("ERROR");
             };
-            if token.unit.obj().is_some_and(|u| u.is_converted) {
+            if has_unit(&token) {
                 return err0("UNIT_IN_MAT");
             }
             array[k][j] = token.value;

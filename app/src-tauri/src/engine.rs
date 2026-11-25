@@ -995,6 +995,7 @@ impl Engine {
                     continue;
                 }
             };
+            result.warnings.extend(cruncha_eval::lints(source, &stmt));
             let key = input_hash(source, &stmt, &vars);
             let outcome = match self.memo.get(id) {
                 Some((h, o)) if *h == key => o.clone(),
@@ -1432,14 +1433,24 @@ pub fn canonical_json(v: &serde_json::Value) -> String {
 fn input_hash(source: &str, stmt: &Statement, vars: &Vars) -> u64 {
     let mut h = DefaultHasher::new();
     source.hash(&mut h);
-    for name in stmt
-        .reads
-        .iter()
-        .chain(std::iter::once(&FORMAT_VAR.to_string()))
-    {
+    // The names read, and the user functions those functions call, transitively (ADR-0025
+    // row 7): `y = outer(3)` recomputes when `inner` changes.
+    let mut names: Vec<String> = stmt.reads.iter().cloned().chain(std::iter::once(FORMAT_VAR.to_string())).collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut i = 0;
+    while i < names.len() {
+        let name = names[i].clone();
+        i += 1;
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let value = vars.get(&name);
+        if let Some(v) = value {
+            names.extend(v.calls());
+        }
         name.hash(&mut h);
         // `Value` has no Hash; its Debug form is complete and deterministic.
-        format!("{:?}", vars.get(name)).hash(&mut h);
+        format!("{value:?}").hash(&mut h);
     }
     h.finish()
 }
@@ -1513,6 +1524,31 @@ mod tests {
         assert!(r["E"].warnings.iter().any(|w| w.contains("Euler's number")), "{:?}", r["E"].warnings);
         assert!(r["A"].warnings.is_empty(), "{:?}", r["A"].warnings);
         assert!(r["A"].text.ends_with("= 1"), "{:?}", r["A"]);
+    }
+
+    #[test]
+    fn a_function_calling_a_function_recomputes_and_recursion_is_a_cycle() {
+        let mut e = Engine::new();
+        let inner = |k: &str| calc("I", "a", &format!("function inner(x)\n    return {k} x\nend"));
+        let outer = calc("O", "b", "function outer(x)\n    return inner(x) + 1\nend");
+        let y = calc("Y", "c", "y = outer(3) = ?");
+        let r = e.run(&[inner("2"), outer.clone(), y.clone()]);
+        assert!(r["Y"].text.ends_with("= 7"), "{:?}", r["Y"]);
+        let r = e.run(&[inner("3"), outer, y]);
+        assert!(r["Y"].text.ends_with("= 10"), "editing inner recomputes y: {:?}", r["Y"]);
+        let r = e.run(&[calc("F", "a", "function f(x)\n    return f(x - 1)\nend"), calc("Z", "b", "z = f(3) = ?")]);
+        assert!(r["F"].error.as_deref().is_some_and(|m| m.contains("itself")), "{:?}", r["F"]);
+        let a = calc("A", "a", "function a(x)\n    return b(x)\nend");
+        let b = calc("B", "b", "function b(x)\n    return a(x)\nend");
+        let r = e.run(&[a, b, calc("Z", "c", "z = a(1) = ?")]);
+        assert!(r["A"].error.as_deref().is_some_and(|m| m.contains("circular")), "mutual recursion is a cycle: {:?}", r["A"]);
+    }
+
+    #[test]
+    fn a_calc_that_defines_nothing_says_why() {
+        let mut e = Engine::new();
+        let r = e.run(&[calc("T", "a", "t = 2 mm"), calc("X", "b", "x = t / 1 'mm'")]);
+        assert!(r["X"].warnings.iter().any(|w| w.contains("isn't calculated")), "{:?}", r["X"]);
     }
 
     #[test]

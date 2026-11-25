@@ -2028,8 +2028,18 @@ impl<'a> Parser<'a> {
                 self.rpn.push_str(self.token_sep);
                 self.rpn.push_str(&sym);
             }
-            if top.delim_type == DelimType::Cases && self.prev_token.input != "otherwise" {
-                // "otherwise" is optional. Run setUpIf as if it were present.
+            // Only when the last row has no condition of its own (`{a if c; b}`; each row counts its
+            // value and its condition): with one
+            // (`{a if c; b if d}`) Hurmet added an `otherwise` anyway and lost the last
+            // comparison (ADR-0025).
+            if top.delim_type == DelimType::Cases
+                && self.prev_token.input != "otherwise"
+                && top.num_args < 2 * top.num_rows
+            {
+                // "otherwise" is optional. Run setUpIf as if it were present, with the
+                // separator a Logic token pushes first (Hurmet didn't, so the value lost its
+                // last character: `{1 if c; 25}` gave `®25/`).
+                self.rpn.push_str(self.token_sep);
                 let rpn = std::mem::take(&mut self.rpn);
                 self.rpn = set_up_if(rpn, "otherwise", &mut self.expr_stack, &mut top);
                 self.token_sep = NBSP;

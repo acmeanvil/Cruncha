@@ -300,6 +300,22 @@ pub(crate) struct Udf {
     pub statements: Vec<FnStatement>,
 }
 
+impl Udf {
+    /// The user functions its body calls, in order of first use (ADR-0025 row 7).
+    pub(crate) fn calls(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for st in &self.statements {
+            let toks: Vec<&str> = st.rpn.split('\u{a0}').collect();
+            for w in toks.windows(2) {
+                if w[0] == "function" && !out.iter().any(|n| n == w[1]) {
+                    out.push(w[1].to_string());
+                }
+            }
+        }
+        out
+    }
+}
+
 /// A value that a statement assigns to a variable (Hurmet's cell attributes).
 ///
 /// It holds the value as written and, for quantities, in SI base units, together with the
@@ -342,6 +358,15 @@ impl Value {
             unit: o.unit.clone(),
             dtype: o.dtype,
             ..Default::default()
+        }
+    }
+
+    /// For a user function: the user functions it calls (ADR-0025 row 7). The app's memo
+    /// follows them, so a calc using `outer` recomputes when `inner` changes.
+    pub fn calls(&self) -> Vec<String> {
+        match &self.value {
+            V::Udf(u) => u.calls(),
+            _ => Vec::new(),
         }
     }
 

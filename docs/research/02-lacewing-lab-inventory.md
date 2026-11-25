@@ -839,13 +839,13 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 
 <!-- status:begin (scripts/lacewing-status.py writes this table) -->
 
-15 of 286 calculators have at least one template (31 templates).
+29 of 286 calculators have at least one template (56 templates).
 
 | Section | Calculators | With templates |
 |---|---|---|
 | Materials | 10 | 0 |
 | Geometry | 6 | 1 |
-| Mechanical engineering | 101 | 9 |
+| Mechanical engineering | 101 | 23 |
 | Machining | 7 | 0 |
 | Structural engineering | 30 | 4 |
 | Thermal engineering | 18 | 0 |
@@ -880,20 +880,20 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Mechanical engineering | `mechanical.fractureMechanics` | Templates | `mechanical.fracture.leakBeforeBreak`, `mechanical.fracture.parisLife` |
 | Mechanical engineering | `mechanical.kIcSolver` | Templates | `mechanical.fracture.criticalCrack`, `mechanical.fracture.thickPlateSurfaceCrack` |
 | Mechanical engineering | `mechanical.reliability` | Templates | `mechanical.reliability.allowableStress`, `mechanical.reliability.designFactor`, `mechanical.reliability.interference` |
-| Mechanical engineering | `mechanical.strainGauges` | Not started |  |
-| Mechanical engineering | `mechanical.strainRosettes` | Not started |  |
-| Mechanical engineering | `mechanical.threads` | Not started |  |
-| Mechanical engineering | `mechanical.threadsAnySize` | Not started |  |
-| Mechanical engineering | `mechanical.powerScrews` | Not started |  |
-| Mechanical engineering | `mechanical.boltTorqueSimple` | Not started |  |
-| Mechanical engineering | `mechanical.boltedJoint` | Not started |  |
-| Mechanical engineering | `mechanical.vdi2230` | Not started |  |
-| Mechanical engineering | `mechanical.boltGroups` | Not started |  |
-| Mechanical engineering | `mechanical.rivetedJoints` | Not started |  |
-| Mechanical engineering | `mechanical.weldGroup` | Not started |  |
-| Mechanical engineering | `mechanical.weldCapacity` | Not started |  |
-| Mechanical engineering | `mechanical.intermittentWelds` | Not started |  |
-| Mechanical engineering | `mechanical.adhesiveJoints` | Not started |  |
+| Mechanical engineering | `mechanical.strainGauges` | Templates | `mechanical.strainGauges.bridge`, `mechanical.strainGauges.quarterBridge`, `mechanical.strainGauges.shaftTorque` |
+| Mechanical engineering | `mechanical.strainRosettes` | Templates | `mechanical.strainRosettes.equiangular`, `mechanical.strainRosettes.rectangular` |
+| Mechanical engineering | `mechanical.threads` | Templates | `mechanical.threads.basicSize` |
+| Mechanical engineering | `mechanical.threadsAnySize` | Templates | `mechanical.threads.strength` |
+| Mechanical engineering | `mechanical.powerScrews` | Templates | `mechanical.powerScrews.stresses`, `mechanical.powerScrews.torque` |
+| Mechanical engineering | `mechanical.boltTorqueSimple` | Templates | `mechanical.boltTorque.simple` |
+| Mechanical engineering | `mechanical.boltedJoint` | Templates | `mechanical.boltedJoint.fatigue`, `mechanical.boltedJoint.nasaMargins`, `mechanical.boltedJoint.tension` |
+| Mechanical engineering | `mechanical.vdi2230` | Templates | `mechanical.vdi2230.loadFactor`, `mechanical.vdi2230.preloadChecks` |
+| Mechanical engineering | `mechanical.boltGroups` | Templates | `mechanical.boltGroups.eccentricShear`, `mechanical.boltGroups.tension` |
+| Mechanical engineering | `mechanical.rivetedJoints` | Templates | `mechanical.rivetedJoints.shear` |
+| Mechanical engineering | `mechanical.weldGroup` | Templates | `mechanical.weldGroup.circle`, `mechanical.weldGroup.rectangle` |
+| Mechanical engineering | `mechanical.weldCapacity` | Templates | `mechanical.weldCapacity.fillet`, `mechanical.weldCapacity.filletFatigue` |
+| Mechanical engineering | `mechanical.intermittentWelds` | Templates | `mechanical.intermittentWelds.lengthPitch` |
+| Mechanical engineering | `mechanical.adhesiveJoints` | Templates | `mechanical.adhesiveJoints.doubleLap`, `mechanical.adhesiveJoints.singleLap` |
 | Mechanical engineering | `mechanical.compressionSprings` | Not started |  |
 | Mechanical engineering | `mechanical.extensionSprings` | Not started |  |
 | Mechanical engineering | `mechanical.torsionSprings` | Not started |  |

@@ -34,12 +34,16 @@ Hurmet's doubled forms (`??`, `%%`) are accepted. **Cruncha is always unit-aware
 
 - Write units after the number: `100 lbf/ft`, `25 MPa`, `3 ft 6 in`. Use `·` or a space for products, and `/` and `^` (or superscripts) in compound units.
 - Mixing systems is fine (`2 m × 4 ft`); conversion is automatic. Pick a display unit that suits the reader's practice.
-- Temperatures: `°C` and `°F` are absolute, and `Δ°C` is a difference. Don't add two absolute temperatures.
-- Unitless ratios (utilization, `ϕ`) are plain numbers. A result of `0.87` that should be unitless but carries `in/ft` means the formula is wrong.
+- Temperatures: `°C` and `°F` are absolute; `Δ°C`, `Δ°F` and `ΔK` are differences (`10 Δ°C` = 10 K). Don't add two absolute temperatures.
+- Half-integer powers work in units: `MPa·√m`, `ksi·√in`, `m^0.5`, `m^(3/2)`. Give stress intensity and fracture toughness their units (`K_Ic = 50 MPa·√m`). `kpsi` and `Mpsi` are Shigley's spellings of ksi and 10⁶ psi.
+- Display units may use parentheses and reciprocals: `= ?? 1/(N·m)`, `= ?? W/(m^2·K)`, `4 1/in`. The ohm is `Ω` or `ohm` (`kΩ`).
+- Inside an expression a unit is quoted (`2 'in'`), and it binds to the number before it, so `(…)^2 'in'` makes `2 'in'` the exponent: write `(…)^2 × 1 'in'`.
+- Unitless ratios (utilization, `ϕ`, `t / r`) are plain numbers, also inside a matrix literal. A result of `0.87` that should be unitless but carries `in/ft` means the formula is wrong.
 
 ## Names
 
-- Names can be Unicode with subscripts: `f_c′`, `ϕM_n`, `L_b`, `Δ_max`. Case and boldface matter.
+- Names can be Unicode with subscripts: `f_c′`, `ϕM_n`, `L_b`, `Δ_max`. Case and boldface matter. A prime goes after the subscript: `σ_body′`, `F_nt′` (`σ′_body` reads as `σ′` times `body`).
+- A fraction isn't a literal: write a thread pitch of 1/13 in as `0.0769230769 in`, or calculate it (`P = 1 / 13 'in' = ?? in`).
 - **Each name is defined exactly once in the whole document** (ADR-0004). For a second check of the same quantity, use a qualified name (`M_(u,2)`, `V_(u,end)`: a subscript with a comma goes in parentheses), not a redefinition. `M_u,2` is not one name.
 - Define inputs above their use. Upward references still compute, but they get a lint badge.
 
@@ -70,8 +74,11 @@ function utilization(demand, capacity)
 end
 ```
 
-- Functions are pure (they see only their parameters) and can be defined anywhere.
-- Assertions: `@test ϕM_n ≥ M_u`. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions. The report's cover lists every `@test` with OK or NOT OK and the sheet it is on. A test that couldn't be evaluated (an error, or an input from Python that hasn't run) is listed as ERROR or NOT CALCULATED, never as OK.
+- Functions are pure: they see only their parameters, not the document's other values. They can be defined anywhere, and can call other user functions (not themselves, directly or through another). Locals may have subscripts (`k_1`).
+- An expression needs a display selector to define its name: `x = t / r` defines nothing (a lint says so); write `x = t / r = ??`, or `= !` to hide the result. Only a literal (`x = 5 mm`) assigns without one.
+- `[403]` is a one-entry vector; `vcat([1; 2], 3)` stacks numbers and columns.
+- A piecewise may end without `otherwise` (`{1 if k == 1; 2 if k == 2}`); if no condition holds, it's an error. Comparisons in conditions use `==`, not `=`.
+- Assertions: `@test ϕM_n ≥ M_u`, or a range `@test 0.1 ≤ t/r ≤ 40` (or `and`/`or`); chains work in piecewise conditions too. Every pass/fail criterion of a check should be an `@test`, so CI can catch regressions. The report's cover lists every `@test` with OK or NOT OK and the sheet it is on. A test that couldn't be evaluated (an error, or an input from Python that hasn't run) is listed as ERROR or NOT CALCULATED, never as OK.
 - Units in a test's comparison value are quoted: `@test V_u < 25 'kips'`.
 
 ## Built-in functions
@@ -83,7 +90,7 @@ Where Cruncha differs from Hurmet (ADR-0022, `docs/design/03-hurmet-differences.
 - `mod(a, b)` (and `a mod b`) is floored modulo with the sign of `b`, as Excel's `MOD`: `mod(-7, 3)` is 2. `rem(a, b)` has the sign of `a`. Both work for non-integers and units (`mod(7.5 'm', 2 'm')` is 1.5 m).
 - `rms(v)` is the root mean square of its arguments or a vector's elements; for √(a² + b²) use `hypot`.
 - `median` is the true median; `variance` and `stddev` are sample statistics (n − 1); the variance is in the unit squared.
-- `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work.
+- `asec`, `acsc`, `acot` (and their degree forms), `acsch`, `trace`, `Char` and `roundSig(x, n)` work. `sqrt(0)` and `0^0.5` are 0 (ADR-0025).
 - Unit names: a unit's full name works as written (`Celsius`, `gauss`, `kilogram`, `mas` for milliarcsecond). Tesla and gauss are kg·s⁻²·A⁻¹; ampere-turn and gilbert are currents. Every unit, with its aliases and size in SI, is in the app's Units palette (`cruncha_units::catalog`).
 - Vectors and matrices (ADR-0022, second set): `×` of two 3-vectors is the cross product; `sum`, `product`, `mean`, `min`, `max`, `range` and `median` of a matrix use every element (`sum(A, 1)` and `sum(A, 2)` sum columns and rows); `|A|` of a square matrix is its determinant (Hurmet gave 1/det), in the unit to the nth power; a column times a row is the outer product, any lengths; `[a, b]^2` is element-wise, never complex; `zeros(m, 1)` and `ones(m, 1)` are columns of m.
 - Units: `product` multiplies units (`product(2 'm', 3 'm')` is 6 m²); a vector in °C or °F converts like a single value; two-argument functions that need one unit (`atan2`, `mod`, `rem`, `hypot`, `sum`, `min`, `max`, …) refuse different units, and `gcd` refuses any unit.

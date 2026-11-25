@@ -188,13 +188,15 @@ fn scan_function(lines: &[&str], start: usize, ctx: &Ctx) -> Result<(Udf, usize)
             }
             is_statement = true;
             stype = "statement".to_string();
+            // A local is named as the calc reads it (`k_1` is `k₁`), as top-level names are
+            // (ADR-0025 row 4).
             names = if name_part.contains([',', ';']) {
                 name_part
                     .split([',', ';'])
-                    .map(|e| js_trim(e).to_string())
+                    .map(|e| check_for_numeric_subscript(js_trim(e)))
                     .collect()
             } else {
-                vec![name_part]
+                vec![check_for_numeric_subscript(&name_part)]
             };
         } else {
             return Err(err("FUNC_LINE", &format!("{name}, line {}\n{line}", i + 1)));
