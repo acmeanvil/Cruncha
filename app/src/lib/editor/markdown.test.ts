@@ -74,6 +74,10 @@ test("block rules: lists, numbered lists from any start, quotes and rules", () =
   type(v, "---");
   expect(v.state.doc.toJSON().content.map((n: { type: string }) => n.type)).toEqual(["horizontal_rule", "paragraph"]);
   expect(v.state.selection instanceof TextSelection && v.state.selection.$from.parent.type.name).toBe("paragraph");
+  v = editor();
+  type(v, "\\pagebreak");
+  expect(v.state.doc.toJSON().content.map((n: { type: string }) => n.type)).toEqual(["page_break", "paragraph"]);
+  expect(v.state.selection instanceof TextSelection && v.state.selection.$from.parent.type.name).toBe("paragraph");
 });
 
 test("a list is one cell, and a calc can't go inside one", () => {

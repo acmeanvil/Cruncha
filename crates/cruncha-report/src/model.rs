@@ -134,6 +134,8 @@ pub enum Block {
         blocks: Vec<Block>,
     },
     Rule,
+    /// Start a new page here (ADR-0028); weak, so it adds no blank page.
+    PageBreak,
     Calc {
         id: String,
         /// Typst math code (converted from the engine's TeX).

@@ -91,6 +91,27 @@ pub fn remove(file: &Path, token: &str) {
     }
 }
 
+/// Remove a file a crashed Cruncha left behind: its process is gone (or isn't this one and
+/// no longer runs). Returns whether it removed one.
+pub fn clean_stale(file: &Path) -> bool {
+    let Some(c) = std::fs::read_to_string(file).ok().and_then(|s| serde_json::from_str::<Connection>(&s).ok()) else {
+        return false;
+    };
+    if c.pid == std::process::id() || alive(c.pid) {
+        return false;
+    }
+    std::fs::remove_file(file).is_ok()
+}
+
+/// Whether a process with this id runs (signal 0 checks without sending one).
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +137,20 @@ mod tests {
         assert!(!file.exists());
         // No temporary files left behind.
         assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_crashed_servers_file_is_cleaned_and_a_live_one_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = path(dir.path());
+        let mut c = Connection::new("http://127.0.0.1:4242/mcp", "secret", "2026-11-26T00:00:00Z".into());
+        write(&file, &c).unwrap();
+        assert!(!clean_stale(&file), "this process's own file stays");
+        c.pid = std::os::unix::process::parent_id(); // another live process of ours
+        write(&file, &c).unwrap();
+        assert!(!clean_stale(&file) && file.exists());
+        c.pid = 999_999; // no such process
+        write(&file, &c).unwrap();
+        assert!(clean_stale(&file) && !file.exists());
     }
 }

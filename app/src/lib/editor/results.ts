@@ -11,6 +11,9 @@ export class Results {
   private sourceOf = new Map<string, string>();
   private previews = new Map<string, CellResult>();
   private pending = new Map<string, Promise<CellResult>>();
+  /** Sources whose preview will notify the listeners when it arrives (once each). */
+  private notifying = new Set<string>();
+  private emitQueued = false;
   private listeners = new Set<Listener>();
 
   subscribe(f: Listener): () => void {
@@ -20,6 +23,17 @@ export class Results {
 
   private emit() {
     for (const f of this.listeners) f();
+  }
+
+  /** Notify the listeners once, after the current task: previews arriving together (a
+   *  template's many new calcs) cost one redraw, not one each. */
+  private emitSoon() {
+    if (this.emitQueued) return;
+    this.emitQueued = true;
+    queueMicrotask(() => {
+      this.emitQueued = false;
+      this.emit();
+    });
   }
 
   /** Replace all results (after a commit or when viewing another version). */
@@ -35,7 +49,16 @@ export class Results {
     if (id && this.sourceOf.get(id) === source && this.byId.has(id)) return this.byId.get(id);
     const p = this.previews.get(source);
     if (p) return p;
-    void this.preview(source).then(() => this.emit());
+    // One notification per pending preview. (Attaching one on every call made each redraw add
+    // a callback to every calc still waiting: inserting a template's 25 calcs set off an
+    // exponentially growing storm of microtasks that froze the window, 2026-11-26.)
+    if (!this.notifying.has(source)) {
+      this.notifying.add(source);
+      void this.preview(source).then(() => {
+        this.notifying.delete(source);
+        this.emitSoon();
+      });
+    }
     return undefined;
   }
 

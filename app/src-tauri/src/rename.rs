@@ -44,11 +44,14 @@ pub fn rename_calc(source: &str, names: &BTreeMap<String, String>, reads: &BTree
             while i < chars.len() && (i == start || is_part(chars[i])) {
                 i += 1;
             }
-            // A parenthesized subscript is part of the name: `X_(CO2,dry)`.
+            // A parenthesized subscript is part of the name: `X_(CO2,dry)`, and primes after it.
             if chars[i - 1] == '_' && chars.get(i) == Some(&'(')
                 && let Some(close) = chars[i..].iter().position(|&c| c == ')')
             {
                 i += close + 1;
+                while i < chars.len() && matches!(chars[i], '′' | '″' | '‴') {
+                    i += 1;
+                }
             }
             let word: String = chars[start..i].iter().collect();
             let before = chars[..start].iter().rev().find(|c| !c.is_whitespace()).copied();
@@ -56,7 +59,8 @@ pub fn rename_calc(source: &str, names: &BTreeMap<String, String>, reads: &BTree
             let after_dot = start > 0 && chars[start - 1] == '.';
             // A word glued to digits before it is part of a number-and-unit (5m), not a name.
             let glued = start > 0 && chars[start - 1].is_ascii_digit();
-            match names.get(&word) {
+            // The engine names `h_0` as `h₀` and `x″` as `x′′`: a name may be given either way.
+            match names.get(&word).or_else(|| names.get(&canonical(&word))) {
                 Some(new) if !after_dot && !glued && (!after_number || reads.contains(&word)) => out.push_str(new),
                 _ => out.push_str(&word),
             }
@@ -66,6 +70,48 @@ pub fn rename_calc(source: &str, names: &BTreeMap<String, String>, reads: &BTree
         i += 1;
     }
     out
+}
+
+/// A name as the calc engine reports it: a trailing numeric subscript folded (`h_0` → `h₀`),
+/// `″` and `‴` as primes.
+pub fn canonical(name: &str) -> String {
+    cruncha_lang::hurmet::check_for_numeric_subscript(&name.replace('″', "′′").replace('‴', "′′′"))
+}
+
+/// `name` with `suffix` added (one addition for every name an insert defines): into the
+/// subscript for a calc name (`S_y` → `S_(y,bolt1)`, `d_(k,max)` → `d_(k,max,bolt1)`, `h₀` →
+/// `h_(0,bolt1)`, `F_nt′` → `F_(nt,bolt1)′`), or after an underscore for a name without one
+/// (`Sy` → `Sy_bolt1`). `plain` names, ones a Python or Rust cell uses, always take the plain
+/// form (`S_y_bolt1`), since those languages can't spell a parenthesized subscript.
+pub fn suffixed(name: &str, suffix: &str, plain: bool) -> String {
+    let s = suffix.trim().trim_start_matches('_');
+    let base = name.trim_end_matches(['′', '″', '‴']);
+    let primes = &name[base.len()..];
+    if plain {
+        return format!("{base}_{s}{primes}");
+    }
+    if let Some(open) = base.strip_suffix(')').filter(|b| b.contains("_(")) {
+        return format!("{open},{s}){primes}");
+    }
+    if let Some((b, sub)) = base.split_once('_')
+        && !b.is_empty()
+        && !sub.is_empty()
+    {
+        return format!("{b}_({},{s}){primes}", sub.replace('_', ","));
+    }
+    let digits: String = base.chars().rev().take_while(|c| ('₀'..='₉').contains(c)).collect();
+    if !digits.is_empty() {
+        let b: String = base.chars().take(base.chars().count() - digits.chars().count()).collect();
+        let sub: String = digits.chars().rev().map(|c| char::from_digit(c as u32 - '₀' as u32, 10).unwrap()).collect();
+        return format!("{b}_({sub},{s}){primes}");
+    }
+    format!("{base}_{s}{primes}")
+}
+
+/// Whether a suffix can be added to names: letters and digits.
+pub fn valid_suffix(suffix: &str) -> bool {
+    let s = suffix.trim().trim_start_matches('_');
+    !s.is_empty() && s.chars().all(char::is_alphanumeric)
 }
 
 /// The names a cell defines and reads, as the rename check compares them.
@@ -136,6 +182,32 @@ mod tests {
         assert_eq!(rename_calc("Mσ = M + σ = ?", &names, &set(&["M", "σ"])), "Mσ = M_2 + σ = ?");
         let sub = map(&[("X_(CO2,dry)", "X2_(CO2,dry)"), ("X", "X2")]);
         assert_eq!(rename_calc("y = X_(CO2,dry) + X = ?", &sub, &set(&["X_(CO2,dry)", "X"])), "y = X2_(CO2,dry) + X2 = ?");
+    }
+
+    #[test]
+    fn a_name_is_found_as_written_or_as_the_engine_names_it() {
+        // The clash list says `h₀` (the engine folds `h_0`); the source says `h_0`.
+        let names = map(&[("h₀", "h_(0,b1)"), ("σ_(a,b)′", "σ_(a,b,b1)′")]);
+        assert_eq!(rename_calc("y = h_0 + σ_(a,b)′ = ?", &names, &set(&["h₀", "σ_(a,b)′"])), "y = h_(0,b1) + σ_(a,b,b1)′ = ?");
+        assert_eq!(rename_calc("h_0 = 2 mm", &names, &set(&[])), "h_(0,b1) = 2 mm");
+    }
+
+    #[test]
+    fn one_suffix_goes_into_every_kind_of_name() {
+        let cases = [
+            ("S_y", "S_(y,bolt1)"),
+            ("Sy", "Sy_bolt1"),
+            ("d_(k,max)", "d_(k,max,bolt1)"),
+            ("h₀", "h_(0,bolt1)"),
+            ("F_nt′", "F_(nt,bolt1)′"),
+            ("S_y_max", "S_(y,max,bolt1)"),
+            ("x̄", "x̄_bolt1"),
+        ];
+        for (name, want) in cases {
+            assert_eq!(suffixed(name, "bolt1", false), want, "{name}");
+        }
+        assert_eq!(suffixed("S_y", "_bolt1", true), "S_y_bolt1");
+        assert!(valid_suffix("bolt1") && valid_suffix("_b2") && !valid_suffix("a b") && !valid_suffix(""));
     }
 
     #[test]

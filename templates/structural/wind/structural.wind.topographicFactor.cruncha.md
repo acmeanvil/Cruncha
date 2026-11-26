@@ -1,7 +1,7 @@
 +++
 cruncha-template = 1
 id = "structural.wind.topographicFactor"
-version = "1.0.0"
+version = "1.1.0"
 title = "Wind topographic factor Kzt (hill, ridge, escarpment), ASCE 7-10"
 summary = "Topographic factor Kzt = (1 + K1 K2 K3)² for wind speed-up over an isolated 2-D ridge, 2-D escarpment or 3-D hill, by the equations of Figure 26.8-1."
 category = ["Structural engineering", "Wind"]
@@ -72,7 +72,7 @@ tolerance = "1e-12"
 
 ## Wind topographic factor K_zt (ASCE 7-10)
 
-The speed-up of wind over an isolated hill, ridge or escarpment, as the factor K_zt on the velocity pressure (Eq. 26.8-1). K_2 and K_3 come from the equations of Figure 26.8-1. K_1 is the figure's parameter K_1/(H/L_h) times H/L_h; that parameter, γ and μ are read from the figure's parameter table for the shape and exposure.
+The speed-up of wind over an isolated hill, ridge or escarpment, as the factor K_zt on the velocity pressure (Eq. 26.8-1). Bind the velocity pressure template's K_zt (structural.wind.velocityPressure) to this one, with the same z. K_2 and K_3 come from the equations of Figure 26.8-1. K_1 is the figure's parameter K_1/(H/L_h) times H/L_h; that parameter, γ and μ are read from the figure's parameter table for the shape and exposure.
 
 Speed-up must be included only when all five conditions of Sec. 26.8.1 hold: the feature is isolated and unobstructed upwind, it stands at least twice as high as the upwind terrain within 2 mi, the structure is in its upper half or near the crest, H/L_h ≥ 0.2, and H is at least 15 ft (exposures C and D) or 60 ft (B). This template does not check them: if they don't all hold, K_zt = 1.
 
@@ -98,21 +98,17 @@ z = 30 ft_
 
 ### Figure 26.8-1 parameters
 
-From the parameter table of Figure 26.8-1, by shape and exposure:
+These three come from the parameter table of Figure 26.8-1, by the shape of the feature (2-D ridge, 2-D escarpment or 3-D axisymmetric hill), the exposure (K_1/(H/L_h) only) and, for μ, whether the site is upwind or downwind of the crest. The defaults are for a 2-D escarpment in exposure C, downwind.
 
-- **2-D ridge:** K_1/(H/L_h) 1.30 (B), 1.45 (C), 1.55 (D); γ = 3; μ = 1.5 upwind and downwind.
-- **2-D escarpment:** 0.75, 0.85, 0.95; γ = 2.5; μ = 1.5 upwind, 4 downwind.
-- **3-D axisymmetric hill:** 0.95, 1.05, 1.15; γ = 4; μ = 1.5 upwind and downwind.
-
-```calc {description="K1/(H/Lh) for the shape and exposure, Fig. 26.8-1"}
+```calc {description="K1/(H/Lh) for the shape and exposure, ASCE 7-10 Fig. 26.8-1 (0.85 is for a 2-D escarpment in exposure C)"}
 k_1 = 0.85_
 ```
 
-```calc {description="Height attenuation factor γ, Fig. 26.8-1"}
+```calc {description="Height attenuation factor γ for the shape, ASCE 7-10 Fig. 26.8-1 (2.5 is for a 2-D escarpment)"}
 γ = 2.5_
 ```
 
-```calc {description="Horizontal attenuation factor μ (upwind or downwind of the crest), Fig. 26.8-1"}
+```calc {description="Horizontal attenuation factor μ for the shape, upwind or downwind of the crest, ASCE 7-10 Fig. 26.8-1 (4 is for a 2-D escarpment, downwind)"}
 μ = 4_
 ```
 

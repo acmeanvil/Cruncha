@@ -516,7 +516,9 @@ impl Session {
         after: Option<String>,
         row: Option<&str>,
         columns: Option<&[String]>,
+        suffix: Option<&str>,
     ) -> Result<(crate::library::TemplateDetail, Vec<cruncha_mcp::Edit>)> {
+        let _op = crate::applog::Op::new("agent", format!("template {id} for a proposal{}", row.map(|r| format!(", row {r}")).unwrap_or_default()));
         let mut t = self.template_by_id(id)?;
         match (&t.table, row) {
             (Some(_), Some(size)) => t = self.template_row(&t.summary.key, size, columns)?,
@@ -566,6 +568,16 @@ impl Session {
             kept.push(c);
         }
         let mut names = rename.clone();
+        // A suffix renames every other name the kept cells define.
+        if let Some(sfx) = suffix.filter(|s| !s.trim().is_empty()) {
+            let views: Vec<SourceView> =
+                kept.iter().filter(|c| code(&c.kind)).map(|c| SourceView { kind: c.kind.clone(), source: c.source.clone() }).collect();
+            for (old, new) in self.suffix_names(&views, sfx).await? {
+                if !bindings.contains_key(&old) {
+                    names.entry(old).or_insert(new);
+                }
+            }
+        }
         names.extend(bindings.iter().filter(|(a, b)| a != b).map(|(a, b)| (a.clone(), b.clone())));
         let views: Vec<SourceView> =
             kept.iter().filter(|c| code(&c.kind)).map(|c| SourceView { kind: c.kind.clone(), source: c.source.clone() }).collect();
@@ -662,7 +674,7 @@ impl Session {
         {
             match cruncha_kernel_rs::cells::Cells::new(tc, cruncha_kernel_rs::env::work_dir(&self.rust_base)) {
                 Ok(c) => self.rust_cells = Some(Arc::new(c)),
-                Err(e) => eprintln!("cruncha: Rust cells unavailable: {e}"),
+                Err(e) => crate::applog::warn("rust", format!("Rust cells unavailable: {e}")),
             }
         }
         self.rust_cells.clone()
@@ -816,6 +828,31 @@ impl Session {
 
     /// These cells' sources with `names` renamed (old → new), each checked by scanning it
     /// again (`rename::check`): a rename that can't be done safely is refused.
+    /// The renames that add `suffix` to every name the cells define (old → new): into a calc
+    /// name's subscript, or plainly for names a Python or Rust cell uses (`rename::suffixed`).
+    pub async fn suffix_names(&mut self, cells: &[SourceView], suffix: &str) -> Result<BTreeMap<String, String>> {
+        if !crate::rename::valid_suffix(suffix) {
+            return Err(format!("“{suffix}” can't go into a name: use letters and digits"));
+        }
+        let mut defines = BTreeSet::new();
+        let mut code = BTreeSet::new();
+        for c in cells {
+            let kind = CellKind::parse(&c.kind).ok_or_else(|| format!("unknown kind {}", c.kind))?;
+            if !matches!(kind, CellKind::Calc | CellKind::Python | CellKind::Rust) {
+                continue;
+            }
+            let n = self.cell_names(kind, &c.source).await?;
+            if kind != CellKind::Calc {
+                code.extend(n.defines.iter().chain(&n.reads).cloned());
+            }
+            defines.extend(n.defines);
+        }
+        Ok(defines.into_iter().map(|n| {
+            let new = crate::rename::suffixed(&n, suffix, code.contains(&n));
+            (n, new)
+        }).collect())
+    }
+
     pub async fn rename_cells(&mut self, cells: Vec<SourceView>, names: BTreeMap<String, String>) -> Result<Vec<String>> {
         let mut out = Vec::with_capacity(cells.len());
         for c in cells {
@@ -874,6 +911,7 @@ impl Session {
 
     /// Open the document at `path` in a new tab, or switch to its tab if it's open already.
     pub async fn open(&mut self, path: &Path) -> Result<DocInfo> {
+        let _op = crate::applog::Op::new("store", format!("open {}", path.display()));
         let root = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
         if let Some(id) = self.docs.iter().find(|d| d.store.root() == root).map(|d| d.id.clone()) {
             self.remember_recent(&root.display().to_string());
@@ -924,7 +962,7 @@ impl Session {
             prefs.trusted_paths.insert(id.clone(), path_shown.clone());
         }
         if let Err(e) = self.set_prefs(prefs) {
-            eprintln!("cruncha: could not save preferences: {e}");
+            crate::applog::warn("app", format!("could not save preferences: {e}"));
         }
         let trusted = self.prefs.trusted.contains(&id);
         let cells = self.cells(None).await?;
@@ -950,7 +988,7 @@ impl Session {
         if (prefs.open_tabs != self.prefs.open_tabs || prefs.active_tab != self.prefs.active_tab)
             && let Err(e) = self.set_prefs(prefs)
         {
-            eprintln!("cruncha: could not save preferences: {e}");
+            crate::applog::warn("app", format!("could not save preferences: {e}"));
         }
     }
 
@@ -961,7 +999,7 @@ impl Session {
         prefs.recent.insert(0, path.to_owned());
         prefs.recent.truncate(MAX_RECENT);
         if let Err(e) = self.set_prefs(prefs) {
-            eprintln!("cruncha: could not save preferences: {e}");
+            crate::applog::warn("app", format!("could not save preferences: {e}"));
         }
     }
 
@@ -1079,6 +1117,7 @@ impl Session {
         &mut self,
         ids: Option<Vec<String>>,
     ) -> Result<HashMap<String, CellResult>> {
+        let _op = crate::applog::Op::new("python", "run");
         let cells = self.cells(None).await?;
         let chosen: Vec<&Cell> = cells
             .iter()
@@ -1128,6 +1167,7 @@ impl Session {
 
     /// Create a new, empty document at `path` and open it.
     pub async fn create(&mut self, path: &Path) -> Result<DocInfo> {
+        let _op = crate::applog::Op::new("store", format!("create {}", path.display()));
         let store = Store::create(path, &local_actor()).await.map_err(err)?;
         self.opened(store, false, true).await
     }
@@ -1167,7 +1207,7 @@ impl Session {
         }
         doc.python.shutdown().await;
         if let Err(e) = crate::stored::flush(&mut doc.store, &doc.engine, &local_actor()).await {
-            eprintln!("cruncha: storing results on close failed: {e}");
+            crate::applog::warn("app", format!("storing results on close failed: {e}"));
         }
         if !doc.edited || doc.pruned {
             return None;
@@ -1178,12 +1218,12 @@ impl Session {
                 if r.is_some()
                     && let Err(e) = crate::stored::retain_after_prune(&mut doc.store, &doc.engine, "system").await
                 {
-                    eprintln!("cruncha: trimming stored results failed: {e}");
+                    crate::applog::warn("app", format!("trimming stored results failed: {e}"));
                 }
                 r.map(Into::into)
             }
             Err(e) => {
-                eprintln!("cruncha: pruning on close failed: {e}");
+                crate::applog::warn("app", format!("pruning on close failed: {e}"));
                 None
             }
         }
@@ -1255,6 +1295,7 @@ impl Session {
     /// A calc cell's `defines` and `reads` are recomputed from its source, so the stored names
     /// are always the evaluator's.
     pub async fn commit(&mut self, changes: Vec<ChangeView>, message: &str) -> Result<CommitView> {
+        let _op = crate::applog::Op::new("store", format!("commit {} change(s): {}", changes.len(), message.lines().next().unwrap_or_default()));
         let changes: Vec<Change> = changes
             .into_iter()
             .map(|c| match c {
@@ -1361,6 +1402,7 @@ impl Session {
         message: &str,
         edits: Vec<cruncha_mcp::Edit>,
     ) -> Result<ProposalView> {
+        let _op = crate::applog::Op::new("agent", format!("proposal from {actor}: {} edit(s)", edits.len()));
         if message.trim().is_empty() {
             return Err("a proposal needs a message saying what it does and why".into());
         }
@@ -1423,6 +1465,7 @@ impl Session {
     /// `ai:accepted`. A stale proposal (a cell changed since) needs `force`, which replaces
     /// the current source. Changed Python cells still wait for Run (ADR-0005).
     pub async fn accept_proposal(&mut self, id: &str, force: bool) -> Result<CommitView> {
+        let _op = crate::applog::Op::new("agent", format!("accept proposal {id}{}", if force { " (forced)" } else { "" }));
         let actor = local_actor();
         let p = self.doc()?.store.proposal(id).await.map_err(err)?;
         if p.status != cruncha_store::ProposalStatus::Open {
@@ -1454,6 +1497,7 @@ impl Session {
 
     /// Reject an open proposal, with an optional note the agent can read.
     pub async fn reject_proposal(&mut self, id: &str, note: &str) -> Result<ProposalView> {
+        let _op = crate::applog::Op::new("agent", format!("reject proposal {id}"));
         self.decide(id, cruncha_store::ProposalStatus::Rejected, &local_actor(), note).await
     }
 
@@ -1503,6 +1547,7 @@ impl Session {
     /// Make an earlier version (or snapshot) the latest again, as a new version: history is
     /// never rewritten, so a restore can be undone the same way.
     pub async fn restore(&mut self, at: &At) -> Result<CommitView> {
+        let _op = crate::applog::Op::new("store", "restore");
         let actor = local_actor();
         let doc = self.doc_mut()?;
         let before = doc.store.version();
@@ -1528,6 +1573,7 @@ impl Session {
     /// Results for every calc cell at `at`. The latest version uses the document's engine
     /// (memoized); history is evaluated afresh.
     pub async fn results(&mut self, at: &At) -> Result<HashMap<String, CellResult>> {
+        let _op = crate::applog::Op::new("engine", "evaluate");
         let cells = self.cells_at(at).await?;
         let current = self.doc()?.store.version();
         let latest = at.ref_name.is_none() && at.version.is_none_or(|v| v == current);
@@ -1756,6 +1802,7 @@ impl Session {
 
     /// Apply the open document's effective policy now (the user confirmed the preview).
     pub async fn prune_now(&mut self) -> Result<Option<PruneView>> {
+        let _op = crate::applog::Op::new("store", "trim history now");
         let policy = self.effective_retention(&self.doc()?.store);
         let doc = self.doc_mut()?;
         let r = doc.store.prune(&policy, "system").await.map_err(err)?;
@@ -2310,16 +2357,16 @@ mod tests {
         let bolts = "structural.bolts.shearTension";
         let none = BTreeMap::new();
 
-        let e = session.template_edits(bolts, &none, &none, None, None, None).await.unwrap_err();
+        let e = session.template_edits(bolts, &none, &none, None, None, None, None).await.unwrap_err();
         assert!(e.contains("already defines ϕ") && e.contains("\"ϕ\": \"ϕ2\""), "{e}");
         let bad: BTreeMap<String, String> = [("A_b".to_owned(), "V".to_owned())].into();
-        assert!(session.template_edits(bolts, &bad, &none, None, None, None).await.unwrap_err().contains("isn't an input"));
+        assert!(session.template_edits(bolts, &bad, &none, None, None, None, None).await.unwrap_err().contains("isn't an input"));
         let bad: BTreeMap<String, String> = [("V_u".to_owned(), "nope".to_owned())].into();
-        assert!(session.template_edits(bolts, &bad, &none, None, None, None).await.unwrap_err().contains("doesn't define nope"));
+        assert!(session.template_edits(bolts, &bad, &none, None, None, None, None).await.unwrap_err().contains("doesn't define nope"));
 
         let bind: BTreeMap<String, String> = [("V_u".to_owned(), "V".to_owned())].into();
         let rename: BTreeMap<String, String> = [("ϕ".to_owned(), "ϕ2".to_owned())].into();
-        let (t, edits) = session.template_edits(bolts, &bind, &rename, None, None, None).await.unwrap();
+        let (t, edits) = session.template_edits(bolts, &bind, &rename, None, None, None, None).await.unwrap();
         let sources: Vec<&str> = edits
             .iter()
             .rev()
@@ -2353,14 +2400,14 @@ mod tests {
         session.create_sample(&path).await.unwrap();
         let nuts = "mechanical.tables.iso.hexNut";
         let none = BTreeMap::new();
-        let e = session.template_edits(nuts, &none, &none, None, None, None).await.unwrap_err();
+        let e = session.template_edits(nuts, &none, &none, None, None, None, None).await.unwrap_err();
         assert!(e.contains("is a table: give the row") && e.contains("M1.6"), "{e}");
         let bolts = "structural.bolts.shearTension";
-        assert!(session.template_edits(bolts, &none, &none, None, Some("M8"), None).await.unwrap_err().contains("takes no row"));
-        assert!(session.template_edits(nuts, &none, &none, None, Some("M7"), None).await.unwrap_err().contains("has no size \"M7\""));
+        assert!(session.template_edits(bolts, &none, &none, None, Some("M8"), None, None).await.unwrap_err().contains("takes no row"));
+        assert!(session.template_edits(nuts, &none, &none, None, Some("M7"), None, None).await.unwrap_err().contains("has no size \"M7\""));
 
         let cols = ["s_max".to_owned(), "m_max".to_owned()];
-        let (t, edits) = session.template_edits(nuts, &none, &none, None, Some("M8"), Some(&cols)).await.unwrap();
+        let (t, edits) = session.template_edits(nuts, &none, &none, None, Some("M8"), Some(&cols), None).await.unwrap();
         assert_eq!(t.row.as_deref(), Some("M8"));
         let sources: Vec<String> = edits
             .iter()
@@ -2379,6 +2426,80 @@ mod tests {
         let r = session.results(&At::default()).await.unwrap();
         let s = cells.iter().find(|c| c.defines.contains(&"s_max".to_string())).unwrap();
         assert!(r[&s.id].error.is_none() && r[&s.id].text.contains("13"), "{:?}", r[&s.id]);
+    }
+
+    #[tokio::test]
+    async fn one_suffix_renames_every_name_of_a_second_insert() {
+        use cruncha_mcp::Edit;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let springs = "mechanical.tables.en16983.seriesA";
+        let row = session.template_by_id(springs).unwrap().table.unwrap().rows[0][0].clone();
+        let none = BTreeMap::new();
+        let insert = |edits: &Vec<Edit>| edits.clone();
+        let (_, first) = session.template_edits(springs, &none, &none, None, Some(&row), None, None).await.unwrap();
+        let p = session.propose("ai:claude", None, "first", insert(&first)).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        // The same row again clashes on every name (h_0, K_1, t′…): one suffix renames them all.
+        assert!(session.template_edits(springs, &none, &none, None, Some(&row), None, None).await.unwrap_err().contains("already defines"));
+        let t = session.template_row(&session.template_by_id(springs).unwrap().summary.key, &row, None).unwrap();
+        let views: Vec<SourceView> = t.cells.iter().filter(|c| c.kind == "calc").map(|c| SourceView { kind: c.kind.clone(), source: c.source.clone() }).collect();
+        let names = session.suffix_names(&views, "b2").await.unwrap();
+        assert_eq!(names["h₀"], "h_(0,b2)");
+        assert_eq!(names["D_e"], "D_(e,b2)");
+        assert_eq!(names["σ_(II,III)"], "σ_(II,III,b2)");
+        let (_, second) = session.template_edits(springs, &none, &names, None, Some(&row), None, None).await.unwrap();
+        let p = session.propose("ai:claude", None, "second", second).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        let cells = session.cells(None).await.unwrap();
+        let r = session.results(&At::default()).await.unwrap();
+        for name in ["h₀", "h_(0,b2)", "K_(1,b2)", "ratio_(Dt,b2)"] {
+            let c = cells.iter().find(|c| c.defines.contains(&name.to_string())).unwrap_or_else(|| panic!("{name} not defined"));
+            assert!(r[&c.id].error.is_none(), "{name}: {:?}", r[&c.id]);
+        }
+        assert!(session.suffix_names(&views, "a b").await.unwrap_err().contains("letters and digits"));
+        // An agent gives the suffix to propose_template directly.
+        let (_, third) = session.template_edits(springs, &none, &none, None, Some(&row), None, Some("b3")).await.unwrap();
+        let p = session.propose("ai:claude", None, "third", third).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        assert!(session.cells(None).await.unwrap().iter().any(|c| c.defines.contains(&"h_(0,b3)".to_string())));
+    }
+
+    #[tokio::test]
+    async fn every_built_in_template_inserts_into_a_new_document_and_evaluates() {
+        // The owner's report (2026-11-26): the app froze after inserting the bolt template
+        // into a new document. Each built-in template, inserted alone into a new document,
+        // must commit and evaluate promptly.
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(None);
+        let none = BTreeMap::new();
+        let ids: Vec<String> = session.templates().into_iter().filter(|t| !t.is_table && t.error.is_none()).map(|t| t.id).collect();
+        for (k, id) in ids.iter().enumerate() {
+            if !(id.starts_with("structural.") || id == "mechanical.columns.eulerJohnson") {
+                continue;
+            }
+            session.create(&dir.path().join(format!("t{k}.cruncha"))).await.unwrap();
+            let start = Instant::now();
+            let (_, edits) = tokio::time::timeout(Duration::from_secs(20), session.template_edits(id, &none, &none, None, None, None, None))
+                .await
+                .unwrap_or_else(|_| panic!("{id}: template_edits hung"))
+                .unwrap();
+            let p = session.propose("ai:claude", None, id, edits).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(20), session.accept_proposal(&p.id, false))
+                .await
+                .unwrap_or_else(|_| panic!("{id}: accept hung"))
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(20), session.results(&At::default()))
+                .await
+                .unwrap_or_else(|_| panic!("{id}: evaluation hung"))
+                .unwrap();
+            let took = start.elapsed();
+            eprintln!("{id}: {took:?}");
+            assert!(took < Duration::from_secs(10), "{id} took {took:?}");
+        }
     }
 
     #[tokio::test]

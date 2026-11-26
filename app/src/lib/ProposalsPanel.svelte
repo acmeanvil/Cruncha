@@ -4,6 +4,7 @@
 <script lang="ts">
   import type { CellResult, ProposalChange, ProposalView } from "./api";
   import { date } from "./format";
+  import { logAction } from "./log";
   import { proseText } from "./editor/cells";
 
   let {
@@ -125,6 +126,7 @@
             class="reject"
             onsubmit={(ev) => {
               ev.preventDefault();
+              logAction(`Reject proposal ${p.id.slice(-6)} (${p.changes.length} changes)`);
               void act(p.id, async () => {
                 await onreject(p.id, note);
                 rejecting = null;
@@ -140,9 +142,9 @@
         {:else}
           <div class="actions">
             {#if p.stale}
-              <button disabled={busy === p.id} onclick={() => void act(p.id, () => onaccept(p.id, true))}>Accept anyway</button>
+              <button disabled={busy === p.id} onclick={() => (logAction(`Accept proposal ${p.id.slice(-6)} anyway (stale, ${p.changes.length} changes)`), void act(p.id, () => onaccept(p.id, true)))}>Accept anyway</button>
             {:else}
-              <button class="primary" disabled={busy === p.id} onclick={() => void act(p.id, () => onaccept(p.id, false))}>Accept</button>
+              <button class="primary" disabled={busy === p.id} onclick={() => (logAction(`Accept proposal ${p.id.slice(-6)} (${p.changes.length} changes)`), void act(p.id, () => onaccept(p.id, false)))}>Accept</button>
             {/if}
             <button disabled={busy === p.id} onclick={() => ((rejecting = p.id), (note = ""))}>Reject…</button>
           </div>

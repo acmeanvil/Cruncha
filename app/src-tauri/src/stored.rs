@@ -78,7 +78,7 @@ pub async fn flush(store: &mut Store, engine: &Mutex<Engine>, actor: &str) -> Re
     }
     let r = store.put_results(runs, actor).await?;
     for id in &r.too_large {
-        eprintln!("cruncha: the output of cell {id} is over 64 MB; it isn't stored");
+        crate::applog::warn("store", format!("the output of cell {id} is over 64 MB; it isn't stored"));
     }
     Ok(r.written)
 }

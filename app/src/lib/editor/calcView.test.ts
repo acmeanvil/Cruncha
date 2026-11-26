@@ -157,3 +157,33 @@ test("a description is edited with the calc, committed in its attrs and shown be
   host.querySelector(".calc-desc")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
   expect(document.activeElement?.className).toBe("calc-desc-input");
 });
+
+test("a results update that changes nothing of a calc doesn't redraw it", () => {
+  const { host } = mount([cell("C", "calc", "a0", "x = 1")]);
+  const results = (host.querySelector(".calc-cell") as HTMLElement & { calcView: { results: InstanceType<typeof Results> } }).calcView;
+  const before = host.querySelector(".calc-display")!.firstElementChild;
+  expect(before).not.toBeNull();
+  // The same result again (another cell's update publishes to every calc): the same element.
+  (results as unknown as { results: InstanceType<typeof Results> }).results.set({ C: { tex: "x = 1", error: null } }, new Map([["C", "x = 1"]]));
+  expect(host.querySelector(".calc-display")!.firstElementChild).toBe(before);
+  // A changed result redraws.
+  (results as unknown as { results: InstanceType<typeof Results> }).results.set({ C: { tex: "x = 3", error: null } }, new Map([["C", "x = 1"]]));
+  expect(host.querySelector(".calc-display")!.firstElementChild).not.toBe(before);
+});
+
+test("many new calcs waiting for previews notify once each, not exponentially", async () => {
+  const { Results: R } = await import("./results");
+  const r = new R();
+  let renders = 0;
+  const sources = Array.from({ length: 25 }, (_, i) => `d_${i} = ${i} mm`);
+  // Every listener re-reads every cell, as the calc views do.
+  for (let i = 0; i < 25; i++) r.subscribe(() => {
+    renders++;
+    for (const s of sources) r.get(null, s);
+  });
+  for (const s of sources) r.get(null, s);
+  for (let i = 0; i < 20; i++) await flushPromises();
+  // 25 listeners, a handful of coalesced notifications: far below the thousands of the bug.
+  expect(renders).toBeLessThanOrEqual(25 * 3);
+  expect(sources.every((s) => r.get(null, s) !== undefined)).toBe(true);
+});

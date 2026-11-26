@@ -311,6 +311,8 @@
     heading(level: calc.min(b.level, 6), runs(b.text))
   } else if b.type in ("paragraph", "list", "quote", "rule") {
     prose(b)
+  } else if b.type == "pageBreak" {
+    pagebreak(weak: true)
   } else if b.type == "calc" {
     calc-block(b)
   } else if b.type == "code" {

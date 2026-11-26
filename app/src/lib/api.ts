@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Typed wrappers around the backend's Tauri commands (app/src-tauri/src/lib.rs).
 import { invoke } from "@tauri-apps/api/core";
+import { logWarn } from "./log";
 
 /** A history-retention policy (ADR-0011). No limits set means "keep everything". */
 export interface Retention {
@@ -624,7 +625,23 @@ const DOC_COMMANDS = new Set([
   "prune_now", "clear_results", "paste_clashes", "rename_cells",
 ]);
 function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-  return invoke<T>(cmd, DOC_COMMANDS.has(cmd) && !("doc" in args) ? { doc: activeDoc, ...args } : args);
+  return invoke<T>(cmd, DOC_COMMANDS.has(cmd) && !("doc" in args) ? { doc: activeDoc, ...args } : args).catch(
+    (e: unknown) => {
+      // A rejected command goes in the debug log (ADR-0029), by name and message only.
+      if (!cmd.startsWith("log_")) logWarn("ui.cmd", `command ${cmd} failed: ${String(e).slice(0, 500)}`);
+      throw e;
+    },
+  );
+}
+
+/** A record in the debug log (ADR-0029). */
+export interface LogRecord {
+  seq: number;
+  /** Local time to the millisecond, `2026-11-26T10:07:03.406`. */
+  at: string;
+  level: "error" | "warn" | "info" | "debug";
+  category: string;
+  message: string;
 }
 
 /** An open document, as the tab bar shows it. */
@@ -668,6 +685,9 @@ export const api = {
   /** The cells' sources with names renamed (old → new), each checked; refused if unsafe. */
   renameCells: (cells: { kind: string; source: string }[], names: Record<string, string>, doc?: string) =>
     call<string[]>("rename_cells", { cells, names, ...(doc ? { doc } : {}) }),
+  /** The renames (old → new) that add `suffix` to every name the cells define: `S_y` → `S_(y,bolt1)`. */
+  suffixNames: (cells: { kind: string; source: string }[], suffix: string, doc?: string) =>
+    call<Record<string, string>>("suffix_names", { cells, suffix, ...(doc ? { doc } : {}) }),
   /** The open documents, in tab order. */
   openDocuments: () => call<OpenDocView[]>("open_documents"),
   /** Switch to a tab. */
@@ -749,4 +769,12 @@ export const api = {
   proposals: () => call<ProposalView[]>("proposals"),
   acceptProposal: (id: string, force: boolean) => call<CommitView>("accept_proposal", { id, force }),
   rejectProposal: (id: string, note: string) => call<ProposalView>("reject_proposal", { id, note }),
+  /** The debug log's records in memory after `since` (0: all). */
+  logRecords: (since = 0) => call<LogRecord[]>("log_records", { since }),
+  /** The log file's path and its last `bytes` (default 400 kB): Earlier sessions. */
+  logFile: (bytes?: number) => call<[string, string]>("log_file", { bytes: bytes ?? null }),
+  /** Show the log file in Finder. */
+  logReveal: () => call<void>("log_reveal"),
+  /** Write the Log viewer's text to `path` (Save as…). */
+  logSave: (path: string, text: string) => call<void>("log_save", { path, text }),
 };

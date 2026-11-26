@@ -39,6 +39,8 @@
   import type { OutlineItem } from "./lib/editor/outline";
   import type { Variable } from "./lib/editor/variables";
   import { drawForReport } from "./lib/editor/figures";
+  import { logAction, logError } from "./lib/log";
+  import { logFeed } from "./lib/logFeed.svelte";
 
   let prefs = $state<Prefs>({ defaultRetention: KEEP_EVERYTHING });
   /** The open document's own type sizes (Document settings), if it sets them. */
@@ -220,6 +222,31 @@
     }
   }
 
+  /** A handler that logs a user action (ADR-0029: its name only) and then does it. */
+  const act = (name: string, f: () => unknown) => () => {
+    logAction(name);
+    void f();
+  };
+
+  // Messages shown to the user as errors go in the debug log too.
+  $effect(() => {
+    if (error) logError("shown to the user", error);
+  });
+  $effect(() => {
+    if (save.error) logError("saving failed", save.error);
+  });
+
+  /** Open the bottom panel on the Log tab (⌘⌥L, the status bar's dot). */
+  function showLog() {
+    bottomOpen = true;
+    bottomTab = "log";
+  }
+  // Errors are seen once the Log tab shows.
+  $effect(() => {
+    void logFeed.lastError;
+    if (bottomOpen && bottomTab === "log") logFeed.markSeen();
+  });
+
   /** Save pending edits before the editor shows something else. */
   async function flush() {
     await editor?.flush();
@@ -267,6 +294,7 @@
   const switchTab = (id: string) =>
     attempt(async () => {
       if (doc?.id === id) return;
+      logAction(`Switch to tab ${id.slice(-6)} (${tabs.length} open)`);
       if (badged.has(id)) badged = new Set([...badged].filter((x) => x !== id));
       await leaveTab();
       await load(await api.activateDocument(id));
@@ -274,6 +302,7 @@
 
   const closeTab = (id: string) =>
     attempt(async () => {
+      logAction(`Close tab ${id.slice(-6)}`);
       const active = doc?.id === id;
       if (active) await flush();
       await api.closeDocument(id);
@@ -309,6 +338,7 @@
   const folderOf = (p: string) => p.slice(0, Math.max(0, p.length - fileName(p).length - 1));
 
   onMount(() => {
+    void logFeed.start();
     void attempt(async () => {
       prefs = await api.getPrefs();
       // Reopen last session's tabs (ADR-0024); one that moved or is open elsewhere is skipped.
@@ -340,8 +370,11 @@
     const unRustSetup = listen<string>("rust-setup", (e) => (setup = RUST_SETUP_LABEL[e.payload] ?? setup));
     // The app menu: File → Open… (⌘O) and Close Tab (⌘W).
     const unMenu = listen<string>("menu", (e) => {
-      if (e.payload === "open") openDocument();
-      if (e.payload === "close-tab" && doc) void closeTab(doc.id);
+      if (e.payload === "open") act("Menu: Open…", openDocument)();
+      if (e.payload === "close-tab" && doc) {
+        logAction("Menu: Close Tab");
+        void closeTab(doc.id);
+      }
     });
     return () => {
       void unlisten.then((f) => f());
@@ -477,36 +510,50 @@
     if (e.key === "Escape") fileMenu = false;
     if (e.key === "," && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
+      logAction("⌘, Settings");
       settingsPage = settingsPage ?? "agents";
     }
     if (e.key.toLowerCase() === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
+      logAction("⌘⇧F Functions");
       reference("functions");
     }
     if (e.key.toLowerCase() === "u" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
+      logAction("⌘⇧U Units");
       reference("units");
     }
     if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
+      logAction("⌘⇧T Templates");
       reference("templates");
     }
     if (e.key.toLowerCase() === "l" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
       e.preventDefault();
+      logAction("⌘⇧L Tables");
       reference("tables");
     }
     // Tabs (ADR-0024): ⌘T opens a document in a new tab; ⌘⇧[ and ⌘⇧] switch.
     if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault();
+      logAction("⌘T Open in a new tab");
       openDocument();
     }
     if ((e.key === "[" || e.key === "{" || e.key === "]" || e.key === "}") && (e.metaKey || e.ctrlKey) && e.shiftKey && doc) {
       e.preventDefault();
+      logAction(e.key === "]" || e.key === "}" ? "⌘⇧] Next tab" : "⌘⇧[ Previous tab");
       cycleTab(e.key === "]" || e.key === "}" ? 1 : -1);
     }
-    if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && doc) {
+    if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault();
+      logAction(bottomOpen ? "⌘J Hide the bottom panel" : "⌘J Show the bottom panel");
       bottomOpen = !bottomOpen;
+    }
+    // The debug log (ADR-0029): ⌘⌥L (by key code: ⌥ changes the character).
+    if (e.code === "KeyL" && (e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      logAction("⌘⌥L Debug log");
+      showLog();
     }
   }}
 />
@@ -514,7 +561,7 @@
 <div class="app">
   <header class="bar">
     {#if doc}
-      <button class="icon" title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed={sidebar} onclick={() => (sidebar = !sidebar)}>
+      <button class="icon" title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed={sidebar} onclick={act("Toggle sidebar", () => (sidebar = !sidebar))}>
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" /><line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" /></svg>
       </button>
     {/if}
@@ -525,37 +572,43 @@
         <span class="status {save.status}" title={save.error ?? ""}>{saveLabel}</span>
       {/if}
     {/if}
+    {#if logFeed.unseenErrors}
+      <button class="errdot" title="New errors in the debug log (⌘⌥L)" aria-label="New errors in the debug log" onclick={act("Status bar: new errors", showLog)}></button>
+    {/if}
     <span class="spacer"></span>
     <div class="file">
-      <button aria-haspopup="menu" aria-expanded={fileMenu} onclick={() => (fileMenu = !fileMenu)}>File ▾</button>
+      <button aria-haspopup="menu" aria-expanded={fileMenu} onclick={() => {
+        if (!fileMenu) logAction("File menu");
+        fileMenu = !fileMenu;
+      }}>File ▾</button>
       {#if fileMenu}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div class="menu" role="menu" tabindex="-1" onclick={() => (fileMenu = false)}>
-          <button role="menuitem" onclick={newDocument}>New document…</button>
-          <button role="menuitem" onclick={openDocument}>Open…</button>
-          <button role="menuitem" onclick={createSample}>New sample document…</button>
+          <button role="menuitem" onclick={act("File: New document", newDocument)}>New document…</button>
+          <button role="menuitem" onclick={act("File: Open", openDocument)}>Open…</button>
+          <button role="menuitem" onclick={act("File: New sample document", createSample)}>New sample document…</button>
           {#if doc}
             <hr />
-            <button role="menuitem" onclick={() => exportReport()} disabled={exporting}>Export report (PDF)…</button>
-            <button role="menuitem" onclick={() => documentSettings("report")}>Report settings…</button>
+            <button role="menuitem" onclick={act("File: Export report", () => exportReport())} disabled={exporting}>Export report (PDF)…</button>
+            <button role="menuitem" onclick={act("File: Report settings", () => documentSettings("report"))}>Report settings…</button>
           {/if}
           {#if prefs.recent?.length}
             <hr />
             <span class="label small muted">Recent</span>
             {#each prefs.recent.slice(0, 6) as p (p)}
-              <button role="menuitem" title={p} onclick={() => openRecent(p)}>{fileName(p).replace(/\.cruncha$/, "")}</button>
+              <button role="menuitem" title={p} onclick={act("File: Open recent", () => openRecent(p))}>{fileName(p).replace(/\.cruncha$/, "")}</button>
             {/each}
           {/if}
         </div>
       {/if}
     </div>
     {#if doc}
-      <button class:agents-on={agentsOn || agentPanel} aria-pressed={agentPanel} onclick={() => (agentPanel = !agentPanel)} title="Work with an AI agent on this document">
+      <button class:agents-on={agentsOn || agentPanel} aria-pressed={agentPanel} onclick={act(agentPanel ? "Hide the agent panel" : "Show the agent panel", () => (agentPanel = !agentPanel))} title="Work with an AI agent on this document">
         {#if agentsOn}<span class="dot" aria-hidden="true" title="Agents outside Cruncha can use this document"></span>{/if}Agent
       </button>
-      <button onclick={() => documentSettings("document")}>Document settings</button>
+      <button onclick={act("Document settings", () => documentSettings("document"))}>Document settings</button>
     {/if}
-    <button class="icon" title="Settings (⌘,)" aria-label="Settings" onclick={() => (settingsPage = "agents")}>
+    <button class="icon" title="Settings (⌘,)" aria-label="Settings" onclick={act("Settings", () => (settingsPage = "agents"))}>
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-linecap="round" /></svg>
     </button>
   </header>
@@ -570,7 +623,7 @@
           <button class="tclose" aria-label="Close {t.name}" title="Close tab (⌘W)" onclick={() => closeTab(t.id)}>×</button>
         </div>
       {/each}
-      <button class="tnew" title="Open a document in a new tab (⌘T)" aria-label="Open a document in a new tab" onclick={openDocument}>+</button>
+      <button class="tnew" title="Open a document in a new tab (⌘T)" aria-label="Open a document in a new tab" onclick={act("New tab", openDocument)}>+</button>
     </nav>
   {/if}
 
@@ -603,7 +656,7 @@
           {selected}
           onselect={show}
           onjump={(pos) => editor?.jumpTo(pos)}
-          onsnapshot={() => (modal = "snapshot")}
+          onsnapshot={act("Take snapshot (sidebar)", () => (modal = "snapshot"))}
           onarchived={archived}
           bind:tab={sidebarTab}
         />
@@ -614,25 +667,25 @@
           {#if selected.kind !== "latest"}
             <span class="muted small">read-only view of history</span>
             <span class="spacer"></span>
-            <button onclick={restoreShown} title="Adds a new version with this content; nothing is lost">
+            <button onclick={act(`Restore this ${selected.kind === "ref" ? "snapshot" : "version"}`, restoreShown)} title="Adds a new version with this content; nothing is lost">
               Restore this {selected.kind === "ref" ? "snapshot" : "version"}
             </button>
-            <button onclick={() => exportReport(selected)} disabled={exporting}
+            <button onclick={act(`Export report of a ${selected.kind === "ref" ? "snapshot" : "past version"}`, () => exportReport(selected))} disabled={exporting}
               title="A PDF of this {selected.kind === 'ref' ? 'snapshot' : 'version'}, with the Python results stored for it; nothing runs">
               Export report…
             </button>
-            <button class="link" onclick={() => show({ kind: "latest" })}>Back to latest</button>
+            <button class="link" onclick={act("Back to latest", () => show({ kind: "latest" }))}>Back to latest</button>
           {:else}
             <span class="muted small">
               Latest · every change is saved · history: {describeRetention(doc.effectiveRetention).toLowerCase()}{doc.retention == null ? " (app default)" : ""}
             </span>
             <span class="spacer"></span>
             {#if (python?.hasPython && python.available || python?.hasRust && python.rustAvailable) && python?.trusted}
-              <button onclick={() => void editor?.runPython()} title="Run every code cell again">▶ Run code</button>
-              <button onclick={() => void api.stopPython()} title="Stop the running cell">■ Stop</button>
-              <button onclick={restartPython} title="Restart the Python worker and recompute every Python value">↻ Restart</button>
+              <button onclick={act("Run code", () => editor?.runPython())} title="Run every code cell again">▶ Run code</button>
+              <button onclick={act("Stop code", () => api.stopPython().catch(() => {}))} title="Stop the running cell">■ Stop</button>
+              <button onclick={act("Restart code", restartPython)} title="Restart the Python worker and recompute every Python value">↻ Restart</button>
             {/if}
-            <button class="snap" onclick={() => (modal = "snapshot")} title="Mark this version as a known-good point">Take snapshot…</button>
+            <button class="snap" onclick={act("Take snapshot", () => (modal = "snapshot"))} title="Mark this version as a known-good point">Take snapshot…</button>
           {/if}
         </div>
         {#if python && (python.hasPython || python.hasRust) && selected.kind === "latest" && (setup || !python.trusted || (python.hasPython && !python.available) || (python.hasRust && !python.rustAvailable))}
@@ -642,13 +695,13 @@
               <span class="muted small">This takes a minute or two the first time (about 500 MB).</span>
             {:else if python.hasRust && !python.rustAvailable && !(python.hasPython && !python.available)}
               <span><strong>Rust cells need Cruncha's Rust toolchain.</strong> Cruncha installs its own Rust 1.99 with the WebAssembly target (about 650 MB, once for all documents); it doesn't touch any Rust you already have. Cells run sandboxed, with no access to files or the network.</span>
-              <button class="primary" onclick={setUpRust}>Set up Rust</button>
+              <button class="primary" onclick={act("Set up Rust", setUpRust)}>Set up Rust</button>
             {:else if python.hasPython && !python.available}
               <span><strong>Python cells need a Python environment.</strong> Cruncha installs its own Python 3.13 with NumPy, SciPy, Polars, pint, SymPy and matplotlib (about 500 MB, once for all documents).</span>
-              <button class="primary" onclick={setUpPython}>Set up Python</button>
+              <button class="primary" onclick={act("Set up Python", setUpPython)}>Set up Python</button>
             {:else}
               <span><strong>This document has code that hasn't run on this computer.</strong> {python.hasPython ? "Python cells run with your permissions, like any program." : "Rust cells run sandboxed, but they can still use your computer's time."} Run them only if you trust where the document came from.</span>
-              <button class="primary" onclick={trustDocument}>Trust and run</button>
+              <button class="primary" onclick={act("Trust and run", trustDocument)}>Trust and run</button>
             {/if}
           </div>
         {/if}
@@ -671,10 +724,10 @@
             onvariables={(v) => (variables = v)}
             onerror={(m) => (error = m)}
             onproposal={showProposals}
-            onfunctions={() => reference("functions")}
-            onunits={() => reference("units")}
-            ontemplates={() => reference("templates")}
-            ontables={() => reference("tables")}
+            onfunctions={act("Toolbar: Functions", () => reference("functions"))}
+            onunits={act("Toolbar: Units", () => reference("units"))}
+            ontemplates={act("Toolbar: Templates", () => reference("templates"))}
+            ontables={act("Toolbar: Tables", () => reference("tables"))}
             origin={doc ? `document:${doc.id}@v${selected.kind === "version" ? selected.version : doc.version}` : null}
             docId={doc?.id ?? null}
             stashKey={doc && selected.kind === "latest" ? `${doc.id}@${doc.version}` : null}
@@ -687,7 +740,7 @@
           docId={doc?.id ?? null}
           docName={(id) => tabs.find((t) => t.id === id)?.name.replace(/\.cruncha$/, "") ?? null}
           onjumpcell={(id) => editor?.jumpToCell(id)}
-          onclose={() => (agentPanel = false)}
+          onclose={act("Close the agent panel", () => (agentPanel = false))}
           onsettings={(section) => (settingsPage = section)}
         />
       {/if}
@@ -696,9 +749,9 @@
           {editable}
           bind:tab={refTab}
           oninsert={(t, back) => editor?.insertInCalc(t, back)}
-          oninserttemplate={(t) => editor?.insertTemplate(t)}
+          oninserttemplate={(t, suffix) => editor?.insertTemplate(t, suffix)}
           selection={() => editor?.selectedCells() ?? []}
-          onclose={() => (functions = false)}
+          onclose={act("Close the reference panel", () => (functions = false))}
         />
       {/if}
     </div>
@@ -715,19 +768,21 @@
     />
     </div>
   {:else}
+    <div class="workspace">
+    <div class="welcome-scroll">
     <div class="welcome">
       <h1>Cruncha</h1>
       <p class="muted lede">Live, unit-aware engineering calculations with full version history.</p>
       <p class="actions">
-        <button class="primary" onclick={newDocument}>New document…</button>
-        <button onclick={openDocument}>Open…</button>
-        <button onclick={createSample}>Try a sample…</button>
+        <button class="primary" onclick={act("Welcome: New document", newDocument)}>New document…</button>
+        <button onclick={act("Welcome: Open", openDocument)}>Open…</button>
+        <button onclick={act("Welcome: Try a sample", createSample)}>Try a sample…</button>
       </p>
       {#if prefs.recent?.length}
         <section class="recent">
           <h2>Recent</h2>
           {#each prefs.recent as p (p)}
-            <button class="recent-row" title={p} onclick={() => openRecent(p)}>
+            <button class="recent-row" title={p} onclick={act("Welcome: Open recent", () => openRecent(p))}>
               <span class="name">{fileName(p).replace(/\.cruncha$/, "")}</span>
               <span class="small muted path">{folderOf(p)}</span>
             </button>
@@ -735,6 +790,19 @@
         </section>
       {/if}
       <p class="small muted">Every change is saved as a new version as you work; there is no Save button.</p>
+    </div>
+    </div>
+    <BottomPanel
+      variables={[]}
+      editable={false}
+      proposals={[]}
+      onjumpcell={() => {}}
+      ondescribe={() => {}}
+      onaccept={acceptProposal}
+      onreject={rejectProposal}
+      bind:tab={bottomTab}
+      bind:open={bottomOpen}
+    />
     </div>
   {/if}
 </div>
@@ -854,6 +922,11 @@
     /* The editor's sticky toolbar and block-handle gutter read these. */
     --pad-t: 28px; --pad-l: 104px; --pad-r: 64px; --gutter: 100px;
     padding: var(--pad-t) var(--pad-r) 24px var(--pad-l);
+  }
+  .welcome-scroll { overflow: auto; min-height: 0; }
+  .errdot {
+    width: 10px; height: 10px; padding: 0; border-radius: 50%; border: none; background: var(--danger);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); cursor: pointer; flex: none;
   }
   .welcome { max-width: 560px; margin: 10vh auto; padding: 0 16px; text-align: center; }
   .welcome h1 { color: var(--accent); margin-bottom: 4px; font-size: 2.2em; letter-spacing: -0.01em; }

@@ -7,5 +7,6 @@
   "{\"type\":\"bullet_list\",\"content\":[{\"type\":\"list_item\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"dead load\"}]}]},{\"type\":\"list_item\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"live load\"}]},{\"type\":\"ordered_list\",\"attrs\":{\"order\":3},\"content\":[{\"type\":\"list_item\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"roof\"}]}]}]}]}]}",
   "{\"type\":\"ordered_list\",\"attrs\":{\"order\":1},\"content\":[{\"type\":\"list_item\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}]}]}",
   "{\"type\":\"blockquote\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Quoted \\\"text\\\"\"}]},{\"type\":\"bullet_list\",\"content\":[{\"type\":\"list_item\",\"content\":[{\"type\":\"paragraph\"}]}]}]}",
-  "{\"type\":\"horizontal_rule\"}"
+  "{\"type\":\"horizontal_rule\"}",
+  "{\"type\":\"page_break\"}"
 ]

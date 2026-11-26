@@ -19,6 +19,7 @@
     currentBlock,
     editorPlugins,
     insertBlock,
+    insertPageBreak,
     moveBlock,
     newCalc,
     newCode,
@@ -30,6 +31,7 @@
   import { Results } from "./editor/results";
   import { schema } from "./editor/schema";
   import { DocSync, type SaveState } from "./editor/sync";
+  import { logAction } from "./log";
 
   let {
     cells,
@@ -124,8 +126,17 @@
    * each Imported from `template:<id>@<version>` (`#<row>` for a table template's row, ADR-0027).
    * Code cells arrive not run.
    */
-  export async function insertTemplate(t: TemplateDetail) {
+  export async function insertTemplate(t: TemplateDetail, suffix?: string) {
     if (!view || !editable) return;
+    // One addition to every name the template defines (`S_y` → `S_(y,bolt1)`), before the check.
+    if (suffix?.trim()) {
+      try {
+        t = await withSuffix(t, suffix);
+      } catch (e) {
+        onerror?.(`Couldn't add “${suffix}” to the template's names: ${e}`);
+        return;
+      }
+    }
     const code = t.cells.filter((c) => CODE.has(c.kind)).map((c) => ({ kind: c.kind, source: c.source }));
     let clashes: Clash[] = [];
     try {
@@ -136,6 +147,15 @@
     }
     if (clashes.length === 0) await placeTemplate(t, t.cells);
     else templateClash = { t, clashes, error: null };
+  }
+
+  /** The template with `suffix` added to every name its cells define. */
+  async function withSuffix(t: TemplateDetail, suffix: string): Promise<TemplateDetail> {
+    const code = t.cells.filter((c) => CODE.has(c.kind)).map((c) => ({ kind: c.kind, source: c.source }));
+    const names = await api.suffixNames(code, suffix, docId ?? undefined);
+    const renamed = await api.renameCells(code, names, docId ?? undefined);
+    let k = 0;
+    return { ...t, cells: t.cells.map((c) => (CODE.has(c.kind) ? { ...c, source: renamed[k++] } : c)) };
   }
 
   async function finishTemplate(choices: Choice[]) {
@@ -516,6 +536,7 @@
       case "bullet_list": case "ordered_list": return "List";
       case "blockquote": return "Quote";
       case "horizontal_rule": return "Rule";
+      case "page_break": return "Page break";
       case "calc": return "Calc";
       case "code_block": return n.attrs.lang === "python" ? "Python" : n.attrs.lang === "rust" ? "Rust" : "TeX";
       case "raw": return n.attrs.kind;
@@ -599,6 +620,7 @@
   let toolsEl: HTMLDivElement | undefined = $state();
 
   function act(kind: "text" | "calc" | "python" | "up" | "down" | "delete") {
+    logAction(`Block menu: ${kind}`);
     const h = hovered;
     menu = false;
     if (!view || !h) return;
@@ -646,7 +668,8 @@
 </script>
 
 {#if clash}
-  <PasteClashDialog clashes={clash.clashes} error={clash.error} onpaste={finishPaste} oncancel={() => (clash = null)} />
+  <PasteClashDialog clashes={clash.clashes} error={clash.error} onpaste={finishPaste} oncancel={() => (clash = null)}
+    suffixer={(s) => api.suffixNames(clash!.cells, s, docId ?? undefined)} />
 {/if}
 {#if templateClash}
   {@const inputs = new Set(templateClash.t.inputs)}
@@ -655,6 +678,7 @@
     what="template"
     action="Insert"
     canUse={(n) => inputs.has(n)}
+    suffixer={(s) => api.suffixNames(templateClash!.t.cells.filter((c) => CODE.has(c.kind)).map((c) => ({ kind: c.kind, source: c.source })), s, docId ?? undefined)}
     clashes={templateClash.clashes}
     error={templateClash.error}
     onpaste={finishTemplate}
@@ -665,10 +689,11 @@
 {#if editable}
   <div class="tools" role="toolbar" aria-label="Insert" bind:this={toolsEl}>
     <span class="small muted">Insert</span>
-    <button onclick={() => insert(newParagraph())} title="Text paragraph">Text</button>
-    <button onclick={() => insert(newHeading(2))} title="Heading (type ## then space)">Heading</button>
-    <button onclick={() => insert(newCalc())} title="Calculation (⌘E, or type = then space)">Calc</button>
-    <button onclick={() => insert(newCode("python"))} title="Python cell (⌘⌥P); not run yet">Python</button>
+    <button onclick={() => (logAction("Insert text"), insert(newParagraph()))} title="Text paragraph">Text</button>
+    <button onclick={() => (logAction("Insert heading"), insert(newHeading(2)))} title="Heading (type ## then space)">Heading</button>
+    <button onclick={() => (logAction("Insert calc"), insert(newCalc()))} title="Calculation (⌘E, or type = then space)">Calc</button>
+    <button onclick={() => (logAction("Insert Python"), insert(newCode("python")))} title="Python cell (⌘⌥P); not run yet">Python</button>
+    <button onclick={() => (logAction("Insert page break"), run(insertPageBreak))} title="Page break: the report starts a new page here (⌘⇧↵, or type \pagebreak)">Page break</button>
     {#if onfunctions}
       <span class="sep"></span>
       <button onclick={onfunctions} title="Functions, operators and constants (⌘⇧F)"><i>ƒ</i>x Functions</button>
@@ -683,8 +708,8 @@
       <button onclick={ontables} title="Tables of standard parts: screws, nuts, washers, bolt grades, pipe, shapes; insert a size's values (⌘⇧L)">Tables</button>
     {/if}
     <span class="sep"></span>
-    <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
-    <button onclick={() => run(moveBlock(1))} title="Move block down (⌥↓)" aria-label="Move block down">↓</button>
+    <button onclick={() => (logAction("Move block up"), run(moveBlock(-1)))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
+    <button onclick={() => (logAction("Move block down"), run(moveBlock(1)))} title="Move block down (⌥↓)" aria-label="Move block down">↓</button>
   </div>
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -782,6 +807,9 @@
   .editor :global(blockquote) { margin: 0.5em 0; padding: 0 0 0 0.9em; border-left: 3px solid var(--border); color: var(--muted); }
   .editor :global(hr) { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
   .editor :global(hr.ProseMirror-selectednode) { border-top-color: var(--accent); }
+  .editor :global(div.page-break) { position: relative; margin: 1.4em 0; border-top: 1.5px dashed var(--muted); text-align: center; height: 0; user-select: none; }
+  .editor :global(div.page-break span) { position: relative; top: -0.75em; padding: 0 8px; background: var(--bg); color: var(--muted); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .editor :global(div.page-break.ProseMirror-selectednode) { border-top-color: var(--accent); }
   .editor :global(a[href]) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: text; }
   /* The standard HTML heading scale, relative to the text size. */
   .editor :global(h1) { font-size: 2em; margin: 0.5em 0 0.3em; }

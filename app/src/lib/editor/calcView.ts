@@ -10,11 +10,30 @@ import type { Results } from "./results";
 import { descriptionOf, withDescription } from "./cells";
 import { schema } from "./schema";
 
+/** The theme's echo and error colours, read once and again when the theme changes: reading
+ *  computed style after each calc's MathML is replaced forces a style recalculation of the
+ *  whole page, which made inserting many calcs freeze the window (2026-11-26). */
+let colours: { echo: string; danger: string } | null = null;
+if (typeof window !== "undefined" && window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => (colours = null));
+}
+export function resetThemeColours() {
+  colours = null;
+}
+function themeColours() {
+  if (!colours) {
+    const css = getComputedStyle(document.documentElement);
+    colours = {
+      echo: css.getPropertyValue("--echo").trim() || "#1d4ed8",
+      danger: css.getPropertyValue("--danger").trim() || "#b42318",
+    };
+  }
+  return colours;
+}
+
 /** Hurmet colours its echo and errors with fixed colours; use the theme's instead. */
 function themed(tex: string): string {
-  const css = getComputedStyle(document.documentElement);
-  const echo = css.getPropertyValue("--echo").trim() || "#1d4ed8";
-  const danger = css.getPropertyValue("--danger").trim() || "#b42318";
+  const { echo, danger } = themeColours();
   return tex.replaceAll("\\textcolor{#0000ff}", `\\textcolor{${echo}}`).replaceAll("\\textcolor{firebrick}", `\\textcolor{${danger}}`);
 }
 
@@ -90,6 +109,8 @@ export class CalcView implements NodeView {
   private previewEl: HTMLElement | null = null;
   private unsubscribe: () => void;
   private timer: number | undefined;
+  /** What the display last showed: a results update that changes none of it doesn't redraw. */
+  private shown: unknown[] | null = null;
 
   constructor(
     private node: Node,
@@ -118,7 +139,12 @@ export class CalcView implements NodeView {
   private render() {
     if (this.panel) return;
     const { id, source, cellAttrs } = this.node.attrs;
-    renderMath(this.display, this.results.get(id, source), source, descriptionOf(cellAttrs));
+    const r = this.results.get(id, source);
+    const description = descriptionOf(cellAttrs);
+    const key = [source, description, r?.tex, r?.error, r?.text, r?.pending, r?.warnings?.join("\n")];
+    if (this.shown && key.every((k, i) => k === this.shown![i])) return;
+    this.shown = key;
+    renderMath(this.display, r, source, description);
   }
 
   update(node: Node) {

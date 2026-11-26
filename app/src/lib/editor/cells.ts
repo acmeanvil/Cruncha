@@ -75,6 +75,7 @@ export function nodeToContent(n: Node): CellContent {
     case "ordered_list":
     case "blockquote":
     case "horizontal_rule":
+    case "page_break":
       return { ...base, kind: "prose", source: JSON.stringify(withoutCellAttrs(n.toJSON())), attrs: {} };
     case "calc":
       return { ...base, kind: "calc", source: n.attrs.source, attrs: parseAttrs(n.attrs.cellAttrs), ...from };
@@ -134,6 +135,8 @@ export function proseText(source: string): string {
         return (n.content ?? []).map(block).join("\n").replace(/^/gm, "> ");
       case "horizontal_rule":
         return "---";
+      case "page_break":
+        return "\\pagebreak";
       default:
         return inline(n);
     }

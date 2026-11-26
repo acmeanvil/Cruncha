@@ -1822,12 +1822,14 @@ name = "cruncha-app"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "cruncha-acp",
  "cruncha-agent",
  "cruncha-eval",
  "cruncha-graph",
  "cruncha-kernel-py",
  "cruncha-kernel-rs",
+ "cruncha-lang",
  "cruncha-mcp",
  "cruncha-prose",
  "cruncha-report",
@@ -1844,6 +1846,8 @@ dependencies = [
  "tauri-plugin-dialog",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ulid",
 ]
 

@@ -31,6 +31,8 @@ pub enum Block {
     Quote(Vec<Block>),
     /// Only at the top level.
     Rule,
+    /// A new page in reports (ADR-0028); only at the top level.
+    PageBreak,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +108,9 @@ fn calc_statements(text: &str) -> Vec<String> {
     out.extend(open);
     out
 }
+
+/// A page break's Markdown line (ADR-0028), as pandoc and most Markdown-to-PDF tools read it.
+pub const PAGE_BREAK: &str = "\\pagebreak";
 
 /// A fence's info string: its language and `{key="value" key2=value2}` attributes
 /// (```` ```calc {description="Radial depth"} ````, ADR-0014).
@@ -209,6 +214,7 @@ fn block_of(v: &Value, top: bool) -> Block {
         },
         "blockquote" => Block::Quote(children(v).map(|c| block_of(c, false)).collect()),
         "horizontal_rule" if top => Block::Rule,
+        "page_break" if top => Block::PageBreak,
         "paragraph" | "heading" => Block::Paragraph(inlines_of(v)),
         _ => Block::Paragraph(plain(&text_of(v))),
     }
@@ -324,6 +330,7 @@ fn write_block(s: &mut String, b: &Block) {
         }
         Block::Quote(blocks) => node(s, "blockquote", None, |s| write_blocks(s, blocks)),
         Block::Rule => node(s, "horizontal_rule", None, |_| false),
+        Block::PageBreak => node(s, "page_break", None, |_| false),
     }
 }
 
@@ -525,7 +532,10 @@ impl Builder {
         match tag {
             TagEnd::Paragraph => {
                 if let Some(Frame::Para { content, .. }) = self.stack.pop() {
-                    self.push_block(Block::Paragraph(content));
+                    // A line holding only `\pagebreak` is a page break (ADR-0028).
+                    let page = self.at_root()
+                        && matches!(content.as_slice(), [Inline::Text { text, marks }] if text.trim() == PAGE_BREAK && *marks == Marks::default());
+                    self.push_block(if page { Block::PageBreak } else { Block::Paragraph(content) });
                 }
             }
             TagEnd::Heading(_) => {
@@ -674,6 +684,7 @@ pub fn to_markdown(b: &Block) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         Block::Rule => "---".to_owned(),
+        Block::PageBreak => PAGE_BREAK.to_owned(),
     }
 }
 
@@ -878,6 +889,6 @@ pub fn plain_text(b: &Block) -> String {
             items.iter().map(|i| i.iter().map(plain_text).collect::<Vec<_>>().join("\n")).collect::<Vec<_>>().join("\n")
         }
         Block::Quote(bs) => bs.iter().map(plain_text).collect::<Vec<_>>().join("\n"),
-        Block::Rule => String::new(),
+        Block::Rule | Block::PageBreak => String::new(),
     }
 }

@@ -1,15 +1,18 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The panel along the bottom of the window: Variables (table and inspector) and agents'
-     Proposals. Collapses to its tab strip; drag the top edge to resize (⌘J toggles it). Its
+<!-- The panel along the bottom of the window: Variables (table and inspector), agents'
+     Proposals and the debug Log (ADR-0029). Collapses to its tab strip; drag the top edge to resize (⌘J toggles it). Its
      height and open state are remembered on this computer. -->
 <script lang="ts" module>
-  export type BottomTab = "variables" | "proposals";
+  export type BottomTab = "variables" | "proposals" | "log";
 </script>
 
 <script lang="ts">
   import { onMount } from "svelte";
   import type { ProposalView } from "./api";
   import type { Variable } from "./editor/variables";
+  import LogViewer from "./LogViewer.svelte";
+  import { logAction } from "./log";
+  import { logFeed } from "./logFeed.svelte";
   import ProposalsPanel from "./ProposalsPanel.svelte";
   import VariableTable from "./VariableTable.svelte";
 
@@ -45,7 +48,7 @@
       const s = JSON.parse(localStorage.getItem(KEY) ?? "null");
       if (s && typeof s.height === "number") height = s.height;
       if (s && typeof s.open === "boolean" && !open) open = s.open;
-      if (s && (s.tab === "variables" || s.tab === "proposals") && tab === "variables") tab = s.tab;
+      if (s && (s.tab === "variables" || s.tab === "proposals" || s.tab === "log") && tab === "variables") tab = s.tab;
     } catch {
       /* no storage: defaults */
     }
@@ -65,6 +68,7 @@
   const openProposals = $derived(proposals.filter((p) => p.status === "open").length);
 
   function pick(t: BottomTab) {
+    logAction(open && tab === t ? "Hide the bottom panel" : `Bottom panel: ${t}`);
     if (open && tab === t) open = false;
     else {
       tab = t;
@@ -117,8 +121,14 @@
     <button role="tab" aria-selected={open && tab === "proposals"} class:on={open && tab === "proposals"} onclick={() => pick("proposals")}>
       Proposals {#if openProposals}<span class="n due">{openProposals}</span>{/if}
     </button>
+    <button role="tab" aria-selected={open && tab === "log"} class:on={open && tab === "log"} onclick={() => pick("log")} title="The debug log (⌘⌥L)">
+      Log {#if logFeed.unseenErrors && !(open && tab === "log")}<span class="n err" title="New errors">!</span>{/if}
+    </button>
     <span class="spacer"></span>
-    <button class="chev" title="{open ? 'Hide' : 'Show'} the panel (⌘J)" aria-label="{open ? 'Hide' : 'Show'} the panel" onclick={() => (open = !open)}>
+    <button class="chev" title="{open ? 'Hide' : 'Show'} the panel (⌘J)" aria-label="{open ? 'Hide' : 'Show'} the panel" onclick={() => {
+      logAction(open ? "Hide the bottom panel" : "Show the bottom panel");
+      open = !open;
+    }}>
       {open ? "▾" : "▴"}
     </button>
   </div>
@@ -126,6 +136,8 @@
     <div class="body">
       {#if tab === "variables"}
         <VariableTable {variables} {editable} onjump={onjumpcell} {ondescribe} />
+      {:else if tab === "log"}
+        <LogViewer />
       {:else}
         <div class="proposals">
           <ProposalsPanel {proposals} {editable} {onaccept} {onreject} {onjumpcell} />
@@ -156,6 +168,7 @@
     font-weight: normal; margin-left: 3px;
   }
   .n.due { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .n.err { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
   .spacer { flex: 1; }
   .chev { font-size: 12px !important; }
   .body { min-height: 0; overflow: hidden; }

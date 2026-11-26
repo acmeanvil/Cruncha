@@ -618,7 +618,7 @@ impl Panel {
                 v.entries.push(Entry::Notice { text: e, error: true });
             }
             Event::ConfigOptions(o) => v.options = o,
-            Event::Log(line) => eprintln!("agent: {line}"),
+            Event::Log(line) => crate::applog::info("agent", line),
             Event::Disconnected { reason } => {
                 let was = v.ready;
                 v.running = false;
@@ -672,7 +672,7 @@ impl Panel {
         let body = serde_json::json!({ "summary": summary, "entries": self.view.entries });
         let path = dir.join("conversations").join(format!("{id}.json"));
         if let Err(e) = std::fs::write(&path, serde_json::to_vec_pretty(&body).unwrap_or_default()) {
-            eprintln!("cruncha: couldn't save the conversation {}: {e}", path.display());
+            crate::applog::warn("agent", format!("couldn't save the conversation {}: {e}", path.display()));
         }
     }
 }

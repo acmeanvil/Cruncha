@@ -50,3 +50,25 @@ fn lists_quotes_rules_and_links_typeset() {
         std::fs::write(format!("{dir}/prose-page.png"), &pages[pages.len() - 2]).unwrap();
     }
 }
+
+#[test]
+fn a_page_break_starts_a_new_page_and_two_in_a_row_start_one() {
+    let para = |t: &str| Block::Paragraph { text: vec![run(t)] };
+    let pages = |blocks: Vec<Block>| {
+        let provenance = Provenance {
+            document_name: "pages.cruncha".into(),
+            document_id: "01TEST".into(),
+            version: 1,
+            committed_at: "2026-11-26T10:00:00Z".into(),
+            content_hash: "0".repeat(64),
+            cruncha_version: "0.0.1".into(),
+            ..Default::default()
+        };
+        let r = Report { blocks, provenance, ..Default::default() };
+        render_png(cruncha_report::CALC_PACKAGE, &r, vec![], 20.0).expect("renders").len()
+    };
+    let flowing = pages(vec![para("one"), para("two")]);
+    assert_eq!(pages(vec![para("one"), Block::PageBreak, para("two")]), flowing + 1);
+    assert_eq!(pages(vec![para("one"), Block::PageBreak, Block::PageBreak, para("two")]), flowing + 1, "weak: no blank page");
+    assert_eq!(pages(vec![Block::PageBreak, para("one"), para("two")]), flowing, "none at the top of a page");
+}

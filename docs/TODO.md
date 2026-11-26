@@ -38,3 +38,4 @@ Order of work agreed on 2026-11-22: ADR-0022's second set (done 2026-11-22) → 
 | 0015 | 4. User report templates (ADR-0014) and a report preview in the app | Not started | |
 | 0021 | 4. Remove checkpoints older than the newest few (disk only) | Not started | |
 | 0025 | (deferred) ∞ as a number; assigning elements inside a function | Not started | Revisit when a template can't be written without them |
+| 0029 | 3. Operation lines: each MCP tool by name, reports, archive, Rust runs, renames | **Partial** | Documents, commits, evaluation, Python runs and proposals log already |

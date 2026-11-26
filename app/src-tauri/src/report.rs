@@ -126,6 +126,7 @@ fn prose_block(b: &cruncha_prose::Block) -> Option<Block> {
         }
         P::Quote(bs) => Block::Quote { blocks: blocks(bs) },
         P::Rule => Block::Rule,
+        P::PageBreak => Block::PageBreak,
     })
 }
 
@@ -252,7 +253,7 @@ pub fn build(
                     String::new()
                 } else {
                     cruncha_report::tex::to_typst(&tex).unwrap_or_else(|e| {
-                        eprintln!("cruncha: report: calc {} TeX not converted: {e}", c.id);
+                        crate::applog::warn("report", format!("report: calc {} TeX not converted: {e}", c.id));
                         String::new()
                     })
                 };
@@ -373,7 +374,7 @@ pub fn build(
                 files.push((name.clone(), bytes));
                 house.logo = Some(name);
             }
-            Err(e) => eprintln!("cruncha: report: logo {path} not read: {e}"),
+            Err(e) => crate::applog::warn("report", format!("logo {path} not read: {e}")),
         }
     }
 

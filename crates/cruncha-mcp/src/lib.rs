@@ -254,6 +254,8 @@ pub struct TemplateInsert {
     pub row: Option<String>,
     /// A table template's columns to insert (their names); `None`: all of them.
     pub columns: Option<Vec<String>>,
+    /// Added to every name the insert defines (`S_y` → `S_(y,bolt1)`), before `rename`.
+    pub suffix: Option<String>,
 }
 
 /// What the app provides. Every method acts on the document open in the app; an error

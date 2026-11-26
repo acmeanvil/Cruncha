@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use cruncha_mcp::{ArchiveView, ArchivedSaveInfo, ArchivedSnapshot, Backend, CellChange, DocumentInfo, CellView, DocSnapshot, Edit, Effect, ProposalInfo, ResultView, TemplateFile, TemplateInfo, TemplateInsert, VersionInfo};
 use cruncha_store::{CellDiff, CellKind};
 use serde::Serialize;
-use tokio::sync::Mutex;
 
 use crate::engine::{CellResult, OutputView};
 use crate::report::iso_utc;
@@ -24,13 +23,13 @@ use crate::session::Session;
 /// The session, as the MCP tools of one agent see it: the shared session and the agent's
 /// actor (`ai:<agent>`), recorded on its proposals.
 #[derive(Clone)]
-pub struct AppBackend(pub Arc<Mutex<Session>>, pub String, pub Option<String>);
+pub struct AppBackend(pub Arc<crate::applog::SessionLock<Session>>, pub String, pub Option<String>);
 
 impl AppBackend {
     /// The session, with this agent's document selected: its own (an agent-panel agent works
     /// on the tab it started in) or, for the external server, the active tab (ADR-0024).
-    async fn session(&self) -> Result<tokio::sync::MutexGuard<'_, Session>, String> {
-        let mut s = self.0.lock().await;
+    async fn session(&self) -> Result<crate::applog::Guard<'_, Session>, String> {
+        let mut s = self.0.lock("agent tool call").await;
         s.select(self.2.as_deref())?;
         Ok(s)
     }
@@ -241,7 +240,7 @@ impl Backend for AppBackend {
     }
 
     async fn documents(&self) -> Result<Vec<DocumentInfo>, String> {
-        let s = self.0.lock().await;
+        let s = self.0.lock("mcp:documents").await;
         let docs = s.documents();
         let own = self.2.clone().or_else(|| docs.iter().find(|d| d.active).map(|d| d.id.clone()));
         Ok(docs
@@ -258,7 +257,7 @@ impl Backend for AppBackend {
     }
 
     async fn for_document(&self, document: String) -> Result<Self, String> {
-        let docs = self.0.lock().await.documents();
+        let docs = self.0.lock("mcp:for_document").await.documents();
         if docs.iter().any(|d| d.id == document) {
             return Ok(AppBackend(self.0.clone(), self.1.clone(), Some(document)));
         }
@@ -354,12 +353,12 @@ impl Backend for AppBackend {
     }
 
     async fn templates(&self) -> Result<Vec<TemplateInfo>, String> {
-        let s = self.0.lock().await;
+        let s = self.0.lock("mcp:templates").await;
         Ok(s.templates().into_iter().filter(|t| !t.hidden && t.error.is_none()).map(template_info).collect())
     }
 
     async fn template(&self, id: String) -> Result<TemplateFile, String> {
-        let s = self.0.lock().await;
+        let s = self.0.lock("mcp:template").await;
         let t = s.template_by_id(&id)?;
         let text = s.template_text(&t.summary.key)?;
         let tests = t
@@ -380,7 +379,7 @@ impl Backend for AppBackend {
             return Err("no document is open in Cruncha".into());
         }
         let (t, edits) = s
-            .template_edits(&insert.id, &insert.bindings, &insert.rename, insert.after, insert.row.as_deref(), insert.columns.as_deref())
+            .template_edits(&insert.id, &insert.bindings, &insert.rename, insert.after, insert.row.as_deref(), insert.columns.as_deref(), insert.suffix.as_deref())
             .await?;
         let what = match &t.row {
             Some(row) => format!("{} {row}", t.summary.title),
@@ -565,7 +564,7 @@ mod tests {
         let path = dir.path().join("beam.cruncha");
         let mut session = Session::new(None);
         session.create_sample(&path).await.unwrap();
-        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
+        let backend = AppBackend(Arc::new(crate::applog::SessionLock::new(session)), "ai:test".into(), None);
         let doc = backend.snapshot(false).await.unwrap();
         let m = doc.cells.iter().find(|c| c.defines.contains(&"M".to_string())).expect("the sample defines M");
         assert_eq!(doc.results[&m.id].values[0].0, "M");
@@ -596,7 +595,7 @@ mod tests {
             .await
             .unwrap();
         // An agent outside Cruncha: the active tab (B) by default.
-        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
+        let backend = AppBackend(Arc::new(crate::applog::SessionLock::new(session)), "ai:test".into(), None);
         let docs = backend.documents().await.unwrap();
         assert_eq!(docs.len(), 2);
         assert!(docs.iter().any(|d| d.id == b && d.this && d.active));
@@ -627,7 +626,7 @@ mod tests {
             .await
             .unwrap();
         assert!(p.message.contains("copied from beam.cruncha"), "{}", p.message);
-        let views = backend.0.lock().await.on(Some(&b)).unwrap().proposals().await.unwrap();
+        let views = backend.0.lock("mcp:agents_work_across_open_documents").await.on(Some(&b)).unwrap().proposals().await.unwrap();
         let ins = views[0].changes.iter().find(|c| c.op == "insert").expect("an insert");
         assert!(ins.source.as_deref().unwrap_or_default().starts_with("M2 ="), "{ins:?}");
         assert_eq!(ins.after.as_deref(), Some("BM"));
@@ -656,7 +655,7 @@ mod tests {
         drop(store);
         session.open(&path).await.unwrap();
         session.archive(rev_b).await.unwrap();
-        let backend = AppBackend(Arc::new(Mutex::new(session)), "ai:test".into(), None);
+        let backend = AppBackend(Arc::new(crate::applog::SessionLock::new(session)), "ai:test".into(), None);
 
         let a = backend.archive(None).await.unwrap();
         assert_eq!(a.snapshots.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Rev A"]);

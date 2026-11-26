@@ -13,6 +13,7 @@
   import SnippetDialog from "./SnippetDialog.svelte";
   import LibraryDialog from "./LibraryDialog.svelte";
   import TablePicker from "./TablePicker.svelte";
+  import { logAction } from "./log";
 
   let {
     editable,
@@ -23,7 +24,8 @@
     editable: boolean;
     /** The Tables tab: table templates only (ADR-0027); the Templates tab lists the rest. */
     tables?: boolean;
-    oninsert: (t: TemplateDetail) => Promise<void> | void;
+    /** Insert a template; `suffix` is added to every name it defines (`S_y` → `S_(y,bolt1)`). */
+    oninsert: (t: TemplateDetail, suffix?: string) => Promise<void> | void;
     /** The editor's selected blocks, as cells. */
     selection: () => TemplateCell[];
   } = $props();
@@ -43,6 +45,8 @@
   /** The details form: a new snippet from the selection, or a snippet's details. */
   let form = $state<{ mode: "new" | "edit"; cells: TemplateCell[]; initial: SnippetDetails; error: string | null } | null>(null);
   let search: HTMLInputElement | undefined = $state();
+  /** Added to every name on insert (blank: names as they are). */
+  let suffix = $state("");
 
   async function load(select?: string) {
     try {
@@ -94,7 +98,8 @@
     busy = true;
     error = null;
     try {
-      await oninsert(detail);
+      logAction(`Insert template ${detail.id} ${detail.version} (${detail.cells.length} cells${suffix.trim() ? ", suffix" : ""})`);
+      await oninsert(detail, suffix.trim() || undefined);
     } catch (e) {
       error = String(e);
     } finally {
@@ -109,7 +114,9 @@
     busy = true;
     error = null;
     try {
-      await oninsert(await api.templateRow(detail.key, row, columns));
+      const t = await api.templateRow(detail.key, row, columns);
+      logAction(`Insert table ${t.id} ${t.version} row ${row} (${t.cells.length} cells${columns ? `, ${columns.length} columns` : ""})`);
+      await oninsert(t, suffix.trim() || undefined);
     } catch (e) {
       error = String(e);
     } finally {
@@ -200,6 +207,9 @@
       </p>
       {#if d.summary}<p class="sum">{d.summary}</p>{/if}
 
+      <label class="suffix small" title="One addition to every name the insert defines: S_y becomes S_(y,bolt1), Sy becomes Sy_bolt1">
+        Add to every name <input class="mono" placeholder="e.g. bolt1" bind:value={suffix} aria-label="Add to every name" />
+      </label>
       <div class="actions">
         {#if !d.table}
           <button class="primary" disabled={!editable || busy || d.problems.length > 0} onmousedown={keep} onclick={insert}
@@ -382,6 +392,8 @@
   .meta { margin: 0 0 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .meta code { font: 11.5px var(--mono); }
   .sum { margin: 4px 0 8px; font-size: 13px; }
+  .suffix { display: flex; gap: 6px; align-items: center; margin: 6px 0 0; color: var(--muted); }
+  .suffix input { width: 9em; font: 12px var(--mono); }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
   .actions button { font-size: 12.5px; padding: 3px 10px; }
   .problems { background: var(--warn-bg); color: var(--warn); padding: 6px 8px; border-radius: 4px; }

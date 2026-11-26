@@ -16,4 +16,6 @@ export default defineConfig({
   },
   // Temml alone is ~500 kB; size matters little for a desktop app loading from disk.
   build: { target: "es2022", chunkSizeWarningLimit: 1500 },
+  // Component tests mount Svelte in jsdom: they need its browser build, not the server one.
+  resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
 });

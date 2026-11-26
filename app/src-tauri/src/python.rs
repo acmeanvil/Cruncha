@@ -163,7 +163,7 @@ impl Python {
             let k = match self.ensure(&mut slot).await {
                 Ok(k) => k,
                 Err(e) => {
-                    eprintln!("cruncha: Python scan unavailable: {e}");
+                    crate::applog::warn("python", format!("Python scan unavailable: {e}"));
                     return out;
                 }
             };
@@ -178,7 +178,7 @@ impl Python {
                     },
                 )),
                 Err(e) => {
-                    eprintln!("cruncha: Python scan failed: {e}");
+                    crate::applog::warn("python", format!("Python scan failed: {e}"));
                     *slot = None;
                 }
             }

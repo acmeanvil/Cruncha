@@ -9,6 +9,7 @@
   import { onMount } from "svelte";
   import { api, type FunctionReference } from "./api";
   import { findEntries, insertion } from "./functionRef";
+  import { logAction } from "./log";
   import UnitReference from "./UnitReference.svelte";
   import TemplateLibrary from "./TemplateLibrary.svelte";
   import type { TemplateCell, TemplateDetail } from "./api";
@@ -25,7 +26,7 @@
     oninsert: (text: string, back: number) => void;
     onclose: () => void;
     /** Insert a template into the document (ADR-0014 §3). */
-    oninserttemplate: (t: TemplateDetail) => Promise<void> | void;
+    oninserttemplate: (t: TemplateDetail, suffix?: string) => Promise<void> | void;
     /** The editor's selected blocks, for Save as snippet. */
     selection: () => TemplateCell[];
     tab?: "functions" | "units" | "templates" | "tables";
@@ -70,10 +71,10 @@
 <aside class="ref" aria-label="Functions, units, templates and tables" onkeydown={(e) => e.key === "Escape" && onclose()}>
   <header>
     <div class="tabs" role="tablist">
-      <button role="tab" aria-selected={tab === "functions"} class:on={tab === "functions"} onmousedown={keep} onclick={() => (tab = "functions")}><i>ƒ</i>x Functions</button>
-      <button role="tab" aria-selected={tab === "units"} class:on={tab === "units"} onmousedown={keep} onclick={() => (tab = "units")}>Units</button>
-      <button role="tab" aria-selected={tab === "templates"} class:on={tab === "templates"} onmousedown={keep} onclick={() => (tab = "templates")} title="Templates and snippets (⌘⇧T)">Templates</button>
-      <button role="tab" aria-selected={tab === "tables"} class:on={tab === "tables"} onmousedown={keep} onclick={() => (tab = "tables")} title="Tables of standard parts (⌘⇧L)">Tables</button>
+      <button role="tab" aria-selected={tab === "functions"} class:on={tab === "functions"} onmousedown={keep} onclick={() => (logAction("Reference tab: functions"), (tab = "functions"))}><i>ƒ</i>x Functions</button>
+      <button role="tab" aria-selected={tab === "units"} class:on={tab === "units"} onmousedown={keep} onclick={() => (logAction("Reference tab: units"), (tab = "units"))}>Units</button>
+      <button role="tab" aria-selected={tab === "templates"} class:on={tab === "templates"} onmousedown={keep} onclick={() => (logAction("Reference tab: templates"), (tab = "templates"))} title="Templates and snippets (⌘⇧T)">Templates</button>
+      <button role="tab" aria-selected={tab === "tables"} class:on={tab === "tables"} onmousedown={keep} onclick={() => (logAction("Reference tab: tables"), (tab = "tables"))} title="Tables of standard parts (⌘⇧L)">Tables</button>
     </div>
     <span class="spacer"></span>
     <button class="x" aria-label="Close the function reference" onclick={onclose}>×</button>

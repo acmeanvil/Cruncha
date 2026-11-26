@@ -1,14 +1,14 @@
 +++
 cruncha-template = 1
 id = "structural.wind.gustRigid"
-version = "1.0.0"
+version = "1.1.0"
 title = "Gust-effect factor G of a rigid structure, ASCE 7-10"
 summary = "Gust-effect factor of a rigid building or other structure by Eq. 26.9-6, from the turbulence intensity, the integral length scale and the background response at the equivalent height 0.6h."
 category = ["Structural engineering", "Wind"]
 tags = ["wind", "ASCE 7", "ASCE 7-10", "gust-effect factor", "gust factor", "G", "rigid", "turbulence intensity", "Iz", "Lz", "background response", "Eq. 26.9-6"]
 from = "lacewing:structural.windBuilding"
 license = "GPL-3.0-or-later"
-inputs = ["exposure", "h", "B"]
+inputs = ["h", "B", "c", "ℓ", "ε̄", "z_min"]
 outputs = ["z̄", "I_z", "L_z", "Q", "G"]
 
 [[references]]
@@ -28,35 +28,35 @@ locator = "Design Example 4, gust factor of a rigid building (five-story variant
 [[tests]]
 name = "Wind Design Manual example: 60 ft building, B = 200 ft, exposure B"
 source = "Wind Design Manual Based on the 2018 IBC and ASCE/SEI 7-16 (ICC), Design Example 4, five-story variant (verified in the PDF; ASCE 7-16 Eqs. 26.11-6 to 26.11-9 are 7-10's Eqs. 26.9-6 to 26.9-9): z̄ 36 ft, Iz̄ 0.2957, Lz̄ 329 ft, Q 0.8050. The manual's G = 0.85 uses 0.7 in place of the standard's 1.7 (it gives 0.8505 with 0.7); by hand with 1.7, G = 0.81127"
-inputs = { exposure = '"B"', h = "60 ft", B = "200 ft" }
+inputs = { h = "60 ft", B = "200 ft", c = "0.30", "ℓ" = "320 ft", "ε̄" = "0.333333333333333", z_min = "30 ft" }
 expect = { "z̄" = "36 ft", I_z = "0.2957", L_z = "329 ft", Q = "0.8050", G = "0.81127" }
 tolerance = "0.2%"
 
 [[tests]]
 name = "Commentary example: 600 × 100 ft building, exposure B"
 source = "ASCE 7-10 Commentary Table C26.9-2 (verified in the PDF): z̄ 360 ft, Iz̄ 0.201, Lz̄ 709.71 ft, Q² 0.616 (Q = 0.785). That building is flexible (n1 = 0.2 Hz, Gf = 1.062); G here is the rigid formula on the same Iz̄ and Q, by hand 0.925 (1 + 5.78 × 0.20145 × 0.78457)/(1 + 5.78 × 0.20145) = 0.81780"
-inputs = { exposure = '"B"', h = "600 ft", B = "100 ft" }
+inputs = { h = "600 ft", B = "100 ft", c = "0.30", "ℓ" = "320 ft", "ε̄" = "0.333333333333333", z_min = "30 ft" }
 expect = { "z̄" = "360 ft", I_z = "0.201", L_z = "709.71 ft", Q = "0.785" }
 tolerance = "0.3%"
 
 [[tests]]
 name = "Commentary example: G by the rigid formula"
 source = "By hand from Eq. 26.9-6 with the example's values: G = 0.81780"
-inputs = { exposure = '"B"', h = "600 ft", B = "100 ft" }
+inputs = { h = "600 ft", B = "100 ft", c = "0.30", "ℓ" = "320 ft", "ε̄" = "0.333333333333333", z_min = "30 ft" }
 expect = { G = "0.81780" }
 tolerance = "1e-4"
 
 [[tests]]
 name = "Low building, exposure C: z̄ is 0.6h above zmin"
 source = "Lacewing Lab asce7_wind_test (h 10 m, B 30 m, exposure C: G between 0.80 and 0.90). By hand: z̄ = 19.685 ft, Iz̄ = 0.2 (33/19.685)^(1/6) = 0.21798, Lz̄ = 500 (19.685/33)^(1/5) = 450.91 ft, Q = 0.88063, G = 0.86344"
-inputs = { exposure = '"C"', h = "10 m", B = "30 m" }
+inputs = { h = "10 m", B = "30 m", c = "0.20", "ℓ" = "500 ft", "ε̄" = "0.2", z_min = "15 ft" }
 expect = { I_z = "0.21798", L_z = "450.91 ft", Q = "0.88063", G = "0.86344" }
 tolerance = "1e-4"
 
 [[tests]]
 name = "Short building in exposure B: z̄ held at zmin = 30 ft"
 source = "By hand: 0.6 × 20 = 12 ft < 30 ft, so z̄ = 30 ft; Iz̄ = 0.3 (33/30)^(1/6) = 0.30480"
-inputs = { exposure = '"B"', h = "20 ft", B = "80 ft" }
+inputs = { h = "20 ft", B = "80 ft", c = "0.30", "ℓ" = "320 ft", "ε̄" = "0.333333333333333", z_min = "30 ft" }
 expect = { "z̄" = "30 ft", I_z = "0.30480" }
 tolerance = "1e-4"
 +++
@@ -69,10 +69,6 @@ Flexible structures (below 1 Hz) need G_f of Eq. 26.9-10 with the resonant respo
 
 ### Structure
 
-```calc {description="Exposure category B, C or D (in quotes)"}
-exposure = "C"_
-```
-
 ```calc {description="Mean roof height (height of the structure)"}
 h = 30 ft_
 ```
@@ -83,23 +79,22 @@ B = 100 ft_
 
 ### Exposure constants (Table 26.9-1)
 
-```calc {description="Turbulence constants c, ℓ, ε̄ and zmin, ASCE 7-10 Table 26.9-1"}
-gust = ``#exposure	c	ℓ	ε̄	z_min
-		ft		ft
-B	0.30	320	0.333333333333333	30
-C	0.20	500	0.2	15
-D	0.15	650	0.125	7`` = !
+The four turbulence constants depend on the exposure category (Sec. 26.7). The defaults are for exposure C.
+
+```calc {description="Turbulence intensity factor c, ASCE 7-10 Table 26.9-1 for the exposure (0.20 is for exposure C)"}
+c = 0.20_
 ```
 
-```calc
-> Turbulence intensity factor
-c = gust[exposure, "c"] = ??
-> Integral length scale factor
-ℓ = gust[exposure, "ℓ"] = ?? ft
-> Integral length scale power-law exponent
-ε̄ = gust[exposure, "ε̄"] = ??
-> Minimum equivalent height
-z_min = gust[exposure, "z_min"] = ?? ft
+```calc {description="Integral length scale factor ℓ, ASCE 7-10 Table 26.9-1 for the exposure (500 ft is for exposure C)"}
+ℓ = 500 ft_
+```
+
+```calc {description="Integral length scale power-law exponent ε̄, ASCE 7-10 Table 26.9-1 for the exposure (0.2 is for exposure C)"}
+ε̄ = 0.2_
+```
+
+```calc {description="Minimum equivalent height zmin, ASCE 7-10 Table 26.9-1 for the exposure (15 ft is for exposure C)"}
+z_min = 15 ft_
 ```
 
 ### Gust-effect factor

@@ -9,6 +9,7 @@
   import type { DocInfo, RefView, Selection, VersionView } from "./api";
   import type { OutlineItem } from "./editor/outline";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import { logAction } from "./log";
 
   let {
     outline,
@@ -52,7 +53,7 @@
         aria-selected={tab === t.id}
         class:on={tab === t.id}
         title={t.title}
-        onclick={() => (tab = t.id)}
+        onclick={() => (logAction(`Sidebar tab: ${t.id}`), (tab = t.id))}
       >
         <span class="icon" aria-hidden="true">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">

@@ -21,6 +21,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import Modal from "./Modal.svelte";
+  import { logAction } from "./log";
 
   let {
     clashes,
@@ -31,6 +32,7 @@
     what = "pasted cells",
     action = "Paste",
     canUse = () => true,
+    suffixer,
   }: {
     clashes: Clash[];
     error?: string | null;
@@ -42,18 +44,53 @@
     action?: string;
     /** Whether "use the document's" is offered for a name (a template offers it for inputs only, ADR-0014 §3). */
     canUse?: (name: string) => boolean;
+    /** The renames that add one suffix to every name (old → new), for "Add to every name". */
+    suffixer?: (suffix: string) => Promise<Record<string, string>>;
   } = $props();
 
   // The choices start from the clashes the dialog opened with.
   let choices = $state(untrack(() => clashes.map((c) => ({ name: c.name, use: false, to: c.suggestion }))));
-  const valid = $derived(choices.every((c) => c.use || /^[\p{L}][\p{L}\p{N}_′]*$/u.test(c.to.trim())));
+  // A calc name: letters, digits, marks (x̄), primes, subscripts including `_(k,max)`.
+  const valid = $derived(choices.every((c) => c.use || /^[\p{L}][\p{L}\p{N}\p{M}_′″‴(),]*$/u.test(c.to.trim())));
+  let suffix = $state("");
+  let suffixError = $state<string | null>(null);
+  function cancel() {
+    logAction(`Name clashes (${what}): Cancel`);
+    oncancel();
+  }
+
+  function decide() {
+    const out = choices.map((c) => ({ name: c.name, rename: c.use ? null : c.to.trim() }));
+    const renames = out.filter((c) => c.rename !== null && c.rename !== c.name).length;
+    logAction(`Name clashes (${what}): ${action} (${renames} renamed, ${out.length - renames} kept of ${out.length})`);
+    onpaste(out);
+  }
+
+  async function addSuffix() {
+    if (!suffixer || !suffix.trim()) return;
+    try {
+      const map = await suffixer(suffix);
+      suffixError = null;
+      choices = choices.map((c) => (map[c.name] ? { ...c, use: false, to: map[c.name] } : c));
+    } catch (e) {
+      suffixError = String(e);
+    }
+  }
 </script>
 
-<Modal {title} onclose={oncancel} width={560}>
+<Modal {title} onclose={cancel} width={560}>
   <p class="small muted">
     A name is defined once per document. Rename it in the {what} (uses included), or keep the document's own value
     and leave the {what}'s definition out.
   </p>
+  {#if suffixer}
+    <div class="suffix">
+      <label for="suffix-all">Add to every name</label>
+      <input id="suffix-all" class="mono" placeholder="bolt1" bind:value={suffix} onkeydown={(e) => e.key === "Enter" && addSuffix()} />
+      <button onclick={addSuffix} disabled={!suffix.trim()} title="S_y becomes S_(y,bolt1), Sy becomes Sy_bolt1">Apply</button>
+    </div>
+    {#if suffixError}<p class="small err">{suffixError}</p>{/if}
+  {/if}
   <table>
     <thead><tr><th>Name</th><th>Rename to</th><th>Or</th></tr></thead>
     <tbody>
@@ -77,11 +114,11 @@
   </table>
   {#if error}<p class="small err">{error}</p>{/if}
   {#snippet footer()}
-    <button onclick={oncancel}>Cancel</button>
+    <button onclick={cancel}>Cancel</button>
     <button
       class="primary"
       disabled={!valid}
-      onclick={() => onpaste(choices.map((c) => ({ name: c.name, rename: c.use ? null : c.to.trim() })))}
+      onclick={decide}
     >{action}</button>
   {/snippet}
 </Modal>
@@ -92,5 +129,7 @@
   td { padding: 4px 6px; border-top: 1px solid var(--border); }
   input:not([type]) { width: 100%; }
   .mono { font-family: var(--mono); }
+  .suffix { display: flex; gap: 6px; align-items: center; margin: 8px 0 0; font-size: 12.5px; }
+  .suffix input { width: 10em; }
   .err { color: var(--danger); }
 </style>

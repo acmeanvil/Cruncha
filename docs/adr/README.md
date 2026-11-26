@@ -31,6 +31,8 @@ Each significant, hard-to-reverse decision gets one numbered ADR. ADRs are immut
 | [0025](0025-calc-engine-gaps-from-templates.md) | Fix the calc engine gaps found while converting templates: `sqrt(0)`, compound `@test`s, one-entry vectors, functions calling functions, √ units, lints (refines 0022) | Accepted |
 | [0026](0026-help-engine-and-documentation.md) | One help system: bundled Markdown pages, a help engine, inline help in the app (F1, "Why?" on errors, setting popovers), generated references, and a static site | Proposed |
 | [0027](0027-table-templates.md) | Table templates: standard size tables (screws, nuts, washers, bolt grades, disc springs, pipe) browsed in the Templates tab, a row inserted as calcs (refines 0014 §6) | Accepted |
+| [0028](0028-page-breaks.md) | Page breaks: a `page_break` prose block (Markdown `\pagebreak`) that starts a new page in reports; inserted from the toolbar or ⌘⇧↵ | Accepted |
+| [0029](0029-debug-log-and-viewer.md) | A debug log of interface actions and backend operations (one file, a ring buffer), a session-lock watchdog and a page stall watch, and a Log viewer in the bottom panel | Accepted |
 
 **Status values:** Proposed → Accepted | Rejected; Accepted → Deprecated | Superseded by NNNN.
 

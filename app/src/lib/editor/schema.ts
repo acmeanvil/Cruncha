@@ -81,6 +81,16 @@ const nodes: Record<string, NodeSpec> = {
     toDOM: () => ["hr"],
   },
 
+  /** A new page in reports (ADR-0028): drawn as a labelled dashed line. */
+  page_break: {
+    group: "block",
+    atom: true,
+    selectable: true,
+    attrs: { ...cellAttrs },
+    parseDOM: [{ tag: "div.page-break" }],
+    toDOM: () => ["div", { class: "page-break", contenteditable: "false" }, ["span", "Page break"]],
+  },
+
   /** A calc statement, edited as text and shown typeset (calcView.ts). */
   calc: {
     group: "block",
@@ -194,8 +204,8 @@ export const schema = new Schema({ nodes, marks });
 
 /** Node types that are a cell's whole content (one top-level block each). */
 export const CELL_TYPES = new Set([
-  "paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule", "calc", "code_block", "raw",
+  "paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule", "page_break", "calc", "code_block", "raw",
 ]);
 
 /** Node types stored as prose cells. */
-export const PROSE_TYPES = new Set(["paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule"]);
+export const PROSE_TYPES = new Set(["paragraph", "heading", "bullet_list", "ordered_list", "blockquote", "horizontal_rule", "page_break"]);

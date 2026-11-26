@@ -152,6 +152,10 @@ pub struct ProposeTemplateRequest {
     /// For a table template: the columns to insert, by their `var` names (e.g. ["d", "d_(k,max)"]);
     /// omit for all of them.
     pub columns: Option<Vec<String>>,
+    /// Added to every name the template defines, for a second copy in one document: "bolt1"
+    /// makes `S_y` into `S_(y,bolt1)` and `Sy` into `Sy_bolt1` (bound inputs and names in
+    /// `rename` excepted).
+    pub suffix: Option<String>,
     /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
     /// conversation's document (the app's active tab for agents outside Cruncha).
     pub document: Option<String>,
@@ -559,7 +563,7 @@ impl<B: Backend> CrunchaTools<B> {
         `bindings` (the input's definition is left out); other inputs arrive as placeholders (_) \
         for the engineer to fill in. If the document already defines a name the template \
         defines, the proposal is refused and lists the names: call again with `rename` (or \
-        `bindings` for inputs). The reply has the new cells' IDs and the results the insert would \
+        `bindings` for inputs), or with `suffix` to rename every name at once (`bolt2`). The reply has the new cells' IDs and the results the insert would \
         change. For a table template, give `row` (and optionally `columns`): the row's values \
         arrive as named calcs, after a line citing the table.")]
     async fn propose_template(&self, Parameters(req): Parameters<ProposeTemplateRequest>) -> Result<CallToolResult, ErrorData> {
@@ -575,6 +579,7 @@ impl<B: Backend> CrunchaTools<B> {
             message: req.message,
             row: req.row,
             columns: req.columns,
+            suffix: req.suffix,
         };
         match b.propose_template(insert).await {
             Ok(p) => ok(format!(

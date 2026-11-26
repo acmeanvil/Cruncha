@@ -17,7 +17,7 @@ Prefer a template to writing the same calculation from scratch. It carries its r
 | --- | --- |
 | `templates(query?)` | Search both libraries. Every word must match a word in the title, summary, tags, category, id, or input and output names. Omit `query` to list them all. |
 | `templates(id)` | Read one template: its validation, the outcome of its worked examples, and the whole file |
-| `propose_template(id, bindings?, rename?, after?, message, row?, columns?, document?)` | Insert a template into the document as one proposal; a table template needs `row` |
+| `propose_template(id, bindings?, rename?, suffix?, after?, message, row?, columns?, document?)` | Insert a template into the document as one proposal; a table template needs `row` |
 
 Before you propose a template, read it with `templates(id)`. Check four things:
 - what it assumes (the prose);
@@ -40,6 +40,7 @@ The insert is a **proposal** (see `cruncha-core`). Nothing changes until the eng
 - **`rename`**: for any other name the document already defines, map old → new (`{"ϕ": "ϕ2"}`).
   - The rename applies to definitions and uses, in calc, Python and Rust cells.
   - Every rename is re-scanned and checked; a rename that can't be done safely is refused.
+- **`suffix`**: one addition to every name the template defines, for a second copy in the same document. `"bolt2"` makes `S_y` into `S_(y,bolt2)`, `d_(k,max)` into `d_(k,max,bolt2)` and `Sy` into `Sy_bolt2`; names a Python or Rust cell uses become `S_y_bolt2`. Bound inputs and names in `rename` are left to those. Use it instead of listing every rename.
 - **Clashes are refused, never merged.** If the template defines a name the document already has, the call fails. The error lists the names, a free name for each (`"M": "M2"`), and which ones are inputs you could bind. Call again with `rename` or `bindings`.
 - **`after`**: the cell to insert after. Omit it for the start of the document. The template's cells keep their order.
 - **Code cells arrive not run.** Python and Rust cells in the template run only when the engineer presses Run in a trusted document. Their results are pending until then, so say so.
@@ -53,7 +54,7 @@ Example: "add a bolt check for the shear we already have":
 
 ## Table templates (standard parts)
 
-Some templates are **tables**: a standard's size table, such as hex cap screws (ASME B18.2.1), ISO hex nuts, plain washers, bolt grades (SAE J429, ASTM, ISO 898-1), disc springs (EN 16983) or pipe (ASME B36.10M, B36.19), or a shape database: AISC (W, HSS, angles…), EN (IPE, HE, UB…), SFIA cold-formed studs and tracks, and Aluminum Design Manual shapes. The listing marks them `table:`. Their ids start `mechanical.tables.` or `structural.tables.`; search with words like `nut`, `washer`, `pipe`, `socket head`, `W shape`, `IPE`. The user finds them in the app's Tables tab (⌘⇧L).
+Some templates are **tables**: a standard's size table, such as hex cap screws (ASME B18.2.1), ISO hex nuts, plain washers, bolt grades (SAE J429, ASTM, ISO 898-1), disc springs (EN 16983) or pipe (ASME B36.10M, B36.19), or a shape database: AISC (W, HSS, angles…), EN (IPE, HE, UB…), SFIA cold-formed studs and tracks, and Aluminum Design Manual shapes, or ASCE 7-10's coefficients (importance factors, snow Ce and Ct, site coefficients Fa and Fv, seismic systems' R, Ω0 and Cd, Cu). The ASCE 7 tables' columns have the loads templates' input names (`F_a`, `C_e`, `R`), so insert the row and bind the template's input to it; where ASCE interpolates (Fa, Fv, Cu), each tabulated point is a row, and you interpolate between two of them. The listing marks them `table:`. Their ids start `mechanical.tables.` or `structural.tables.`; search with words like `nut`, `washer`, `pipe`, `socket head`, `W shape`, `IPE`. The user finds them in the app's Tables tab (⌘⇧L).
 
 - **Reading one:** `templates(id)` shows the file. `[table]` has the `part`, the `source` (standard, table and page), `notes`, `rows` (the designation first, then a value per column, `""` where the standard gives none) and `[[table.columns]]`. Each column has its `symbol`, `name`, `limit` (max, min, ref), `unit` and `var`, the calc name it inserts as (`F_max`, `d_(k,max)`, `n_UNC`).
 - **Inserting a row:** `propose_template(id, row: "M8", columns?: ["s_max", "m_max"], …)`.
@@ -65,7 +66,7 @@ Some templates are **tables**: a standard's size table, such as hex cap screws (
     3. the template's own cells, if any. A pipe table adds the inside diameter, areas, I, J, section moduli and radius of gyration.
   - The proposal's message is `Insert template <title> <version>: <row>` followed by yours.
 - **Values are the standard's, as printed:** lengths in the table's unit (inches or millimetres; EN section properties in cm, cm², cm⁴), stresses in ksi or MPa, percentages with `%`. An AISC shape's `W` is its nominal weight in lbf/ft; an EN section's `G` is its mass in kg/m. Threads per inch (`n_UNC`) are plain numbers. Quote the row and the source line when you use a value.
-- **Clashes:** the column names are short (`d`, `P`, `F`), so a second part often clashes with the first. Rename as for any template (`rename: {"d": "d_nut"}`).
+- **Clashes:** the column names are short (`d`, `P`, `F`), so a second part often clashes with the first. Give a `suffix` (`"nut"`), or rename as for any template (`rename: {"d": "d_nut"}`).
 - A bolt grade's strengths (`S_p`, `S_y`, `S_(ut,min)`) are minimums from its specification. Say which grade and size range you picked.
 
 You can't save templates or snippets to a library, edit them, or delete them: that is the user's action, in the Templates tab (⌘⇧T). If the user wants a new snippet, propose its cells into the document. Then tell them to select those cells and choose "Save selection as snippet…". If they want the file itself, give them its text to import.

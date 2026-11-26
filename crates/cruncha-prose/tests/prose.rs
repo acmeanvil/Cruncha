@@ -180,3 +180,15 @@ fn a_data_frame_or_a_function_keeps_its_lines() {
         ]
     );
 }
+
+#[test]
+fn a_page_break_reads_and_writes_both_ways() {
+    use cruncha_prose::{Block, Piece, from_markdown, parse_json, to_json, to_markdown};
+    let pieces = from_markdown("Before\n\n\\pagebreak\n\nAfter");
+    assert!(matches!(pieces.as_slice(), [Piece::Prose(Block::Paragraph(_)), Piece::Prose(Block::PageBreak), Piece::Prose(Block::Paragraph(_))]), "{pieces:?}");
+    assert_eq!(to_json(&Block::PageBreak), r#"{"type":"page_break"}"#);
+    assert_eq!(parse_json(r#"{"type":"page_break"}"#), Block::PageBreak);
+    assert_eq!(to_markdown(&Block::PageBreak), "\\pagebreak");
+    // Inside a quote it is just text.
+    assert!(!format!("{:?}", from_markdown("> \\pagebreak")).contains("PageBreak"));
+}

@@ -460,9 +460,81 @@ def shape_tables(dump):
     return written
 
 
+ASCE7 = ROOT / "templates/structural/tables/asce7"
+ASCE_SRC = "ASCE/SEI 7-10, Minimum Design Loads for Buildings and Other Structures"
+
+
+def asce7_tables(dump):
+    """ASCE 7-10's coefficient tables. Column names are the loads templates' input names, so a
+    row binds to them; where ASCE interpolates, each tabulated point is a row."""
+    a = dump["asce7"]
+    out = []
+
+    def table(key, title, calc, locator, part, cols, rows, notes, tags):
+        tid = f"structural.tables.asce7.{key}"
+        head = {"id": tid, "version": VERSION, "title": f"{title}, ASCE 7-10",
+                "summary": f"{title} (ASCE 7-10 {locator}): pick a row to insert "
+                           + ", ".join(c["var"] for c in cols if c.get("kind") != "text") + ".",
+                "category": ["Structural engineering", "Loads", "ASCE 7 tables"], "tags": ["ASCE 7", "ASCE 7-10"] + tags,
+                "from": f"lacewing:{calc}", "references": [{"work": "ASCE/SEI 7-10", "locator": locator}]}
+        path = ASCE7 / f"{tid}.cruncha.md"
+        write(path, head, cols, rows, {}, notes, "in", "Case", part, f"{ASCE_SRC}, {locator}")
+        out.append(path)
+
+    num = lambda sym, name, var, unit=None: {"symbol": sym, "name": name, "kind": "number", "unit": unit, "var": var}
+    table("importance", "Importance factors by risk category", "structural.snow", "Table 1.5-2 (risk categories, Table 1.5-1)",
+          "Risk category", [num("Is", "Snow importance factor", "I_s"), num("Ie", "Seismic importance factor", "I_e")],
+          [[f"Risk category {r['label']}", r["Is"], r["Ie"]] for r in a["risk"]],
+          ["Risk categories are defined in Table 1.5-1 by the use and occupancy of the building."], ["importance factor", "risk category", "snow", "seismic"])
+    rows = []
+    for t in a["ce"]:
+        for exp, v in zip(["fully exposed", "partially exposed", "sheltered"], t["ce"]):
+            if v is not None:
+                rows.append([f"{t['label']}, {exp}", v])
+    table("snowExposure", "Snow exposure factor Ce", "structural.snow", "Table 7-2", "Snow exposure",
+          [num("Ce", "Exposure factor", "C_e")], rows,
+          ["Rows are the surface roughness category and the roof's exposure (Table 7-2's footnotes define fully, partially "
+           "and sheltered); the table gives no sheltered value above the tree line or in Alaska without trees."],
+          ["snow", "exposure factor"])
+    table("snowThermal", "Snow thermal factor Ct", "structural.snow", "Table 7-3", "Thermal condition",
+          [num("Ct", "Thermal factor", "C_t")], [[t["label"], t["ct"]] for t in a["ct"]], [], ["snow", "thermal factor"])
+    for key, name, sym, var, pts, calc, loc, ps in [
+            ("siteFa", "Site coefficient Fa", "Fa", "F_a", a["fa"], "structural.seismic", "Table 11.4-1", "S_S"),
+            ("siteFv", "Site coefficient Fv", "Fv", "F_v", a["fv"], "structural.seismic", "Table 11.4-2", "S_1")]:
+        rows = []
+        for r in pts["rows"]:
+            for i, (x, v) in enumerate(zip(pts["points"], r["values"])):
+                rel = "≤" if i == 0 else ("≥" if i == len(pts["points"]) - 1 else "=")
+                rows.append([f"Site class {r['label']}, {ps} {rel} {value(x)}", v])
+        table(key, name, calc, loc, "Site class", [num(sym, name, var)], rows,
+              [f"Interpolate linearly in {ps} between rows of the same site class (the standard's note a); below the "
+               f"first point use its value, above the last use the last.",
+               "Site class F needs a site response analysis (Section 21.1); the table gives no value."], ["seismic", "site class", "site coefficient"])
+    table("seismicSystems", "Seismic force-resisting systems", "structural.seismic", "Table 12.2-1 (a selection), with Table 12.8-2",
+          "Seismic system",
+          [num("R", "Response modification coefficient", "R"), num("Ω0", "Overstrength factor", "Ω_0"),
+           num("Cd", "Deflection amplification factor", "C_d"), num("Ct", "Period coefficient Ct (Table 12.8-2, hn in ft)", "C_t"),
+           num("x", "Period exponent x (Table 12.8-2)", "x")],
+          [[s["label"], s["R"], s["omega0"], s["Cd"], s["ct"], s["x"]] for s in a["systems"]],
+          ["A selection of Table 12.2-1's systems, labelled by its line (C1, B2, …); its height limits and detailing "
+           "requirements are not included, so check the system's line in the standard.",
+           "Ct and x are Table 12.8-2's for the system's structure type, with hn in ft."], ["seismic", "R", "Cd", "overstrength"])
+    names = {"steelMrf": "Steel moment-resisting frames", "concreteMrf": "Concrete moment-resisting frames",
+             "ebf": "Steel eccentrically braced and buckling-restrained braced frames", "other": "All other structural systems"}
+    table("periodParameters", "Approximate period parameters Ct and x", "structural.seismic", "Table 12.8-2", "Structure type",
+          [num("Ct", "Period coefficient (hn in ft)", "C_t"), num("x", "Period exponent", "x")],
+          [[names[p["name"]], p["ct"], p["x"]] for p in a["periods"]],
+          ["Ct is for hn in ft; the table's SI values are in brackets there."], ["seismic", "period"])
+    table("periodCu", "Coefficient for the upper limit on period Cu", "structural.seismic", "Table 12.8-1", "S_D1",
+          [num("Cu", "Coefficient for upper limit on calculated period", "C_u")],
+          [[("S_D1 ≥ " if i == len(a["cu"]) - 1 else ("S_D1 ≤ " if i == 0 else "S_D1 = ")) + value(c["sd1"]), c["cu"]] for i, c in enumerate(a["cu"])],
+          ["Interpolate linearly in S_D1 between rows."], ["seismic", "period"])
+    return out
+
+
 def main():
     dump = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    written = standard_tables(dump) + pipe_tables(dump) + shape_tables(dump)
+    written = standard_tables(dump) + pipe_tables(dump) + shape_tables(dump) + asce7_tables(dump)
     print(f"{len(written)} table templates")
 
 

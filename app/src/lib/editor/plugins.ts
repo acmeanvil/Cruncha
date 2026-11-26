@@ -92,6 +92,18 @@ export function insertBlock(node: Node): Command {
   };
 }
 
+/** A page break (ADR-0028) after the current block, then a paragraph to go on typing in. */
+export const insertPageBreak: Command = (state, dispatch) => {
+  if (!dispatch) return true;
+  const { pos, node: cur } = currentBlock(state);
+  const nodes = [schema.nodes.page_break.create(), schema.nodes.paragraph.create()];
+  const empty = isEmptyParagraph(cur);
+  const at = empty ? pos : pos + cur.nodeSize;
+  const tr = empty ? state.tr.replaceWith(pos, pos + cur.nodeSize, nodes) : state.tr.insert(at, nodes);
+  dispatch(tr.setSelection(TextSelection.create(tr.doc, at + nodes[0].nodeSize + 1)).scrollIntoView());
+  return true;
+};
+
 export const newCalc = () => schema.nodes.calc.create({ editing: true });
 export const newCode = (lang = "python") => schema.nodes.code_block.create({ lang });
 export const newParagraph = () => schema.nodes.paragraph.create();
@@ -158,6 +170,14 @@ export function markdownRules(): InputRule[] {
       (m, n) => n.childCount + n.attrs.order === Number(m[1]),
     ),
     wrappingInputRule(/^\s*>\s$/, nodes.blockquote),
+    // "\pagebreak" alone in a top-level paragraph: a page break, then a new paragraph (ADR-0028).
+    new InputRule(/^\\pagebreak$/, (state, _m, start, end) => {
+      const $s = state.doc.resolve(start);
+      if ($s.depth !== 1 || $s.parent.type !== nodes.paragraph || $s.parent.content.size !== end - start) return null;
+      const pos = $s.before(1);
+      const tr = state.tr.replaceWith(pos, pos + $s.parent.nodeSize, [nodes.page_break.create(), nodes.paragraph.create()]);
+      return tr.setSelection(TextSelection.create(tr.doc, pos + 2));
+    }),
     // "---" in an empty top-level paragraph: a rule, then a new paragraph.
     new InputRule(/^--(-)$/, (state, _m, start, end) => {
       const $s = state.doc.resolve(start);
@@ -199,7 +219,7 @@ export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => 
         // "= " at the start of an empty paragraph starts a calc.
         new InputRule(/^=\s$/, (state, _m, start, end) => {
           const $s = state.doc.resolve(start);
-          if ($s.depth !== 1 || $s.parent.type !== schema.nodes.paragraph || $s.parent.content.size !== end - start - 1) return null;
+          if ($s.depth !== 1 || $s.parent.type !== schema.nodes.paragraph || $s.parent.content.size !== end - start) return null;
           const pos = $s.before(1);
           const tr = state.tr.replaceWith(pos, pos + $s.parent.nodeSize, newCalc());
           return tr.setSelection(NodeSelection.create(tr.doc, pos));
@@ -233,6 +253,7 @@ export function editorPlugins(onSubmit: () => void, onRunCode?: (id: string) => 
         return true;
       },
       "Shift-Enter": runCode,
+      "Mod-Shift-Enter": insertPageBreak,
       Enter: splitListItem(schema.nodes.list_item),
       Tab: chainCommands(codeTab, sinkListItem(schema.nodes.list_item)),
       "Shift-Tab": liftListItem(schema.nodes.list_item),

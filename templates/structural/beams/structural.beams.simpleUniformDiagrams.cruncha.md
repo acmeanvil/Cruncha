@@ -1,15 +1,15 @@
 +++
 cruncha-template = 1
 id = "structural.beams.simpleUniformDiagrams"
-version = "1.0.1"
+version = "1.1.0"
 title = "Simply supported beam, uniform load: reactions, moment, deflection and diagrams"
-summary = "Reactions, maximum shear and moment, end slope and mid-span deflection of a simply supported beam under a uniform load over its whole span, with shear and moment diagrams."
+summary = "Reactions, maximum shear and moment, end slope and mid-span deflection of a simply supported beam under a uniform load over its whole span, with shear, moment and deflection diagrams."
 category = ["Structural engineering", "Beams"]
-tags = ["beam", "simply supported", "uniform load", "UDL", "shear diagram", "moment diagram", "deflection", "Roark", "Plotly", "Python"]
+tags = ["beam", "simply supported", "uniform load", "UDL", "shear diagram", "moment diagram", "deflection", "deflection diagram", "Roark", "Plotly", "Python"]
 from = "lacewing:structural.beam"
 license = "GPL-3.0-or-later"
 inputs = ["w", "L", "E", "I"]
-outputs = ["R", "M_max", "θ_A", "y_max", "M_peak"]
+outputs = ["R", "M_max", "θ_A", "y_max", "M_peak", "y_peak"]
 
 [[references]]
 work = "Roark's Formulas for Stress and Strain (Young, Budynas, Sadegh)"
@@ -20,7 +20,7 @@ locator = "Table 8.1, case 2e (uniformly distributed load, both ends simply supp
 name = "Roark 8.1 case 2e: 10 kN/m over 6 m, EI = 2 × 10⁷ N·m²"
 source = "Lacewing Lab beam_test: M = wl²/8 = 45 kN·m, y = 5wl⁴/384EI = 8.4375 mm, θ = wl³/24EI = 0.0045 rad"
 inputs = { w = "10 kN/m", L = "6 m", E = "200 GPa", I = "1e8 mm^4" }
-expect = { R = "30 kN", M_max = "45 kN·m", "θ_A" = "0.0045", y_max = "8.4375 mm", M_peak = "45 kN·m" }
+expect = { R = "30 kN", M_max = "45 kN·m", "θ_A" = "0.0045", y_max = "8.4375 mm", M_peak = "45 kN·m", y_peak = "8.4375 mm" }
 tolerance = "1e-9"
 figures = 1
 
@@ -70,30 +70,41 @@ y_max = 5 w L^4 / (384 E I) = ?? mm
 
 ### Diagrams
 
-The shear falls linearly from R to −R, and the moment is a parabola with its peak at mid-span.
+The shear falls linearly from R to −R, the moment is a parabola with its peak at mid-span, and the deflection is the quartic of case 2e, also peaking at mid-span. Deflection is drawn downward.
 
-```python {description="Shear and moment along the span, and their diagrams"}
+```python {description="Shear, moment and deflection along the span, and their diagrams"}
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from cruncha import Q_, show
 
-span = L.to("m").magnitude
-load = w.to("kN/m").magnitude
-x_s = np.linspace(0, span, 101)
-V_s = Q_(load * (span / 2 - x_s), "kN")
-M_s = Q_(load * x_s * (span - x_s) / 2, "kN*m")
+_L = L.to("m").magnitude
+_w = w.to("N/m").magnitude
+_EI = (E * I).to("N*m^2").magnitude
+# Roark Table 8.1's expressions along x from A: the values at A, then the load's terms
+_R = _w * _L / 2
+_th = _w * _L**3 / (24 * _EI)
+x_s = np.unique(np.r_[np.linspace(0, _L, 201), _L / 2])
+V_s = Q_(_R - _w * x_s, "N").to("kN")
+M_s = Q_(_R * x_s - _w * x_s**2 / 2, "N*m").to("kN*m")
+y_s = Q_(_th * x_s - (_R * x_s**3 / 6 - _w * x_s**4 / 24) / _EI, "m").to("mm")
 
-fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=("Shear (kN)", "Moment (kN·m)"))
+fig = make_subplots(rows=3, cols=1, shared_xaxes=True, subplot_titles=("Shear (kN)", "Moment (kN·m)", "Deflection (mm, downward)"))
 fig.add_trace(go.Scatter(x=x_s, y=V_s.magnitude, fill="tozeroy", name="V"), row=1, col=1)
 fig.add_trace(go.Scatter(x=x_s, y=M_s.magnitude, fill="tozeroy", name="M"), row=2, col=1)
-fig.update_xaxes(title_text="x (m)", row=2, col=1)
+fig.add_trace(go.Scatter(x=x_s, y=y_s.magnitude, fill="tozeroy", name="y"), row=3, col=1)
+fig.update_yaxes(autorange="reversed", row=3, col=1)
+fig.update_xaxes(title_text="x from A (m)", row=3, col=1)
 fig.update_layout(showlegend=False)
 show(fig)
 ```
 
-The plotted moment should peak at the closed-form value:
+The plotted peaks should equal the closed-form values:
 
 ```calc {description="Largest moment in the plotted diagram"}
 M_peak = max(M_s) = ?? kN·m
+```
+
+```calc {description="Largest deflection in the plotted diagram"}
+y_peak = max(y_s) = ?? mm
 ```

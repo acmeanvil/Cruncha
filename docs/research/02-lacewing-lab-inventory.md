@@ -839,7 +839,7 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 
 <!-- status:begin (scripts/lacewing-status.py writes this table) -->
 
-132 of 286 calculators have at least one template (365 templates).
+132 of 286 calculators have at least one template (373 templates).
 
 | Section | Calculators | With templates |
 |---|---|---|
@@ -981,8 +981,8 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Machining | `machining.gcodeInterpreter` | Not started |  |
 | Machining | `machining.gcodeDictionary` | Not started |  |
 | Structural engineering | `structural.loadCombinations` | Templates | `structural.loads.combinations` |
-| Structural engineering | `structural.snow` | Templates | `structural.snow.roof`, `structural.snow.stepDrift` |
-| Structural engineering | `structural.seismic` | Templates | `structural.seismic.baseShear`, `structural.seismic.verticalDistribution` |
+| Structural engineering | `structural.snow` | Templates | `structural.snow.roof`, `structural.snow.stepDrift`, `structural.tables.asce7.importance`, `structural.tables.asce7.snowExposure`, `structural.tables.asce7.snowThermal` |
+| Structural engineering | `structural.seismic` | Templates | `structural.seismic.baseShear`, `structural.seismic.verticalDistribution`, `structural.tables.asce7.periodCu`, `structural.tables.asce7.periodParameters`, `structural.tables.asce7.seismicSystems`, `structural.tables.asce7.siteFa`, `structural.tables.asce7.siteFv` |
 | Structural engineering | `structural.beam` | Templates | `structural.beams.cantileverPointLoad`, `structural.beams.cantileverUniform`, `structural.beams.fixedPointLoad`, `structural.beams.fixedUniform`, `structural.beams.proppedPointLoad`, `structural.beams.proppedUniform`, `structural.beams.simplePointLoad`, `structural.beams.simpleTriangular`, `structural.beams.simpleUniformDiagrams`, `structural.beams.twoSpanUniform` |
 | Structural engineering | `structural.frames` | Templates | `structural.frames.portalFixed`, `structural.frames.portalPinned` |
 | Structural engineering | `structural.catenary` | Templates | `structural.catenary.horizontalTension`, `structural.catenary.lengthGiven`, `structural.catenary.sagGiven` |
