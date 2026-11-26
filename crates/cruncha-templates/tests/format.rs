@@ -105,3 +105,11 @@ fn a_written_snippet_reads_back_with_its_inputs() {
     assert!(!text.contains("inputs ="), "empty lists aren't written:\n{text}");
     assert_eq!(parse(&text).unwrap(), t, "{text}");
 }
+
+#[test]
+fn a_hand_typed_quote_in_a_description_survives_and_writes_back() {
+    let text = "+++\ncruncha-template = 1\nid = \"a\"\nversion = \"1.0.0\"\ntitle = \"t\"\n+++\n\n```calc {description=\"Exposure \\\"B\\\", rough\"}\nx = 1\n```\n";
+    let t = parse(text).unwrap();
+    assert!(matches!(&t.cells[0], Cell::Calc { description: Some(d), .. } if d == "Exposure \"B\", rough"), "{:?}", t.cells);
+    assert_eq!(parse(&cruncha_templates::write(&t).unwrap()).unwrap(), t);
+}

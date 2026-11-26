@@ -37,6 +37,7 @@ crates/cruncha-templates/  templates and snippets (ADR-0014): the `<id>.cruncha.
                            (run_tests_with: code cells through a CodeRunner; tests/support/py.rs runs them on the real worker); examples/check.rs checks files while writing them
                            (worked examples evaluated with cruncha-eval, compared in SI); tests/library.rs checks every built-in template under templates/
                            write (a template back to its file) and load_dir (a library folder) for the app's library
+                           src/table.rs table templates (ADR-0027): `[table]` (a standard's size table), table_cells (the cells a picked row inserts)
 templates/                 the built-in library: templates/<section>/…/<id>.cruncha.md (bundled with the app as a resource); `from = "lacewing:<id>"` names a calculator in research 02
 crates/cruncha-graph/      reactive dependency graph (design 02 §3.1): evaluation order, duplicate names, cycles, use-above-definition lint, affected cells
 crates/cruncha-kernel-py/  the Python worker from Rust (ADR-0005): Kernel (start, scan, run with timeout, interrupt/kill), protocol.rs framing, sandbox.rs (macOS profile),
@@ -91,7 +92,7 @@ app/                       desktop app (ADR-0008, ADR-0012): Svelte 5 + Vite + T
   src/lib/*.svelte         Sidebar (Outline, History tabs), HistoryPanel (versions grouped by snapshot, "Rev A · 3": history.ts), SnapshotDialog,
                            BottomPanel (full width, ⌘J: Variables = VariableTable + VariableInspector (head/tail of frames from the engine's `Preview`), Proposals = ProposalsPanel),
                            FunctionReference (⌘⇧F; functionRef.ts; inserts into the calc being edited) with a Units tab (⌘⇧U; UnitReference, unitRef.ts)
-                           and a Templates tab (⌘⇧T; TemplateLibrary, templateRef.ts, SnippetDialog, LibraryDialog: ADR-0014 insert, snippets, trash),
+                           and a Templates tab (⌘⇧T; TemplateLibrary, templateRef.ts, SnippetDialog, LibraryDialog: ADR-0014 insert, snippets, trash; TablePicker: a table template's rows, ADR-0027) and a Tables tab (⌘⇧L; table templates only),
                            RetentionControl, SettingsPage (this computer: agents, connections, agents outside Cruncha, defaults, report style,
                            Python, trusted documents; ⌘,), DocumentSettings (tabs: Document, Report, History; kept in the document), …
   src-tauri/               Rust backend (crate `cruncha-app`): src/lib.rs commands, src/session.rs state, src/engine.rs evaluation (graph order, memoized, always unit-aware; Python cells as jobs),
@@ -112,6 +113,8 @@ docs/adr/  docs/design/  docs/research/
 skills/                    Agent Skills (SKILL.md) for AI agents working inside Cruncha documents
 scripts/run-app.sh         launch the app for review (deps check, npm ci if needed, tauri dev)
 scripts/lacewing-status.py the Lacewing Lab conversion table in docs/research/02 §5 (from each template's `from`; --check fails if stale)
+scripts/gen-table-templates.py  the table templates (ADR-0027) under templates/mechanical/tables/ and templates/structural/shapes/, from a JSON dump of Lacewing's size tables and shape databases
+                           (scripts/lacewing-tables/dump.dart, run with Lacewing's package config; see the script's docstring)
 ```
 
 ## Commands

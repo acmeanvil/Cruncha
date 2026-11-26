@@ -45,6 +45,7 @@
     onfunctions,
     onunits,
     ontemplates,
+    ontables,
     origin = null,
     docId = null,
     stashKey = null,
@@ -67,6 +68,8 @@
     onunits?: () => void;
     /** The toolbar's templates button. */
     ontemplates?: () => void;
+    /** Open the Tables tab: standard parts' size tables (ADR-0027). */
+    ontables?: () => void;
     /** The shown document version (`document:<id>@v<n>`): copied cells carry it (ADR-0024). */
     origin?: string | null;
     /** The document shown: saves and runs go to it, whichever tab is active (ADR-0024). */
@@ -118,7 +121,8 @@
    * Insert a template (ADR-0014 §3) after the current block: its names are checked against
    * the document's first, and any that clash are renamed or (inputs only) bound to the
    * document's own value. The cells commit as one version, "Insert template <title> <version>",
-   * each Imported from `template:<id>@<version>`. Code cells arrive not run.
+   * each Imported from `template:<id>@<version>` (`#<row>` for a table template's row, ADR-0027).
+   * Code cells arrive not run.
    */
   export async function insertTemplate(t: TemplateDetail) {
     if (!view || !editable) return;
@@ -170,7 +174,10 @@
     if (!view) return;
     const nodes = cells.map((c) => cellToNode({ id: null, order_key: null, kind: c.kind, source: c.source, attrs: c.attrs ?? {} } as unknown as Cell));
     if (nodes.length === 0) return;
-    await sync.insertAs(`template:${t.id}@${t.version}`, `Insert template ${t.title} ${t.version}`, () => {
+    // A table template's row (ADR-0027) is part of where the cells came from.
+    const from = `template:${t.id}@${t.version}${t.row ? `#${t.row}` : ""}`;
+    const message = t.row ? `Insert template ${t.title} ${t.version}: ${t.row}` : `Insert template ${t.title} ${t.version}`;
+    await sync.insertAs(from, message, () => {
       const v = view!;
       const { pos, node: cur } = currentBlock(v.state);
       const empty = cur.type === schema.nodes.paragraph && cur.content.size === 0;
@@ -671,6 +678,9 @@
     {/if}
     {#if ontemplates}
       <button onclick={ontemplates} title="Templates and snippets: insert a checked calculation, or save cells as a snippet (⌘⇧T)">Templates</button>
+    {/if}
+    {#if ontables}
+      <button onclick={ontables} title="Tables of standard parts: screws, nuts, washers, bolt grades, pipe, shapes; insert a size's values (⌘⇧L)">Tables</button>
     {/if}
     <span class="sep"></span>
     <button onclick={() => run(moveBlock(-1))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>

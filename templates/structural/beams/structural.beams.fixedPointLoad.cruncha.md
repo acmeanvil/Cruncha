@@ -1,0 +1,113 @@
++++
+cruncha-template = 1
+id = "structural.beams.fixedPointLoad"
+version = "1.0.0"
+title = "Fixed-ended beam, point load: reactions, end moments and deflection"
+summary = "Reactions, the fixed-end moments, the moment under the load and the deflections of a beam built in at both ends, carrying one concentrated load anywhere on its span (Roark Table 8.1, case 1d)."
+category = ["Structural engineering", "Beams"]
+tags = ["beam", "fixed ends", "fixed-fixed", "built-in", "point load", "concentrated load", "fixed-end moment", "statically indeterminate", "Roark"]
+from = "lacewing:structural.beam"
+license = "GPL-3.0-or-later"
+inputs = ["P", "a", "L", "E", "I"]
+outputs = ["R_A", "R_B", "M_A", "M_B", "M_P", "y_P", "y_max", "x_m"]
+
+[[references]]
+work = "Roark's Formulas for Stress and Strain (Young, Budynas)"
+edition = "7th"
+locator = "Table 8.1, case 1d (concentrated intermediate load, both ends fixed), p. 190"
+
+[[tests]]
+name = "Roark 8.1 case 1d: 10 kN at 2 m on a 6 m span, EI = 2 × 10⁷ N·m²"
+source = "Lacewing Lab beam_test (Roark 7th Table 8.1 case 1d): RA = W(l − a)²(l + 2a)/l³ = 7.4074 kN, MA = −Wa(l − a)²/l² = −8.8889 kN·m, MB = −Wa²(l − a)/l² = −4.4444 kN·m, M under the load 2Wa²(l − a)²/l³ = 5.9259 kN·m; deflections by hand and checked against a stiffness solution. The formulas were checked in the Roark 7th PDF, Table 8.1"
+inputs = { P = "10 kN", a = "2 m", L = "6 m", E = "200 GPa", I = "1e8 mm^4" }
+expect = { R_A = "7.4074074 kN", R_B = "2.5925926 kN", M_A = "-8.8888889 kN·m", M_B = "-4.4444444 kN·m", M_P = "5.9259259 kN·m", y_P = "0.39506173 mm", y_max = "0.43537415 mm", x_m = "3.4285714 m" }
+tolerance = "1e-7"
+checks = "pass"
+
+[[tests]]
+name = "Load at mid-span: PL/8 at the ends and under the load"
+source = "By hand: a = b = L/2 gives MA = MB = −PL/8 = −15 kN·m, M under the load PL/8 = 15 kN·m, y = PL³/(192EI) = 10 000 × 12³/(192 × 2e7) = 4.5 mm"
+inputs = { P = "10 kN", a = "6 m", L = "12 m", E = "200 GPa", I = "1e8 mm^4" }
+expect = { R_A = "5 kN", M_A = "-15 kN·m", M_B = "-15 kN·m", M_P = "15 kN·m", y_P = "4.5 mm", y_max = "4.5 mm", x_m = "6 m" }
+tolerance = "1e-9"
+checks = "pass"
+
+[[tests]]
+name = "12 kips at 8 ft on a 24 ft fixed-ended span, I = 510 in⁴"
+source = "By hand: b = 16 ft, MA = −12 × 8 × 16²/24² = −42.667 kip·ft, MB = −12 × 64 × 16/576 = −21.333 kip·ft, RA = 12 × 256 × 40/13 824 = 8.8889 kips"
+inputs = { P = "12 kips", a = "8 ft", L = "24 ft", E = "29000 ksi", I = "510 in^4" }
+expect = { R_A = "8.8888889 kips", R_B = "3.1111111 kips", M_A = "-42.666667 kip·ft", M_B = "-21.333333 kip·ft", M_P = "28.444444 kip·ft", y_max = "0.078132086 in" }
+tolerance = "1e-7"
+checks = "pass"
++++
+
+## Fixed-ended beam, point load
+
+A prismatic beam built in at both ends A and B, carrying one concentrated load P at a distance a from A (Roark Table 8.1, case 1d). Linear elastic, small deflections, shear deformation neglected; the ends neither rotate nor move. The load is positive downward; deflections are magnitudes, downward. Moments are positive sagging, so the end moments are negative (hogging). The end moments are the fixed-end moments a frame analysis starts from.
+
+### Beam and load
+
+```calc {description="Concentrated load, downward"}
+P = 10 kN_
+```
+
+```calc {description="Distance of the load from end A"}
+a = 2 m_
+```
+
+```calc {description="Span between the fixed ends"}
+L = 6 m_
+```
+
+```calc {description="Modulus of elasticity"}
+E = 200 GPa_
+```
+
+```calc {description="Second moment of area about the bending axis"}
+I = 1e8 mm⁴_
+```
+
+### Reactions and moments
+
+```calc {description="Distance of the load from end B"}
+b = L - a = ?? m
+```
+
+```calc
+> Reaction at A
+R_A = P b^2 (3 a + b) / L^3 = ?? kN
+> Reaction at B
+R_B = P a^2 (a + 3 b) / L^3 = ?? kN
+> Moment at A (hogging)
+M_A = -P a b^2 / L^2 = ?? kN·m
+> Moment at B (hogging)
+M_B = -P a^2 b / L^2 = ?? kN·m
+> Moment under the load (sagging)
+M_P = 2 P a^2 b^2 / L^3 = ?? kN·m
+```
+
+### Deflection
+
+The largest deflection lies between the load and mid-span, on the side of the longer segment. With c₁ the longer and c₂ the shorter of a and b, it occurs at x_m = 2c₁L/(3c₁ + c₂) from the end farther from the load.
+
+```calc
+> Deflection under the load
+y_P = P a^3 b^3 / (3 E I L^3) = ?? mm
+```
+
+```calc
+> Longer segment
+c_1 = max(a, b) = ?? m
+> Shorter segment
+c_2 = min(a, b) = ?? m
+> Position of the largest deflection, from the end farther from the load
+x_m = 2 c_1 L / (3 c_1 + c_2) = ?? m
+> Largest deflection
+y_max = 2 P c_1^3 c_2^2 / (3 E I (3 c_1 + c_2)^2) = ?? mm
+```
+
+### Checks
+
+```calc
+@test 0 'm' < a < L
+```

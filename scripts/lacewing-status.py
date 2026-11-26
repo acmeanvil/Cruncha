@@ -15,14 +15,9 @@ from collections import defaultdict
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INVENTORY = ROOT / "docs/research/02-lacewing-lab-inventory.md"
 TEMPLATES = ROOT / "templates"
-# Calculators that are lookup tables of copyrighted standards or reference pages, not
-# calculations (ADR-0014 §6): not converted until the owner decides how their data is sourced.
-NOT_TEMPLATES = {
-    "mechanical.hexScrews", "mechanical.heavyHexScrews", "mechanical.socketHeadScrews",
-    "mechanical.lowHeadScrews", "mechanical.buttonHeadScrews", "mechanical.flatHeadScrews",
-    "mechanical.hexNuts", "mechanical.washers", "mechanical.boltGrades",
-    "mechanical.discSpringSizes", "mechanical.pipeSizes", "mechanical.gdtSymbols",
-}
+# Calculators left out by the owner's decision: the GD&T symbol page is a reference page, not a
+# calculation (2026-11-25, with ADR-0027, which made the size tables table templates).
+NOT_TEMPLATES = {"mechanical.gdtSymbols"}
 BEGIN = "<!-- status:begin (scripts/lacewing-status.py writes this table) -->"
 END = "<!-- status:end -->"
 
@@ -81,7 +76,7 @@ def table(text):
     lines.append("|---|---|---|---|")
     for section, cid in calcs:
         ts = by.get(cid, [])
-        status = "Templates" if ts else ("Data, not a template: owner's decision" if cid in NOT_TEMPLATES else "Not started")
+        status = "Templates" if ts else ("Reference page, not converted: owner's decision" if cid in NOT_TEMPLATES else "Not started")
         lines.append(f"| {section} | `{cid}` | {status} | {', '.join(f'`{t}`' for t in ts)} |")
     lines.append("")
     lines.append(END)

@@ -146,6 +146,12 @@ pub struct ProposeTemplateRequest {
     pub after: Option<String>,
     /// Why the template goes here, for the engineer who reviews it.
     pub message: String,
+    /// For a table template: the row to insert, by its designation as the table's first
+    /// column gives it (e.g. "M8", "1/2", "2 × 0.154 in (40 / STD)").
+    pub row: Option<String>,
+    /// For a table template: the columns to insert, by their `var` names (e.g. ["d", "d_(k,max)"]);
+    /// omit for all of them.
+    pub columns: Option<Vec<String>>,
     /// The open document to act on: its ID or name, as `documents` lists them. Omit for this
     /// conversation's document (the app's active tab for agents outside Cruncha).
     pub document: Option<String>,
@@ -510,8 +516,9 @@ impl<B: Backend> CrunchaTools<B> {
     #[tool(description = "The calculation templates and snippets in Cruncha's libraries (the built-in \
         one and the user's own): search them, or read one by id (its .cruncha.md file: TOML front \
         matter with inputs, outputs, references and worked examples, then its cells, with the \
-        outcome of its worked examples). Insert one with propose_template. Load the \
-        cruncha-templates skill for the format.")]
+        outcome of its worked examples). Table templates hold a standard's size table (screws, \
+        nuts, washers, bolt grades, disc springs, pipe): read one to see its rows and columns. \
+        Insert one with propose_template. Load the cruncha-templates skill for the format.")]
     async fn templates(&self, Parameters(req): Parameters<TemplatesRequest>) -> Result<CallToolResult, ErrorData> {
         if let Some(id) = req.id {
             return match self.backend.template(id).await {
@@ -537,6 +544,9 @@ impl<B: Backend> CrunchaTools<B> {
             if let Some(s) = &t.summary {
                 out.push_str(&format!("  {s}\n"));
             }
+            if t.table {
+                out.push_str("  table: insert a row with propose_template's `row`\n");
+            }
             if !t.inputs.is_empty() || !t.outputs.is_empty() {
                 out.push_str(&format!("  inputs: {}; outputs: {}\n", t.inputs.join(", "), t.outputs.join(", ")));
             }
@@ -550,13 +560,22 @@ impl<B: Backend> CrunchaTools<B> {
         for the engineer to fill in. If the document already defines a name the template \
         defines, the proposal is refused and lists the names: call again with `rename` (or \
         `bindings` for inputs). The reply has the new cells' IDs and the results the insert would \
-        change.")]
+        change. For a table template, give `row` (and optionally `columns`): the row's values \
+        arrive as named calcs, after a line citing the table.")]
     async fn propose_template(&self, Parameters(req): Parameters<ProposeTemplateRequest>) -> Result<CallToolResult, ErrorData> {
         let b = match self.on(req.document.as_deref()).await {
             Ok(b) => b,
             Err(e) => return fail(e),
         };
-        let insert = TemplateInsert { id: req.id, bindings: req.bindings, rename: req.rename, after: req.after, message: req.message };
+        let insert = TemplateInsert {
+            id: req.id,
+            bindings: req.bindings,
+            rename: req.rename,
+            after: req.after,
+            message: req.message,
+            row: req.row,
+            columns: req.columns,
+        };
         match b.propose_template(insert).await {
             Ok(p) => ok(format!(
                 "Proposal {} recorded; it waits for the engineer to accept or reject it in Cruncha. \

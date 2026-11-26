@@ -47,6 +47,7 @@ fn template_info(t: crate::library::TemplateSummary) -> TemplateInfo {
         tags: t.tags,
         inputs: t.inputs,
         outputs: t.outputs,
+        table: t.is_table,
     }
 }
 
@@ -378,8 +379,14 @@ impl Backend for AppBackend {
         if !s.is_open() {
             return Err("no document is open in Cruncha".into());
         }
-        let (t, edits) = s.template_edits(&insert.id, &insert.bindings, &insert.rename, insert.after).await?;
-        let message = format!("Insert template {} {}: {}", t.summary.title, t.summary.version, insert.message.trim());
+        let (t, edits) = s
+            .template_edits(&insert.id, &insert.bindings, &insert.rename, insert.after, insert.row.as_deref(), insert.columns.as_deref())
+            .await?;
+        let what = match &t.row {
+            Some(row) => format!("{} {row}", t.summary.title),
+            None => t.summary.title.clone(),
+        };
+        let message = format!("Insert template {what} {}: {}", t.summary.version, insert.message.trim());
         s.propose(&self.1, None, &message, edits).await.map(proposal_info)
     }
 

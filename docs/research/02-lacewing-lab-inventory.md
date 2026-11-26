@@ -839,15 +839,15 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 
 <!-- status:begin (scripts/lacewing-status.py writes this table) -->
 
-95 of 286 calculators have at least one template (203 templates).
+132 of 286 calculators have at least one template (365 templates).
 
 | Section | Calculators | With templates |
 |---|---|---|
 | Materials | 10 | 0 |
 | Geometry | 6 | 1 |
-| Mechanical engineering | 101 | 89 |
+| Mechanical engineering | 101 | 100 |
 | Machining | 7 | 0 |
-| Structural engineering | 30 | 4 |
+| Structural engineering | 30 | 30 |
 | Thermal engineering | 18 | 0 |
 | Electrical engineering | 50 | 0 |
 | Mathematics | 23 | 0 |
@@ -923,7 +923,7 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Mechanical engineering | `mechanical.fits` | Templates | `mechanical.fits.iso286Formulas`, `mechanical.fits.limits` |
 | Mechanical engineering | `mechanical.iso2768` | Templates | `mechanical.iso2768.general` |
 | Mechanical engineering | `mechanical.gdtFrame` | Templates | `mechanical.gdtFrame.virtualSize` |
-| Mechanical engineering | `mechanical.gdtSymbols` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.gdtSymbols` | Reference page, not converted: owner's decision |  |
 | Mechanical engineering | `mechanical.gdtBonus` | Templates | `mechanical.gdtBonus.lmc`, `mechanical.gdtBonus.mmc`, `mechanical.gdtBonus.rfs` |
 | Mechanical engineering | `mechanical.gdtPosition` | Templates | `mechanical.gdtPosition.coordinates`, `mechanical.gdtPosition.cylindrical`, `mechanical.gdtPosition.spherical` |
 | Mechanical engineering | `mechanical.gdtFasteners` | Templates | `mechanical.gdtFasteners.coaxial`, `mechanical.gdtFasteners.fixed`, `mechanical.gdtFasteners.fixedTilt`, `mechanical.gdtFasteners.floating` |
@@ -962,17 +962,17 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Mechanical engineering | `mechanical.oRings` | Templates | `mechanical.oRings.faceGland`, `mechanical.oRings.radialGland` |
 | Mechanical engineering | `mechanical.quadRings` | Templates | `mechanical.quadRings.radialGland` |
 | Mechanical engineering | `mechanical.lipSeals` | Templates | `mechanical.lipSeals.speed` |
-| Mechanical engineering | `mechanical.hexScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.heavyHexScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.socketHeadScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.lowHeadScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.buttonHeadScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.flatHeadScrews` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.hexNuts` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.washers` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.boltGrades` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.discSpringSizes` | Data, not a template: owner's decision |  |
-| Mechanical engineering | `mechanical.pipeSizes` | Data, not a template: owner's decision |  |
+| Mechanical engineering | `mechanical.hexScrews` | Templates | `mechanical.tables.asme.hexBolt`, `mechanical.tables.asme.hexCapScrew`, `mechanical.tables.iso.hexBolt` |
+| Mechanical engineering | `mechanical.heavyHexScrews` | Templates | `mechanical.tables.asme.heavyHexBolt`, `mechanical.tables.asme.heavyHexScrew`, `mechanical.tables.asme.structuralBolt`, `mechanical.tables.iso.heavyHexBolt` |
+| Mechanical engineering | `mechanical.socketHeadScrews` | Templates | `mechanical.tables.asme.socketHeadCapScrew`, `mechanical.tables.iso.socketHeadCapScrew` |
+| Mechanical engineering | `mechanical.lowHeadScrews` | Templates | `mechanical.tables.asme.lowHeadCapScrew`, `mechanical.tables.din.lowHeadCapScrew` |
+| Mechanical engineering | `mechanical.buttonHeadScrews` | Templates | `mechanical.tables.asme.buttonHeadCapScrew`, `mechanical.tables.iso.buttonHeadCapScrew`, `mechanical.tables.iso.flangedButtonHeadCapScrew` |
+| Mechanical engineering | `mechanical.flatHeadScrews` | Templates | `mechanical.tables.asme.flatHeadCapScrew`, `mechanical.tables.iso.flatHeadCapScrew` |
+| Mechanical engineering | `mechanical.hexNuts` | Templates | `mechanical.tables.asme.heavyHexJamNut`, `mechanical.tables.asme.heavyHexNut`, `mechanical.tables.asme.hexJamNut`, `mechanical.tables.asme.hexNut`, `mechanical.tables.iso.heavyHexNut`, `mechanical.tables.iso.hexNut`, `mechanical.tables.iso.thinNut` |
+| Mechanical engineering | `mechanical.washers` | Templates | `mechanical.tables.asme.metricWasherNarrow`, `mechanical.tables.asme.metricWasherRegular`, `mechanical.tables.asme.metricWasherWide`, `mechanical.tables.asme.washerTypeAN`, `mechanical.tables.asme.washerTypeAOther`, `mechanical.tables.asme.washerTypeAW`, `mechanical.tables.asme.washerTypeBN`, `mechanical.tables.asme.washerTypeBR`, `mechanical.tables.asme.washerTypeBW`, `mechanical.tables.astm.f436Washer`, `mechanical.tables.iso.washerExtraLarge`, `mechanical.tables.iso.washerLarge`, `mechanical.tables.iso.washerNormal`, `mechanical.tables.iso.washerSmall` |
+| Mechanical engineering | `mechanical.boltGrades` | Templates | `mechanical.tables.boltGrades.astmPressure`, `mechanical.tables.boltGrades.astmStructural`, `mechanical.tables.boltGrades.f593`, `mechanical.tables.boltGrades.iso898`, `mechanical.tables.boltGrades.sae` |
+| Mechanical engineering | `mechanical.discSpringSizes` | Templates | `mechanical.tables.en16983.seriesA`, `mechanical.tables.en16983.seriesB`, `mechanical.tables.en16983.seriesC` |
+| Mechanical engineering | `mechanical.pipeSizes` | Templates | `mechanical.tables.pipe.stainless`, `mechanical.tables.pipe.steel`, `mechanical.tables.pipe.steelLarge` |
 | Machining | `mechanical.turning` | Not started |  |
 | Machining | `mechanical.milling` | Not started |  |
 | Machining | `mechanical.drilling` | Not started |  |
@@ -980,36 +980,36 @@ A calculator has "Templates" once at least one built-in template names it in `fr
 | Machining | `mechanical.speedTables` | Not started |  |
 | Machining | `machining.gcodeInterpreter` | Not started |  |
 | Machining | `machining.gcodeDictionary` | Not started |  |
-| Structural engineering | `structural.loadCombinations` | Not started |  |
-| Structural engineering | `structural.snow` | Not started |  |
-| Structural engineering | `structural.seismic` | Not started |  |
-| Structural engineering | `structural.beam` | Templates | `structural.beams.simpleUniformDiagrams` |
-| Structural engineering | `structural.frames` | Not started |  |
-| Structural engineering | `structural.catenary` | Not started |  |
-| Structural engineering | `structural.sectionBuilder` | Not started |  |
-| Structural engineering | `structural.tensileFrequency` | Not started |  |
-| Structural engineering | `structural.tensileElongation` | Not started |  |
+| Structural engineering | `structural.loadCombinations` | Templates | `structural.loads.combinations` |
+| Structural engineering | `structural.snow` | Templates | `structural.snow.roof`, `structural.snow.stepDrift` |
+| Structural engineering | `structural.seismic` | Templates | `structural.seismic.baseShear`, `structural.seismic.verticalDistribution` |
+| Structural engineering | `structural.beam` | Templates | `structural.beams.cantileverPointLoad`, `structural.beams.cantileverUniform`, `structural.beams.fixedPointLoad`, `structural.beams.fixedUniform`, `structural.beams.proppedPointLoad`, `structural.beams.proppedUniform`, `structural.beams.simplePointLoad`, `structural.beams.simpleTriangular`, `structural.beams.simpleUniformDiagrams`, `structural.beams.twoSpanUniform` |
+| Structural engineering | `structural.frames` | Templates | `structural.frames.portalFixed`, `structural.frames.portalPinned` |
+| Structural engineering | `structural.catenary` | Templates | `structural.catenary.horizontalTension`, `structural.catenary.lengthGiven`, `structural.catenary.sagGiven` |
+| Structural engineering | `structural.sectionBuilder` | Templates | `structural.sections.builtUpRectangles`, `structural.sections.iBeamUnequalFlanges` |
+| Structural engineering | `structural.tensileFrequency` | Templates | `structural.tensile.modesAtTension`, `structural.tensile.tensionFromFrequency`, `structural.tensile.tensionFromFrequencyClamped` |
+| Structural engineering | `structural.tensileElongation` | Templates | `structural.tensile.elongation` |
 | Structural engineering | `structural.bolts` | Templates | `structural.bolts.shearTension` |
-| Structural engineering | `structural.boltedPlate` | Not started |  |
-| Structural engineering | `structural.filletWelds` | Not started |  |
-| Structural engineering | `structural.grooveWelds` | Not started |  |
-| Structural engineering | `structural.basePlates` | Not started |  |
-| Structural engineering | `structural.plateBuckling` | Not started |  |
+| Structural engineering | `structural.boltedPlate` | Templates | `structural.boltedPlate.tension` |
+| Structural engineering | `structural.filletWelds` | Templates | `structural.welds.filletStrength` |
+| Structural engineering | `structural.grooveWelds` | Templates | `structural.grooveWelds.cjp`, `structural.grooveWelds.flare`, `structural.grooveWelds.pjp` |
+| Structural engineering | `structural.basePlates` | Templates | `structural.basePlates.concentric` |
+| Structural engineering | `structural.plateBuckling` | Templates | `structural.plateBuckling.compressionSS`, `structural.plateBuckling.general`, `structural.plateBuckling.shear` |
 | Structural engineering | `structural.columnBuckling` | Templates | `mechanical.columns.eulerJohnson` |
-| Structural engineering | `structural.columnEccentric` | Not started |  |
-| Structural engineering | `structural.columnSlenderness` | Not started |  |
+| Structural engineering | `structural.columnEccentric` | Templates | `structural.column.secant` |
+| Structural engineering | `structural.columnSlenderness` | Templates | `structural.column.alignmentK`, `structural.column.slenderness` |
 | Structural engineering | `structural.steelMember` | Templates | `structural.steel.flexureF2` |
-| Structural engineering | `structural.stainlessMember` | Not started |  |
-| Structural engineering | `structural.aluminumMember` | Not started |  |
-| Structural engineering | `structural.lateralBuckling` | Not started |  |
-| Structural engineering | `structural.aiscShapes` | Not started |  |
-| Structural engineering | `structural.enShapes` | Not started |  |
-| Structural engineering | `structural.coldFormedShapes` | Not started |  |
-| Structural engineering | `structural.admShapes` | Not started |  |
-| Structural engineering | `structural.windVelocity` | Not started |  |
-| Structural engineering | `structural.windBuilding` | Not started |  |
-| Structural engineering | `structural.windComponents` | Not started |  |
-| Structural engineering | `structural.windOther` | Not started |  |
+| Structural engineering | `structural.stainlessMember` | Templates | `structural.stainless.compressionE3`, `structural.stainless.compressionRectHSS`, `structural.stainless.flexureF2`, `structural.stainless.shearWeb` |
+| Structural engineering | `structural.aluminumMember` | Templates | `structural.aluminum.compressionIBeam`, `structural.aluminum.compressionRoundTube`, `structural.aluminum.flexureIBeam` |
+| Structural engineering | `structural.lateralBuckling` | Templates | `structural.ltb.cbF1`, `structural.ltb.elasticMcr`, `structural.ltb.rectBarF11` |
+| Structural engineering | `structural.aiscShapes` | Templates | `structural.tables.aisc.2l`, `structural.tables.aisc.c`, `structural.tables.aisc.hp`, `structural.tables.aisc.hss`, `structural.tables.aisc.hssRound`, `structural.tables.aisc.l`, `structural.tables.aisc.m`, `structural.tables.aisc.mc`, `structural.tables.aisc.mt`, `structural.tables.aisc.pipe`, `structural.tables.aisc.s`, `structural.tables.aisc.st`, `structural.tables.aisc.w`, `structural.tables.aisc.wt` |
+| Structural engineering | `structural.enShapes` | Templates | `structural.tables.en.hd`, `structural.tables.en.heA`, `structural.tables.en.heAA`, `structural.tables.en.heB`, `structural.tables.en.heM`, `structural.tables.en.heX`, `structural.tables.en.hl`, `structural.tables.en.hp`, `structural.tables.en.ipe`, `structural.tables.en.ipeA`, `structural.tables.en.ipeAA`, `structural.tables.en.ipeO`, `structural.tables.en.ipeV`, `structural.tables.en.ipn`, `structural.tables.en.l`, `structural.tables.en.lu`, `structural.tables.en.pfc`, `structural.tables.en.ub`, `structural.tables.en.uc`, `structural.tables.en.upe`, `structural.tables.en.upn` |
+| Structural engineering | `structural.coldFormedShapes` | Templates | `structural.tables.sfia.hatFurringChannels`, `structural.tables.sfia.nonStructuralStuds`, `structural.tables.sfia.structuralStuds`, `structural.tables.sfia.tracks`, `structural.tables.sfia.uChannels` |
+| Structural engineering | `structural.admShapes` | Templates | `structural.tables.adm.table11`, `structural.tables.adm.table12`, `structural.tables.adm.table13`, `structural.tables.adm.table14`, `structural.tables.adm.table15`, `structural.tables.adm.table16`, `structural.tables.adm.table17`, `structural.tables.adm.table18`, `structural.tables.adm.table20`, `structural.tables.adm.table21`, `structural.tables.adm.table22`, `structural.tables.adm.table23`, `structural.tables.adm.table24`, `structural.tables.adm.table4`, `structural.tables.adm.table5`, `structural.tables.adm.table6`, `structural.tables.adm.table7`, `structural.tables.adm.table8`, `structural.tables.adm.table9` |
+| Structural engineering | `structural.windVelocity` | Templates | `structural.wind.topographicFactor`, `structural.wind.velocityPressure` |
+| Structural engineering | `structural.windBuilding` | Templates | `structural.wind.gustRigid`, `structural.wind.mwfrsDirectional` |
+| Structural engineering | `structural.windComponents` | Templates | `structural.wind.componentsLowRise` |
+| Structural engineering | `structural.windOther` | Templates | `structural.wind.solidSign`, `structural.wind.structureForce`, `structural.wind.trussedTower` |
 | Thermal engineering | `thermal.steamTables` | Not started |  |
 | Thermal engineering | `thermal.refrigerants` | Not started |  |
 | Thermal engineering | `thermal.idealGases` | Not started |  |

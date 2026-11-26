@@ -9,16 +9,20 @@
   import { onMount } from "svelte";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { api, type SnippetDetails, type TemplateCell, type TemplateDetail, type TemplateSummary } from "./api";
-  import { categoriesOf, findTemplates, proseSummary, type Which } from "./templateRef";
+  import { categoriesOf, findTemplates, groupOf, proseSummary, type Which } from "./templateRef";
   import SnippetDialog from "./SnippetDialog.svelte";
   import LibraryDialog from "./LibraryDialog.svelte";
+  import TablePicker from "./TablePicker.svelte";
 
   let {
     editable,
     oninsert,
     selection,
+    tables = false,
   }: {
     editable: boolean;
+    /** The Tables tab: table templates only (ADR-0027); the Templates tab lists the rest. */
+    tables?: boolean;
     oninsert: (t: TemplateDetail) => Promise<void> | void;
     /** The editor's selected blocks, as cells. */
     selection: () => TemplateCell[];
@@ -55,9 +59,9 @@
     search?.focus();
   });
 
-  const listed = $derived(all ? findTemplates(all, query, category, which, showHidden) : []);
-  const categories = $derived(all ? categoriesOf(all) : []);
-  const hiddenCount = $derived(all?.filter((t) => t.hidden).length ?? 0);
+  const listed = $derived(all ? findTemplates(all, query, category, which, showHidden, tables) : []);
+  const categories = $derived(all ? categoriesOf(all, tables) : []);
+  const hiddenCount = $derived(all?.filter((t) => t.hidden && t.isTable === tables).length ?? 0);
 
   async function show(key: string) {
     error = null;
@@ -91,6 +95,21 @@
     error = null;
     try {
       await oninsert(detail);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** A table template's row (ADR-0027): its cells come from the backend, then insert as a
+   *  template does. */
+  async function insertRow(row: string, columns: string[] | undefined) {
+    if (!detail) return;
+    busy = true;
+    error = null;
+    try {
+      await oninsert(await api.templateRow(detail.key, row, columns));
     } catch (e) {
       error = String(e);
     } finally {
@@ -171,7 +190,7 @@
   {@const d = detail}
   <div class="page">
     <div class="nav">
-      <button class="link" onmousedown={keep} onclick={() => (detail = null)}>‹ All templates</button>
+      <button class="link" onmousedown={keep} onclick={() => (detail = null)}>‹ All {tables ? "tables" : "templates"}</button>
     </div>
     <div class="body">
       <h3>{d.title}</h3>
@@ -182,8 +201,10 @@
       {#if d.summary}<p class="sum">{d.summary}</p>{/if}
 
       <div class="actions">
-        <button class="primary" disabled={!editable || busy || d.problems.length > 0} onmousedown={keep} onclick={insert}
-          title={editable ? "Insert its cells after the current block (names are checked first)" : "Open the latest version to insert"}>Insert</button>
+        {#if !d.table}
+          <button class="primary" disabled={!editable || busy || d.problems.length > 0} onmousedown={keep} onclick={insert}
+            title={editable ? "Insert its cells after the current block (names are checked first)" : "Open the latest version to insert"}>Insert</button>
+        {/if}
         <button onmousedown={keep} disabled={busy} onclick={() => act(() => api.templateDuplicate(d.key), "Duplicated into your library.")}
           title="Copy it into your library under a new id, to change it">Duplicate</button>
         {#if d.library === "user"}
@@ -204,6 +225,10 @@
           <strong>This template has problems, so it can't be inserted:</strong>
           <ul>{#each d.problems as p}<li>{p}</li>{/each}</ul>
         </div>
+      {/if}
+
+      {#if d.table && d.problems.length === 0}
+        <TablePicker table={d.table} {editable} {busy} oninsert={insertRow} />
       {/if}
 
       {#if d.inputs.length || d.outputs.length}
@@ -243,7 +268,9 @@
         </ul>
       {/if}
 
-      <h4>Cells <span class="muted small">({d.cells.length})</span></h4>
+      {#if !d.table || d.cells.length}
+        <h4>{d.table ? "After the values" : "Cells"} <span class="muted small">({d.cells.length})</span></h4>
+      {/if}
       <div class="cells">
         {#each d.cells as c, i (i)}
           {#if c.kind === "prose"}
@@ -264,10 +291,10 @@
   </div>
 {:else}
   <div class="tools">
-    <input bind:this={search} type="search" placeholder="Find a template: bolt, psychrometrics, beam…" aria-label="Find a template" bind:value={query} />
+    <input bind:this={search} type="search" placeholder={tables ? "Find a table: hex nut, washer, W shapes, pipe…" : "Find a template: bolt, psychrometrics, beam…"} aria-label={tables ? "Find a table" : "Find a template"} bind:value={query} />
     <div class="row">
       <select aria-label="Category" bind:value={category}>
-        <option value={null}>All categories</option>
+        <option value={null}>{tables ? "All parts" : "All categories"}</option>
         {#each categories as c (c)}<option value={c}>{c}</option>{/each}
       </select>
       <select aria-label="Library" bind:value={which}>
@@ -292,7 +319,7 @@
         {#if t.hidden}<span class="badge">hidden</span>{/if}
         {#if t.error}<span class="badge err">doesn't read</span>{/if}
         <span class="sum small">{t.error ?? t.summary ?? ""}</span>
-        {#if !category && t.category.length}<span class="cat small muted">{t.category.join(" › ")}</span>{/if}
+        {#if !category && t.category.length}<span class="cat small muted">{tables ? groupOf(t, true) : t.category.join(" › ")}</span>{/if}
       </button>
     {/each}
   </div>
@@ -300,7 +327,9 @@
     {#if error}<p class="small err">{error}</p>{/if}
     {#if note}<p class="small ok">{note}</p>{/if}
     <div class="row">
-      <button onmousedown={keep} disabled={!editable} onclick={newSnippet} title="Save the selected cells as a snippet in your library">Save selection as snippet…</button>
+      {#if !tables}
+        <button onmousedown={keep} disabled={!editable} onclick={newSnippet} title="Save the selected cells as a snippet in your library">Save selection as snippet…</button>
+      {/if}
       <span class="spacer"></span>
       {#if hiddenCount}<label class="small muted"><input type="checkbox" bind:checked={showHidden} /> hidden ({hiddenCount})</label>{/if}
       <button onmousedown={keep} onclick={() => (library = true)}>Library…</button>

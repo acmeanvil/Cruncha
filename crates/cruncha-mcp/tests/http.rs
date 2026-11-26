@@ -126,6 +126,7 @@ impl Backend for Fake {
             t("structural.beam", "Simply supported beam", &["AISC 360"], &["w", "L"]),
             t("structural.bolts", "Bolt shear", &["AISC 360"], &["d_b"]),
             t("fluids.pipe", "Pipe friction", &["Colebrook"], &["D"]),
+            TemplateInfo { table: true, ..t("mechanical.tables.nuts", "Hex nuts", &["nut"], &[]) },
         ])
     }
 
@@ -135,6 +136,11 @@ impl Backend for Fake {
     }
 
     async fn propose_template(&self, insert: TemplateInsert) -> Result<ProposalInfo, String> {
+        if insert.id == "mechanical.tables.nuts" {
+            assert_eq!(insert.row.as_deref(), Some("M8"));
+            assert_eq!(insert.columns, Some(vec!["s_max".to_string()]));
+            return Ok(ProposalInfo { id: "P3".into(), status: "open".into(), message: insert.message, ..Default::default() });
+        }
         if insert.rename.get("M").map(String::as_str) != Some("M2") {
             return Err("this document already defines M; insert again with rename, e.g. {\"M\": \"M2\"}".into());
         }
@@ -225,6 +231,12 @@ async fn tools_over_http() {
         "id": "structural.beam", "message": "beam", "bindings": {"L": "L"}, "rename": {"M": "M2"}
     })).await);
     assert!(p.contains("Proposal P2 recorded"), "{p}");
+    let nuts = text(&call("templates", serde_json::json!({"query": "nuts"})).await);
+    assert!(nuts.contains("table: insert a row with propose_template's `row`"), "{nuts}");
+    let p = text(&call("propose_template", serde_json::json!({
+        "id": "mechanical.tables.nuts", "message": "the nut", "row": "M8", "columns": ["s_max"]
+    })).await);
+    assert!(p.contains("Proposal P3 recorded"), "{p}");
 
     let bad = call("explain", serde_json::json!({"cell_id": "nope"})).await;
     assert_eq!(bad.is_error, Some(true));

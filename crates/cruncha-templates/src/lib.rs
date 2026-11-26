@@ -14,11 +14,17 @@
 //! examples with Cruncha's own calc engine ([`run_tests`]; code cells through a
 //! [`CodeRunner`], [`run_tests_with`]). Inserting a template into a document (renames,
 //! provenance) is the app's (ADR-0014 §3).
+//!
+//! A table template (ADR-0027) also has a `[table]`: a standard's size table. A row picked
+//! from it inserts as one calc per column, then the cells ([`table_cells`]).
 
 use std::collections::BTreeMap;
 
 use cruncha_eval::{Num, Options, Plain, UnitAware, Vars};
 use serde::{Deserialize, Serialize};
+
+mod table;
+pub use table::{Column, Table, Value, table_cells};
 
 /// The format version this crate reads (`cruncha-template = 1`).
 pub const FORMAT: u32 = 1;
@@ -57,6 +63,10 @@ pub struct Manifest {
     pub references: Vec<Reference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<TestCase>,
+    /// A table template's size table (ADR-0027): the user picks a row, which inserts as calcs
+    /// before the cells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<Table>,
 }
 
 /// A source: a work, its edition and where in it.
@@ -277,7 +287,7 @@ pub fn parse(text: &str) -> Result<Template, String> {
     Ok(Template { manifest, cells })
 }
 
-fn opts() -> Options {
+pub(crate) fn opts() -> Options {
     Options { unit_aware: UnitAware::Always, ..Options::default() }
 }
 
@@ -312,6 +322,14 @@ pub fn validate(t: &Template) -> Vec<String> {
     }
     if m.title.trim().is_empty() {
         problems.push("the title is empty".into());
+    }
+    // A table template's cells read the row's values: checked with rows (ADR-0027 §4).
+    if let Some(table) = &m.table {
+        problems.extend(table::validate_table(t, table));
+        if !m.inputs.is_empty() || !m.tests.is_empty() {
+            problems.push("a table template has no inputs or worked examples: its rows are its values".into());
+        }
+        return problems;
     }
     let defines = calc_defines(t);
     let defined_by = |name: &str| defines.iter().find(|(_, d)| d.iter().any(|n| n == name)).map(|(i, _)| *i);

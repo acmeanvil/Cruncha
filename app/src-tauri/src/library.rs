@@ -10,7 +10,7 @@
 //! `.trash/` in the user's library, until the trash is emptied. Built-in templates can only
 //! be hidden (by id, in the preferences).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -46,6 +46,8 @@ pub struct TemplateSummary {
     pub outputs: Vec<String>,
     /// Hidden by the user (built-in templates only).
     pub hidden: bool,
+    /// A table template (ADR-0027): the user picks a row to insert.
+    pub is_table: bool,
     /// Why the file doesn't read (the other fields are then empty but `title`, its name).
     pub error: Option<String>,
 }
@@ -94,6 +96,58 @@ pub struct TemplateDetail {
     /// What validation found wrong (empty: valid).
     pub problems: Vec<String>,
     pub cells: Vec<CellView>,
+    /// A table template's table (ADR-0027); `cells` are then what follows a row's values.
+    pub table: Option<TableView>,
+    /// The row these cells insert, once one is picked (`template_row`).
+    pub row: Option<String>,
+}
+
+/// A table template's table as the Templates tab shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableView {
+    pub unit: String,
+    pub row_label: String,
+    pub part: String,
+    pub source: String,
+    pub notes: Vec<String>,
+    pub columns: Vec<ColumnView>,
+    /// Each row as shown: the designation, then a value per column (`""`: none given).
+    pub rows: Vec<Vec<String>>,
+    pub row_notes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnView {
+    pub heading: String,
+    pub description: String,
+    pub unit: Option<String>,
+    pub var: String,
+    pub text: bool,
+}
+
+fn table_view(t: &cruncha_templates::Table) -> TableView {
+    TableView {
+        unit: t.unit.clone(),
+        row_label: t.row_label.clone(),
+        part: t.part.clone(),
+        source: t.source.clone(),
+        notes: t.notes.clone(),
+        columns: t
+            .columns
+            .iter()
+            .map(|c| ColumnView {
+                heading: c.heading(),
+                description: c.description(),
+                unit: c.unit.clone(),
+                var: c.var.clone(),
+                text: c.kind == "text",
+            })
+            .collect(),
+        rows: t.rows.iter().map(|r| r.iter().map(|v| v.display()).collect()).collect(),
+        row_notes: t.row_notes.clone(),
+    }
 }
 
 /// A snippet's title, summary, category and tags (Save as snippet, Edit details).
@@ -208,6 +262,7 @@ impl Library {
                     inputs: m.inputs.clone(),
                     outputs: m.outputs.clone(),
                     hidden: library == "builtin" && hidden.contains(&m.id),
+                    is_table: m.table.is_some(),
                     error: None,
                 }
             }
@@ -224,6 +279,7 @@ impl Library {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
                 hidden: false,
+                is_table: false,
                 error: Some(err.clone()),
             },
         }
@@ -293,7 +349,19 @@ impl Library {
             tests,
             problems: cruncha_templates::validate(&t),
             cells: t.cells.iter().map(cell_view).collect(),
+            table: m.table.as_ref().map(table_view),
+            row: None,
         })
+    }
+
+    /// A table template's detail with the cells `size` inserts (ADR-0027 §2): its line, the
+    /// values of `columns` (all when `None`), then the template's own cells.
+    pub fn row_detail(&self, key: &str, size: &str, columns: Option<&[String]>, hidden: &BTreeSet<String>) -> Result<TemplateDetail> {
+        let mut d = self.detail(key, hidden)?;
+        let (_, _, t) = self.read(key)?;
+        d.cells = cruncha_templates::table_cells(&t, size, columns)?.iter().map(cell_view).collect();
+        d.row = Some(size.to_owned());
+        Ok(d)
     }
 
     /// Ids in either library.
@@ -350,6 +418,7 @@ impl Library {
             outputs: Vec::new(),
             references: Vec::new(),
             tests: Vec::new(),
+            table: None,
         })
     }
 
@@ -535,7 +604,7 @@ mod tests {
         let det = l.detail(&bolts.key, &BTreeSet::new()).unwrap();
         assert!(det.problems.is_empty(), "{:?}", det.problems);
         assert!(!det.tests.is_empty() && det.tests.iter().all(|t| t.passed), "{:?}", det.tests);
-        assert_eq!(det.cells.iter().find(|c| c.kind == "calc").unwrap().attrs["description"], "Nominal bolt diameter");
+        assert!(det.cells.iter().any(|c| c.kind == "calc" && c.attrs["description"] == "Nominal bolt diameter"));
         let hidden = BTreeSet::from([bolts.id.clone()]);
         assert!(l.list(&hidden).iter().find(|t| t.id == bolts.id).unwrap().hidden);
         assert!(l.delete(&bolts.key).is_err(), "built-in templates can't be deleted");

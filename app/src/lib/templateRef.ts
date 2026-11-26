@@ -9,22 +9,28 @@ function words(s: string): string[] {
   return s.toLowerCase().normalize("NFKD").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
+/** The category a list groups by: the first level, or for tables (ADR-0027) the last, the
+ *  kind of part ("Nuts", "Pipe"). */
+export const groupOf = (t: TemplateSummary, tables = false): string | undefined => (tables ? t.category.at(-1) : t.category[0]);
+
 /** Templates matching `query` (every word found in the title, summary, tags, category, id or
- *  names), in `category` (the first level) and library; hidden ones only when asked. The
- *  title matches first, then the rest; otherwise by title. */
+ *  names), in `category` (see `groupOf`) and library; hidden ones only when asked; table
+ *  templates only, or none of them. The title matches first, then the rest; otherwise by title. */
 export function findTemplates(
   all: TemplateSummary[],
   query: string,
   category: string | null,
   which: Which,
   showHidden = false,
+  tables = false,
 ): TemplateSummary[] {
   const q = words(query);
   const scored: [number, TemplateSummary][] = [];
   for (const t of all) {
     if (which !== "all" && t.library !== which) continue;
     if (t.hidden && !showHidden) continue;
-    if (category && t.category[0] !== category) continue;
+    if (t.isTable !== tables) continue;
+    if (category && groupOf(t, tables) !== category) continue;
     if (q.length) {
       const title = words(t.title);
       const rest = words([t.summary ?? "", ...t.tags, ...t.category, t.id, ...t.inputs, ...t.outputs].join(" "));
@@ -44,9 +50,10 @@ export function findTemplates(
     .map(([, t]) => t);
 }
 
-/** First-level categories, sorted (templates without one are under "Other"). */
-export function categoriesOf(all: TemplateSummary[]): string[] {
-  return [...new Set(all.map((t) => t.category[0]).filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b));
+/** The categories to group by (see `groupOf`), sorted, of table templates or of the others. */
+export function categoriesOf(all: TemplateSummary[], tables = false): string[] {
+  const of = all.filter((t) => t.isTable === tables).map((t) => groupOf(t, tables));
+  return [...new Set(of.filter((c): c is string => !!c))].sort((a, b) => a.localeCompare(b));
 }
 
 interface PMNode {
@@ -81,3 +88,17 @@ export const splitList = (s: string, sep: string) =>
     .split(sep)
     .map((x) => x.trim())
     .filter(Boolean);
+
+/** A table's rows whose designation (or, failing that, any value) has every word of `query`,
+ *  as their indices. `"1/2"` finds `1/2` and `1 1/2`; `m8` finds `M8`. */
+export function filterRows(rows: string[][], query: string): number[] {
+  const q = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const out: number[] = [];
+  rows.forEach((r, i) => {
+    if (!q.length) return out.push(i);
+    const size = r[0].toLowerCase();
+    const all = r.join(" ").toLowerCase();
+    if (q.every((w) => size.includes(w)) || q.every((w) => all.includes(w))) out.push(i);
+  });
+  return out;
+}

@@ -481,6 +481,11 @@ impl Session {
         self.library().detail(key, &self.hidden_templates())
     }
 
+    /// A table template's detail with the cells a row inserts (ADR-0027 §2).
+    pub fn template_row(&self, key: &str, size: &str, columns: Option<&[String]>) -> Result<crate::library::TemplateDetail> {
+        self.library().row_detail(key, size, columns, &self.hidden_templates())
+    }
+
     /// A template's file as it is.
     pub fn template_text(&self, key: &str) -> Result<String> {
         self.library().text(key)
@@ -500,15 +505,29 @@ impl Session {
     /// A template's cells for the selected document (ADR-0014 §3, §7), as a proposal's
     /// inserts after `after`: inputs in `bindings` (input → the document's name) lose their
     /// definition and read the document's name, `rename` renames other names, and any name
-    /// still clashing with the document's is refused with suggestions.
+    /// still clashing with the document's is refused with suggestions. A table template
+    /// (ADR-0027) inserts `row`'s values of `columns` (all when `None`) before its cells.
+    #[allow(clippy::too_many_arguments)]
     pub async fn template_edits(
         &mut self,
         id: &str,
         bindings: &BTreeMap<String, String>,
         rename: &BTreeMap<String, String>,
         after: Option<String>,
+        row: Option<&str>,
+        columns: Option<&[String]>,
     ) -> Result<(crate::library::TemplateDetail, Vec<cruncha_mcp::Edit>)> {
-        let t = self.template_by_id(id)?;
+        let mut t = self.template_by_id(id)?;
+        match (&t.table, row) {
+            (Some(_), Some(size)) => t = self.template_row(&t.summary.key, size, columns)?,
+            (Some(table), None) => {
+                let sizes: Vec<&str> = table.rows.iter().take(8).map(|r| r[0].as_str()).collect();
+                return Err(format!("{id} is a table: give the row to insert (e.g. {})", sizes.join(", ")));
+            }
+            (None, Some(_)) => return Err(format!("{id} isn't a table template, so it takes no row")),
+            (None, None) if columns.is_some() => return Err(format!("{id} isn't a table template, so it takes no columns")),
+            (None, None) => {}
+        }
         if !t.problems.is_empty() {
             return Err(format!("template {id} doesn't validate: {}", t.problems.join("; ")));
         }
@@ -2291,16 +2310,16 @@ mod tests {
         let bolts = "structural.bolts.shearTension";
         let none = BTreeMap::new();
 
-        let e = session.template_edits(bolts, &none, &none, None).await.unwrap_err();
+        let e = session.template_edits(bolts, &none, &none, None, None, None).await.unwrap_err();
         assert!(e.contains("already defines ϕ") && e.contains("\"ϕ\": \"ϕ2\""), "{e}");
         let bad: BTreeMap<String, String> = [("A_b".to_owned(), "V".to_owned())].into();
-        assert!(session.template_edits(bolts, &bad, &none, None).await.unwrap_err().contains("isn't an input"));
+        assert!(session.template_edits(bolts, &bad, &none, None, None, None).await.unwrap_err().contains("isn't an input"));
         let bad: BTreeMap<String, String> = [("V_u".to_owned(), "nope".to_owned())].into();
-        assert!(session.template_edits(bolts, &bad, &none, None).await.unwrap_err().contains("doesn't define nope"));
+        assert!(session.template_edits(bolts, &bad, &none, None, None, None).await.unwrap_err().contains("doesn't define nope"));
 
         let bind: BTreeMap<String, String> = [("V_u".to_owned(), "V".to_owned())].into();
         let rename: BTreeMap<String, String> = [("ϕ".to_owned(), "ϕ2".to_owned())].into();
-        let (t, edits) = session.template_edits(bolts, &bind, &rename, None).await.unwrap();
+        let (t, edits) = session.template_edits(bolts, &bind, &rename, None, None, None).await.unwrap();
         let sources: Vec<&str> = edits
             .iter()
             .rev()
@@ -2323,6 +2342,43 @@ mod tests {
         assert!(r[&f_rv.id].error.is_none(), "{:?}", r[&f_rv.id]);
         assert!(f_rv.reads.contains(&"V".to_string()));
         assert!(session.history().await.unwrap()[0].message.contains("Insert template Bolt shear and tension"));
+    }
+
+    #[tokio::test]
+    async fn an_agent_inserts_a_row_of_a_table_template() {
+        use cruncha_mcp::Edit;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("beam.cruncha");
+        let mut session = Session::new(None);
+        session.create_sample(&path).await.unwrap();
+        let nuts = "mechanical.tables.iso.hexNut";
+        let none = BTreeMap::new();
+        let e = session.template_edits(nuts, &none, &none, None, None, None).await.unwrap_err();
+        assert!(e.contains("is a table: give the row") && e.contains("M1.6"), "{e}");
+        let bolts = "structural.bolts.shearTension";
+        assert!(session.template_edits(bolts, &none, &none, None, Some("M8"), None).await.unwrap_err().contains("takes no row"));
+        assert!(session.template_edits(nuts, &none, &none, None, Some("M7"), None).await.unwrap_err().contains("has no size \"M7\""));
+
+        let cols = ["s_max".to_owned(), "m_max".to_owned()];
+        let (t, edits) = session.template_edits(nuts, &none, &none, None, Some("M8"), Some(&cols)).await.unwrap();
+        assert_eq!(t.row.as_deref(), Some("M8"));
+        let sources: Vec<String> = edits
+            .iter()
+            .rev()
+            .map(|e| match e {
+                Edit::Insert { source, .. } => source.clone(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(sources.len(), 3, "{sources:?}");
+        assert!(sources[0].starts_with("Hex nut, style 1 M8 · "), "{sources:?}");
+        assert_eq!(sources[1..], ["s_max = 13 mm", "m_max = 6.8 mm"]);
+        let p = session.propose("ai:claude", None, "M8 nut", edits).await.unwrap();
+        session.accept_proposal(&p.id, false).await.unwrap();
+        let cells = session.cells(None).await.unwrap();
+        let r = session.results(&At::default()).await.unwrap();
+        let s = cells.iter().find(|c| c.defines.contains(&"s_max".to_string())).unwrap();
+        assert!(r[&s.id].error.is_none() && r[&s.id].text.contains("13"), "{:?}", r[&s.id]);
     }
 
     #[tokio::test]

@@ -51,7 +51,8 @@ fn every_built_in_template_is_valid_and_passes_its_examples() {
         for p in cruncha_templates::validate(&t) {
             failures.push(format!("{name}: {p}"));
         }
-        if t.manifest.tests.is_empty() {
+        // A table template's rows are its values, each checked by validate (ADR-0027 §4).
+        if t.manifest.tests.is_empty() && t.manifest.table.is_none() {
             failures.push(format!("{name}: a built-in template carries at least one worked example"));
         }
         let runner = py.as_mut().map(|r| r as &mut dyn cruncha_templates::CodeRunner);

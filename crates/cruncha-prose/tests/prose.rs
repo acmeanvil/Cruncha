@@ -138,6 +138,11 @@ fn fence_attributes_go_with_the_cell() {
     assert_eq!(attrs.get("description").map(String::as_str), Some("Moments"));
     assert_eq!(attrs.get("hidden").map(String::as_str), Some(""));
     assert_eq!(fence_info("calc{description=\"a \\\"quoted\\\" word\"}").1["description"], "a \"quoted\" word");
+    // A hand-typed `\"` reaches fence_info as a bare quote (CommonMark unescapes the info
+    // string): a quote inside the value stays in it.
+    let (_, a) = fence_info(r#"calc {description="Exposure "B", rough" x=1, flag}"#);
+    assert_eq!((a["description"].as_str(), a["x"].as_str(), a["flag"].as_str()), ("Exposure \"B\", rough", "1", ""));
+    assert_eq!(fence_info(r#"calc {description="ends "here""}"#).1["description"], "ends \"here\"");
 }
 
 #[test]

@@ -222,6 +222,8 @@ pub struct TemplateInfo {
     pub inputs: Vec<String>,
     /// Names it promises.
     pub outputs: Vec<String>,
+    /// A table template (ADR-0027): a standard's size table; one row inserts as named values.
+    pub table: bool,
 }
 
 /// One template: its listing, its file and what validation found.
@@ -248,6 +250,10 @@ pub struct TemplateInsert {
     /// The cell to insert after; `None`: the start of the document.
     pub after: Option<String>,
     pub message: String,
+    /// A table template's row (its designation, ADR-0027).
+    pub row: Option<String>,
+    /// A table template's columns to insert (their names); `None`: all of them.
+    pub columns: Option<Vec<String>>,
 }
 
 /// What the app provides. Every method acts on the document open in the app; an error

@@ -87,9 +87,9 @@
   let bottomOpen = $state(false);
   let functions = $state(false);
   /** Which tab of the reference panel is showing. */
-  let refTab = $state<"functions" | "units" | "templates">("functions");
+  let refTab = $state<"functions" | "units" | "templates" | "tables">("functions");
   /** Open the reference panel on `tab`, or close it if it's already showing there. */
-  function reference(tab: "functions" | "units" | "templates") {
+  function reference(tab: "functions" | "units" | "templates" | "tables") {
     if (functions && refTab === tab) functions = false;
     else {
       refTab = tab;
@@ -491,6 +491,10 @@
       e.preventDefault();
       reference("templates");
     }
+    if (e.key.toLowerCase() === "l" && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && doc) {
+      e.preventDefault();
+      reference("tables");
+    }
     // Tabs (ADR-0024): ⌘T opens a document in a new tab; ⌘⇧[ and ⌘⇧] switch.
     if (e.key.toLowerCase() === "t" && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault();
@@ -670,6 +674,7 @@
             onfunctions={() => reference("functions")}
             onunits={() => reference("units")}
             ontemplates={() => reference("templates")}
+            ontables={() => reference("tables")}
             origin={doc ? `document:${doc.id}@v${selected.kind === "version" ? selected.version : doc.version}` : null}
             docId={doc?.id ?? null}
             stashKey={doc && selected.kind === "latest" ? `${doc.id}@${doc.version}` : null}

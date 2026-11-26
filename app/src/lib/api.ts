@@ -48,6 +48,8 @@ export interface TemplateSummary {
   inputs: string[];
   outputs: string[];
   hidden: boolean;
+  /** A table template (ADR-0027): the user picks a row to insert. */
+  isTable: boolean;
   /** Why the file doesn't read. */
   error: string | null;
 }
@@ -65,6 +67,26 @@ export interface TemplateDetail extends TemplateSummary {
   tests: { name: string; source: string | null; passed: boolean; skipped: string | null; lines: string[] }[];
   problems: string[];
   cells: TemplateCell[];
+  /** A table template's table; `cells` are then what follows a row's values. */
+  table: TableView | null;
+  /** The row `cells` insert, from `templateRow`. */
+  row: string | null;
+}
+
+/** A standard's size table (ADR-0027). */
+export interface TableView {
+  /** The length unit it prints, `in` or `mm`. */
+  unit: string;
+  rowLabel: string;
+  /** "Hex cap screw". */
+  part: string;
+  /** Standard, table and page. */
+  source: string;
+  notes: string[];
+  columns: { heading: string; description: string; unit: string | null; var: string; text: boolean }[];
+  /** Each row: the designation, then a value per column (`""`: none given). */
+  rows: string[][];
+  rowNotes: Record<string, string>;
 }
 
 export interface SnippetDetails {
@@ -669,6 +691,8 @@ export const api = {
     call<{ kind: string; source: string; attrs: Record<string, unknown> }[]>("markdown_cells", { markdown }),
   templates: () => call<TemplateSummary[]>("templates"),
   template: (key: string) => call<TemplateDetail>("template", { key }),
+  /** A table template with the cells `row` inserts: its values of `columns` (all when omitted). */
+  templateRow: (key: string, row: string, columns?: string[]) => call<TemplateDetail>("template_row", { key, row, columns }),
   templateSave: (details: SnippetDetails, cells: TemplateCell[]) => call<string>("template_save", { details, cells }),
   templateUpdateCells: (key: string, cells: TemplateCell[]) => call<string>("template_update_cells", { key, cells }),
   templateUpdateDetails: (key: string, details: SnippetDetails) => call<string>("template_update_details", { key, details }),

@@ -972,6 +972,13 @@ async fn template(key: String, s: State<'_, Shared>) -> Result<library::Template
     s.lock().await.template(&key)
 }
 
+/// A table template with the cells a row inserts (ADR-0027 §2): its line, the values of
+/// `columns` (all when omitted), then the template's own cells.
+#[tauri::command]
+async fn template_row(key: String, row: String, columns: Option<Vec<String>>, s: State<'_, Shared>) -> Result<library::TemplateDetail> {
+    s.lock().await.template_row(&key, &row, columns.as_deref())
+}
+
 /// Save cells from the editor as a new snippet; returns its key.
 #[tauri::command]
 async fn template_save(details: library::Details, cells: Vec<library::CellView>, s: State<'_, Shared>) -> Result<String> {
@@ -1201,6 +1208,7 @@ pub fn run() {
             markdown_cells,
             templates,
             template,
+            template_row,
             template_save,
             template_update_cells,
             template_update_details,

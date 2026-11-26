@@ -131,10 +131,13 @@ pub fn fence_info(info: &str) -> (String, BTreeMap<String, String>) {
         }
         while chars.next_if(|c| c.is_whitespace()).is_some() {}
         let value: String = if chars.next_if_eq(&'"').is_some() {
+            // A quote closes the value only before the end or the next `key=`: CommonMark has
+            // already undone a hand-typed `\"` in the info string, so a bare quote inside the
+            // value is the author's (`{description="the "B" exposure"}`).
             let mut v = String::new();
             while let Some(c) = chars.next() {
                 match c {
-                    '"' => break,
+                    '"' if closes(chars.clone().collect::<String>().as_str()) => break,
                     '\\' => v.extend(chars.next()),
                     c => v.push(c),
                 }
@@ -146,6 +149,23 @@ pub fn fence_info(info: &str) -> (String, BTreeMap<String, String>) {
         attrs.insert(key, value);
     }
     (lang.to_ascii_lowercase(), attrs)
+}
+
+/// Whether a quote followed by `rest` closes an attribute value: `rest` is empty, or the next
+/// attribute (`, key=…`, ` key=…`, ` flag`) follows.
+fn closes(rest: &str) -> bool {
+    let r = rest.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
+    if r.is_empty() {
+        return true;
+    }
+    if r.len() == rest.len() {
+        return false; // `"` directly followed by text: part of the value
+    }
+    let key: String = r.chars().take_while(|c| !c.is_whitespace() && *c != '=' && *c != '"').collect();
+    !key.is_empty() && {
+        let after = r[key.len()..].trim_start();
+        after.is_empty() || after.starts_with('=') || r[key.len()..].starts_with(char::is_whitespace)
+    }
 }
 
 /// A link target the editor and reports will follow: `http`, `https` or `mailto` only.
