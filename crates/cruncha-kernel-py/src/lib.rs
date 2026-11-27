@@ -3,8 +3,9 @@
 //!
 //! A [`Kernel`] is one worker process (`python/cruncha_worker`) running a document's Python
 //! cells. It answers one request at a time over its stdin and stdout ([`protocol`]). A cell
-//! that runs too long, or that the user stops, is interrupted with SIGINT (the worker reports
-//! `interrupted` and keeps its state); a worker that doesn't respond to that is killed.
+//! that runs too long, or that the user stops, is interrupted (the worker reports
+//! `interrupted` and keeps its state); a worker that doesn't respond to that is killed. The
+//! interrupt is SIGINT on Unix and an `interrupt` message on Windows ([`InterruptMode`]).
 //!
 //! Values cross as JSON in cruncha-eval's exchange form (`Plain`), kept opaque here as
 //! [`serde_json::Value`] so this crate doesn't depend on the evaluator. Images come back as
@@ -19,6 +20,7 @@ use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::BufReader;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -65,6 +67,33 @@ pub struct Config {
     pub kill_after: Duration,
     /// Run the worker in this sandbox (macOS; see [`sandbox`]). `None`: unsandboxed.
     pub sandbox: Option<sandbox::Sandbox>,
+    /// How a running cell is interrupted.
+    pub interrupt: InterruptMode,
+}
+
+/// How a running cell is interrupted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptMode {
+    /// SIGINT to the worker (Unix).
+    Signal,
+    /// An `interrupt` message on the worker's stdin, which a reader thread in the worker turns
+    /// into `KeyboardInterrupt` in the running cell (Windows has no signal to send another
+    /// process; works everywhere).
+    Message,
+}
+
+impl InterruptMode {
+    /// This platform's mode.
+    pub fn native() -> InterruptMode {
+        if cfg!(unix) { InterruptMode::Signal } else { InterruptMode::Message }
+    }
+
+    fn arg(self) -> &'static str {
+        match self {
+            InterruptMode::Signal => "signal",
+            InterruptMode::Message => "message",
+        }
+    }
 }
 
 impl Config {
@@ -74,6 +103,7 @@ impl Config {
             worker_dir: worker_dir.into(),
             kill_after: Duration::from_secs(3),
             sandbox: None,
+            interrupt: InterruptMode::native(),
         }
     }
 }
@@ -186,27 +216,60 @@ pub struct RunResult {
 }
 
 /// Interrupts a running cell from another task (the kernel itself is busy awaiting it).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Interrupter {
     pid: u32,
+    mode: InterruptMode,
+    stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
+    runtime: tokio::runtime::Handle,
 }
 
 impl Interrupter {
-    /// Send SIGINT: the running cell raises `KeyboardInterrupt`.
+    /// Interrupt the running cell: it raises `KeyboardInterrupt`.
     pub fn interrupt(&self) {
-        #[cfg(unix)]
-        // SAFETY: kill(2) with a pid we started; a stale pid only fails with ESRCH.
-        unsafe {
-            libc::kill(self.pid as libc::pid_t, libc::SIGINT);
+        match self.mode {
+            InterruptMode::Signal => {
+                #[cfg(unix)]
+                // SAFETY: kill(2) with a pid we started; a stale pid only fails with ESRCH.
+                unsafe {
+                    libc::kill(self.pid as libc::pid_t, libc::SIGINT);
+                }
+            }
+            InterruptMode::Message => {
+                let stdin = self.stdin.clone();
+                // A request writes its frames under the same lock, so this never splits one.
+                self.runtime.spawn(async move {
+                    let mut w = stdin.lock().await;
+                    let _ = protocol::write_message(&mut *w, &json!({"op": "interrupt"}), &[]).await;
+                });
+            }
         }
     }
 
     /// Kill the worker outright (it is restarted on next use).
     pub fn kill(&self) {
-        #[cfg(unix)]
-        // SAFETY: as above.
-        unsafe {
-            libc::kill(self.pid as libc::pid_t, libc::SIGKILL);
+        kill_pid(self.pid);
+    }
+}
+
+#[cfg(unix)]
+fn kill_pid(pid: u32) {
+    // SAFETY: as above.
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+fn kill_pid(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    // SAFETY: a handle to a process we started, closed after use; a stale pid fails to open.
+    unsafe {
+        let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if !h.is_null() {
+            TerminateProcess(h, 1);
+            CloseHandle(h);
         }
     }
 }
@@ -214,7 +277,7 @@ impl Interrupter {
 pub struct Kernel {
     config: Config,
     child: Child,
-    stdin: ChildStdin,
+    stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
     hello: Hello,
@@ -241,16 +304,18 @@ impl Kernel {
         // -B: no bytecode written next to the worker's sources.
         cmd.args(["-I", "-B", "-c", boot])
             .arg(&config.worker_dir)
+            .arg(config.interrupt.arg())
             .env("MPLBACKEND", "Agg")
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        env::no_window(&mut cmd);
         let mut child = cmd
             .spawn()
             .map_err(|e| Error::Start(format!("{}: {e}", config.python.display())))?;
-        let stdin = child.stdin.take().expect("piped stdin");
+        let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let mut k = Kernel {
             config,
@@ -284,6 +349,9 @@ impl Kernel {
     pub fn interrupter(&self) -> Interrupter {
         Interrupter {
             pid: self.child.id().unwrap_or(self.hello.pid),
+            mode: self.config.interrupt,
+            stdin: self.stdin.clone(),
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
@@ -296,7 +364,7 @@ impl Kernel {
         self.next_id += 1;
         let id = self.next_id;
         header["id"] = id.into();
-        protocol::write_message(&mut self.stdin, &header, &blobs)
+        protocol::write_message(&mut *self.stdin.lock().await, &header, &blobs)
             .await
             .map_err(|e| Error::Died(e.to_string()))?;
         loop {

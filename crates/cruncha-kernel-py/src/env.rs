@@ -18,6 +18,47 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+/// The app's bundle identifier (`tauri.conf.json`), the name of its data directory.
+pub const APP_ID: &str = "io.github.acmeanvil.cruncha";
+
+/// The user's home directory (`HOME`, or `USERPROFILE` on Windows).
+pub fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| if cfg!(windows) { std::env::var_os("USERPROFILE") } else { None })
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+/// The app's data directory, where Tauri's `app_data_dir()` puts it: `~/Library/Application
+/// Support/<id>` on macOS, `%APPDATA%\<id>` on Windows, `$XDG_DATA_HOME/<id>` (or
+/// `~/.local/share/<id>`) elsewhere. For tests and tools; the app asks Tauri.
+pub fn app_data_dir() -> Option<PathBuf> {
+    let base = if cfg!(target_os = "macos") {
+        home()?.join("Library/Application Support")
+    } else if cfg!(windows) {
+        PathBuf::from(std::env::var_os("APPDATA")?)
+    } else {
+        match std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()) {
+            Some(p) => p,
+            None => home()?.join(".local/share"),
+        }
+    };
+    Some(base.join(APP_ID))
+}
+
+/// Where the app keeps its Python (`<app data>/python`).
+pub fn default_base() -> Option<PathBuf> {
+    Some(app_data_dir()?.join("python"))
+}
+
+/// Start `cmd` without a console window (Windows: a GUI app's console children each get
+/// one otherwise). Does nothing elsewhere.
+pub fn no_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
+}
+
 pub const PYTHON_VERSION: &str = "3.13";
 pub const UV_VERSION: &str = "0.13.9";
 const READY: &str = ".cruncha-ready";
@@ -53,12 +94,14 @@ pub fn find_uv(base: &Path) -> Option<PathBuf> {
             .join(if cfg!(windows) { "Scripts" } else { "bin" })
             .join(exe),
     ];
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = home() {
         candidates.push(home.join(".local/bin").join(exe));
         candidates.push(home.join(".cargo/bin").join(exe));
     }
-    candidates.push(PathBuf::from("/opt/homebrew/bin").join(exe));
-    candidates.push(PathBuf::from("/usr/local/bin").join(exe));
+    if cfg!(unix) {
+        candidates.push(PathBuf::from("/opt/homebrew/bin").join(exe));
+        candidates.push(PathBuf::from("/usr/local/bin").join(exe));
+    }
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|p| p.join(exe)));
     }
@@ -68,20 +111,29 @@ pub fn find_uv(base: &Path) -> Option<PathBuf> {
 /// A system Python able to bootstrap `uv` (`python -m venv` + pip).
 fn find_bootstrap_python() -> Option<PathBuf> {
     let mut names = vec![];
-    for minor in (9..=20).rev() {
-        names.push(format!("python3.{minor}"));
+    let mut dirs = vec![];
+    if cfg!(windows) {
+        // python.org's installer: per user under %LOCALAPPDATA%\Programs\Python\Python3NN.
+        names.extend(["python.exe".to_string(), "python3.exe".into()]);
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            for minor in (9..=20).rev() {
+                dirs.push(PathBuf::from(&local).join(format!("Programs/Python/Python3{minor}")));
+            }
+        }
+    } else {
+        for minor in (9..=20).rev() {
+            names.push(format!("python3.{minor}"));
+        }
+        names.push("python3".into());
+        dirs.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin")]);
     }
-    names.push("python3".into());
-    let mut dirs = vec![
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/usr/bin"),
-    ];
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
     }
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        // Windows' `WindowsApps\python.exe` is a stub that opens the Microsoft Store.
+        .filter(|p| !p.components().any(|c| c.as_os_str().eq_ignore_ascii_case("WindowsApps")))
         .find(|p| p.is_file())
 }
 
@@ -96,7 +148,7 @@ pub enum Progress {
 }
 
 async fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
-    let out = cmd
+    let out = no_window(cmd)
         .kill_on_drop(true)
         .output()
         .await

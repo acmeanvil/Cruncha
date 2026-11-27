@@ -12,10 +12,7 @@ async fn main() {
     let base = std::env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").expect("HOME"))
-                .join("Library/Application Support/io.github.acmeanvil.cruncha/python")
-        });
+        .unwrap_or_else(|| env::default_base().expect("a home directory"));
     let t = std::time::Instant::now();
     match env::setup(&base, LOCK, |p| {
         eprintln!("{p:?} ({:.1} s)", t.elapsed().as_secs_f64())

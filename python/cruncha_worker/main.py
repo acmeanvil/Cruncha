@@ -9,17 +9,22 @@ the request) and values defined by other Python cells (kept here, in ``STORE``).
 defines goes back into ``STORE``. So a cell can't depend on anything the graph doesn't know.
 Values are shared by reference: a cell that mutates an array it read changes it for others.
 
-SIGINT (sent by the app to cancel) raises ``KeyboardInterrupt`` in the running cell; the
-worker reports it as ``interrupted`` and keeps running.
+The app cancels a cell by interrupting it, which raises ``KeyboardInterrupt`` in the running
+cell; the worker reports it as ``interrupted`` and keeps running. The first argument after the
+worker directory picks how: ``signal`` (SIGINT, Unix) or ``message`` (an ``interrupt`` request
+on stdin, read by a thread while the cell runs; Windows can't signal another process).
 """
 
+import _thread
 import ast
 import builtins
 import contextlib
 import io
 import os
+import queue
 import signal
 import sys
+import threading
 import time
 import traceback
 
@@ -163,14 +168,74 @@ def handle(req, blobs_in):
     raise ValueError(f"unknown op {op!r}")
 
 
-def main():
+def _interrupt_main():
+    """SIGINT for the main thread, as a real signal so a blocking call (``time.sleep``, a
+    wait) wakes too; ``_thread.interrupt_main`` alone only sets Python's flag."""
+    try:
+        if hasattr(signal, "pthread_kill"):
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+        else:
+            # Windows: the C handler runs in this thread; it flags the interrupt and sets the
+            # event the main thread's sleeps and waits watch.
+            signal.raise_signal(signal.SIGINT)
+    except (OSError, ValueError):
+        _thread.interrupt_main()
+
+
+class _Reader:
+    """Requests read by a thread (``message`` mode): an ``interrupt`` interrupts the main
+    thread at once, everything else waits in a queue for the loop."""
+
+    POLL = 0.2
+
+    def __init__(self, inp):
+        self.q = queue.Queue()
+        threading.Thread(target=self._run, args=(inp,), name="cruncha-reader", daemon=True).start()
+
+    def _run(self, inp):
+        while True:
+            try:
+                msg = protocol.read_message(inp)
+            except BaseException as e:  # Closed, or a broken frame: the loop ends either way
+                self.q.put(e)
+                return
+            if msg[0].get("op") == "interrupt":
+                _interrupt_main()
+            else:
+                self.q.put(msg)
+
+    def read(self):
+        # A timed wait, so an interrupt that arrives between cells is raised (and dropped)
+        # while waiting rather than in the next cell.
+        while True:
+            try:
+                msg = self.q.get(timeout=self.POLL)
+            except queue.Empty:
+                continue
+            if isinstance(msg, BaseException):
+                raise protocol.Closed() from msg
+            return msg
+
+
+def main(argv=None):
+    argv = sys.argv[2:] if argv is None else argv
+    mode = argv[0] if argv else "signal"
     outputs.setup()
     figures.install()
     inp, out = _channels()
     signal.signal(signal.SIGINT, signal.default_int_handler)
+    if mode == "message":
+        read = _Reader(inp).read
+    else:
+        def read():
+            while True:
+                req, blobs = protocol.read_message(inp)
+                if req.get("op") != "interrupt":  # nothing running: nothing to interrupt
+                    return req, blobs
+
     while True:
         try:
-            req, blobs = protocol.read_message(inp)
+            req, blobs = read()
         except protocol.Closed:
             return
         except KeyboardInterrupt:

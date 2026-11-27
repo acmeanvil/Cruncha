@@ -4,6 +4,7 @@
      Filters by level and category; search marks matches; steps through matches and problems;
      copies or saves the rows shown, as the file writes them. -->
 <script lang="ts">
+  import { keys } from "./keys";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { tick } from "svelte";
   import { api } from "./api";
@@ -168,10 +169,10 @@
         </div>
       {/if}
     </div>
-    <input type="search" placeholder="Search (↵ next, ⇧↵ previous)" bind:value={query} onkeydown={search} aria-label="Search the log" />
+    <input type="search" placeholder={keys("Search (↵ next, ⇧↵ previous)")} bind:value={query} onkeydown={search} aria-label="Search the log" />
     {#if query}
       <span class="muted small">{matches.length ? `${matchNo >= 0 ? matchNo + 1 : "–"} of ${matches.length}` : "no matches"}</span>
-      <button class="sm" disabled={!matches.length} onclick={() => goTo(step(matches, current, -1))} title="Previous match (⇧↵)" aria-label="Previous match">↑</button>
+      <button class="sm" disabled={!matches.length} onclick={() => goTo(step(matches, current, -1))} title={keys("Previous match (⇧↵)")} aria-label="Previous match">↑</button>
       <button class="sm" disabled={!matches.length} onclick={() => goTo(step(matches, current, 1))} title="Next match (↵)" aria-label="Next match">↓</button>
     {/if}
     <span class="sep"></span>

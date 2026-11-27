@@ -104,12 +104,31 @@ pub fn clean_stale(file: &Path) -> bool {
 }
 
 /// Whether a process with this id runs (signal 0 checks without sending one).
+#[cfg(unix)]
 fn alive(pid: u32) -> bool {
     std::process::Command::new("/bin/kill")
         .args(["-0", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+/// Whether a process with this id runs (it opens, and hasn't exited).
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: the handle is checked and closed; a stale pid fails to open.
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code) != 0;
+        CloseHandle(h);
+        ok && code == STILL_ACTIVE as u32
+    }
 }
 
 #[cfg(test)]
@@ -146,9 +165,19 @@ mod tests {
         let mut c = Connection::new("http://127.0.0.1:4242/mcp", "secret", "2026-11-26T00:00:00Z".into());
         write(&file, &c).unwrap();
         assert!(!clean_stale(&file), "this process's own file stays");
-        c.pid = std::os::unix::process::parent_id(); // another live process of ours
+        // Another live process.
+        let mut other = if cfg!(windows) {
+            std::process::Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn()
+        }
+        .unwrap();
+        c.pid = other.id();
         write(&file, &c).unwrap();
-        assert!(!clean_stale(&file) && file.exists());
+        let kept = !clean_stale(&file) && file.exists();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert!(kept, "a live process's file stays");
         c.pid = 999_999; // no such process
         write(&file, &c).unwrap();
         assert!(clean_stale(&file) && !file.exists());

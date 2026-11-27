@@ -9,6 +9,9 @@ license.workspace = true
 name = "cruncha_app_lib"
 crate-type = ["rlib"]
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

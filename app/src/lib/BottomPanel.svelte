@@ -7,6 +7,7 @@
 </script>
 
 <script lang="ts">
+  import { keys } from "./keys";
   import { onMount } from "svelte";
   import type { ProposalView } from "./api";
   import type { Variable } from "./editor/variables";
@@ -121,11 +122,11 @@
     <button role="tab" aria-selected={open && tab === "proposals"} class:on={open && tab === "proposals"} onclick={() => pick("proposals")}>
       Proposals {#if openProposals}<span class="n due">{openProposals}</span>{/if}
     </button>
-    <button role="tab" aria-selected={open && tab === "log"} class:on={open && tab === "log"} onclick={() => pick("log")} title="The debug log (⌘⌥L)">
+    <button role="tab" aria-selected={open && tab === "log"} class:on={open && tab === "log"} onclick={() => pick("log")} title={keys("The debug log (⌘⌥L)")}>
       Log {#if logFeed.unseenErrors && !(open && tab === "log")}<span class="n err" title="New errors">!</span>{/if}
     </button>
     <span class="spacer"></span>
-    <button class="chev" title="{open ? 'Hide' : 'Show'} the panel (⌘J)" aria-label="{open ? 'Hide' : 'Show'} the panel" onclick={() => {
+    <button class="chev" title={keys(`${open ? 'Hide' : 'Show'} the panel (⌘J)`)} aria-label="{open ? 'Hide' : 'Show'} the panel" onclick={() => {
       logAction(open ? "Hide the bottom panel" : "Show the bottom panel");
       open = !open;
     }}>

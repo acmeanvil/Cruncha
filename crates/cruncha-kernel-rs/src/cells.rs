@@ -273,7 +273,7 @@ fn write_crate(dir: &Path, name: &str, code: &str) -> std::io::Result<()> {
 
 /// `cargo build` with JSON diagnostics; errors mapped to the cell's lines.
 async fn build(tc: &Toolchain, dir: &Path, target: &Path, name: &str, start: usize) -> Result<PathBuf, CellError> {
-    let out = tokio::process::Command::new(tc.cargo())
+    let out = crate::no_window(&mut tokio::process::Command::new(tc.cargo()))
         .args(["build", "--release", "--quiet", "--message-format=json", "--target", "wasm32-wasip2", "--manifest-path"])
         .arg(dir.join("Cargo.toml"))
         .env("RUSTUP_HOME", &tc.rustup_home)

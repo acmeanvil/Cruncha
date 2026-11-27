@@ -18,10 +18,16 @@ use crate::engine::{Engine, PyKey, Run};
 /// chain (a calc's value is known only once the cell it reads has an outcome).
 const MAX_ROUNDS: usize = 16;
 
-/// This computer's name, as `hostname` prints it.
+/// This computer's name, as `hostname` prints it (on Windows, `COMPUTERNAME`, which is what
+/// `hostname.exe` prints, without starting a console program).
 fn host() -> &'static str {
     static HOST: OnceLock<String> = OnceLock::new();
     HOST.get_or_init(|| {
+        if cfg!(windows)
+            && let Some(name) = std::env::var("COMPUTERNAME").ok().filter(|s| !s.is_empty())
+        {
+            return name;
+        }
         std::process::Command::new("hostname")
             .output()
             .ok()

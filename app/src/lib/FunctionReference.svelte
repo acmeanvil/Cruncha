@@ -6,6 +6,7 @@
      example's result is checked by cruncha-eval's tests/reference.rs). Insert types it into the
      calc being edited, or into a new calc. Its buttons don't take focus, so the calc stays open. -->
 <script lang="ts">
+  import { keys } from "./keys";
   import { onMount } from "svelte";
   import { api, type FunctionReference } from "./api";
   import { findEntries, insertion } from "./functionRef";
@@ -73,8 +74,8 @@
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected={tab === "functions"} class:on={tab === "functions"} onmousedown={keep} onclick={() => (logAction("Reference tab: functions"), (tab = "functions"))}><i>ƒ</i>x Functions</button>
       <button role="tab" aria-selected={tab === "units"} class:on={tab === "units"} onmousedown={keep} onclick={() => (logAction("Reference tab: units"), (tab = "units"))}>Units</button>
-      <button role="tab" aria-selected={tab === "templates"} class:on={tab === "templates"} onmousedown={keep} onclick={() => (logAction("Reference tab: templates"), (tab = "templates"))} title="Templates and snippets (⌘⇧T)">Templates</button>
-      <button role="tab" aria-selected={tab === "tables"} class:on={tab === "tables"} onmousedown={keep} onclick={() => (logAction("Reference tab: tables"), (tab = "tables"))} title="Tables of standard parts (⌘⇧L)">Tables</button>
+      <button role="tab" aria-selected={tab === "templates"} class:on={tab === "templates"} onmousedown={keep} onclick={() => (logAction("Reference tab: templates"), (tab = "templates"))} title={keys("Templates and snippets (⌘⇧T)")}>Templates</button>
+      <button role="tab" aria-selected={tab === "tables"} class:on={tab === "tables"} onmousedown={keep} onclick={() => (logAction("Reference tab: tables"), (tab = "tables"))} title={keys("Tables of standard parts (⌘⇧L)")}>Tables</button>
     </div>
     <span class="spacer"></span>
     <button class="x" aria-label="Close the function reference" onclick={onclose}>×</button>
