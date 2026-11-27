@@ -24,6 +24,15 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::engine::{CellResult, Engine, PyNames};
 
+/// Why Python cells' code can't run on this platform: Windows has no worker sandbox yet
+/// (ADR-0030, proposed), and the worker must never run a document's code unconfined there.
+/// Scanning and renaming still work: they parse cells, never run them.
+const UNSANDBOXED: Option<&str> = if cfg!(windows) {
+    Some("Python cells don't run on Windows yet: the worker's sandbox isn't built (ADR-0030)")
+} else {
+    None
+};
+
 /// The packages Python cells get.
 pub const LOCK: &str = include_str!("../../../python/requirements.lock");
 
@@ -189,7 +198,7 @@ impl Python {
     /// Stop: interrupt the running cell, and end the run loop.
     pub fn stop(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        if let Some(i) = *self.interrupter.lock().unwrap() {
+        if let Some(i) = self.interrupter.lock().unwrap().clone() {
             i.interrupt();
         }
         if let Some(r) = self.rust() {
@@ -250,12 +259,16 @@ impl Python {
                 }
                 continue;
             }
-            let outcome = match self.ensure(&mut slot).await {
-                Ok(k) => {
-                    *self.interrupter.lock().unwrap() = Some(k.interrupter());
-                    k.run(&job.request, self.timeout).await
+            let outcome = if let Some(why) = UNSANDBOXED {
+                Err(KernelError::Worker(why.into()))
+            } else {
+                match self.ensure(&mut slot).await {
+                    Ok(k) => {
+                        *self.interrupter.lock().unwrap() = Some(k.interrupter());
+                        k.run(&job.request, self.timeout).await
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(e) => Err(e),
             };
             *self.interrupter.lock().unwrap() = None;
             let outcome = outcome.map_err(|e| {

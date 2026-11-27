@@ -1995,8 +1995,7 @@ mod tests {
 
     /// The real worker, when the Python environment is set up on this machine.
     fn python_base() -> Option<PathBuf> {
-        let base = PathBuf::from(std::env::var_os("HOME")?)
-            .join("Library/Application Support/io.github.acmeanvil.cruncha/python");
+        let base = cruncha_kernel_py::env::default_base()?;
         cruncha_kernel_py::env::ready(&base, crate::python::LOCK).map(|_| base)
     }
 

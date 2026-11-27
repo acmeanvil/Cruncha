@@ -2,6 +2,7 @@
 <!-- The document editor: one ProseMirror block per cell (lib/editor/). Editable for the latest
      version; read-only for history. Saves through DocSync (commit on submit or idle). -->
 <script lang="ts">
+  import { keys } from "./keys";
   import { onDestroy, onMount, untrack } from "svelte";
   import { EditorState, NodeSelection, Plugin, TextSelection } from "prosemirror-state";
   import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
@@ -691,25 +692,25 @@
     <span class="small muted">Insert</span>
     <button onclick={() => (logAction("Insert text"), insert(newParagraph()))} title="Text paragraph">Text</button>
     <button onclick={() => (logAction("Insert heading"), insert(newHeading(2)))} title="Heading (type ## then space)">Heading</button>
-    <button onclick={() => (logAction("Insert calc"), insert(newCalc()))} title="Calculation (⌘E, or type = then space)">Calc</button>
-    <button onclick={() => (logAction("Insert Python"), insert(newCode("python")))} title="Python cell (⌘⌥P); not run yet">Python</button>
-    <button onclick={() => (logAction("Insert page break"), run(insertPageBreak))} title="Page break: the report starts a new page here (⌘⇧↵, or type \pagebreak)">Page break</button>
+    <button onclick={() => (logAction("Insert calc"), insert(newCalc()))} title={keys("Calculation (⌘E, or type = then space)")}>Calc</button>
+    <button onclick={() => (logAction("Insert Python"), insert(newCode("python")))} title={keys("Python cell (⌘⌥P); not run yet")}>Python</button>
+    <button onclick={() => (logAction("Insert page break"), run(insertPageBreak))} title={keys("Page break: the report starts a new page here (⌘⇧↵, or type \\pagebreak)")}>Page break</button>
     {#if onfunctions}
       <span class="sep"></span>
-      <button onclick={onfunctions} title="Functions, operators and constants (⌘⇧F)"><i>ƒ</i>x Functions</button>
+      <button onclick={onfunctions} title={keys("Functions, operators and constants (⌘⇧F)")}><i>ƒ</i>x Functions</button>
     {/if}
     {#if onunits}
-      <button onclick={onunits} title="Units: lengths, forces, pressures… (⌘⇧U)">Units</button>
+      <button onclick={onunits} title={keys("Units: lengths, forces, pressures… (⌘⇧U)")}>Units</button>
     {/if}
     {#if ontemplates}
-      <button onclick={ontemplates} title="Templates and snippets: insert a checked calculation, or save cells as a snippet (⌘⇧T)">Templates</button>
+      <button onclick={ontemplates} title={keys("Templates and snippets: insert a checked calculation, or save cells as a snippet (⌘⇧T)")}>Templates</button>
     {/if}
     {#if ontables}
-      <button onclick={ontables} title="Tables of standard parts: screws, nuts, washers, bolt grades, pipe, shapes; insert a size's values (⌘⇧L)">Tables</button>
+      <button onclick={ontables} title={keys(`Tables of standard parts: screws, nuts, washers, bolt grades, pipe, shapes; insert a size's values (⌘⇧L)`)}>Tables</button>
     {/if}
     <span class="sep"></span>
-    <button onclick={() => (logAction("Move block up"), run(moveBlock(-1)))} title="Move block up (⌥↑)" aria-label="Move block up">↑</button>
-    <button onclick={() => (logAction("Move block down"), run(moveBlock(1)))} title="Move block down (⌥↓)" aria-label="Move block down">↓</button>
+    <button onclick={() => (logAction("Move block up"), run(moveBlock(-1)))} title={keys("Move block up (⌥↑)")} aria-label="Move block up">↑</button>
+    <button onclick={() => (logAction("Move block down"), run(moveBlock(1)))} title={keys("Move block down (⌥↓)")} aria-label="Move block down">↓</button>
   </div>
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -725,8 +726,8 @@
           <button role="menuitem" onclick={() => act("calc")}>Add calc below</button>
           <button role="menuitem" onclick={() => act("python")}>Add Python below</button>
           <hr />
-          <button role="menuitem" onclick={() => act("up")}>Move up <kbd>⌥↑</kbd></button>
-          <button role="menuitem" onclick={() => act("down")}>Move down <kbd>⌥↓</kbd></button>
+          <button role="menuitem" onclick={() => act("up")}>Move up <kbd>{keys("⌥↑")}</kbd></button>
+          <button role="menuitem" onclick={() => act("down")}>Move down <kbd>{keys("⌥↓")}</kbd></button>
           <hr />
           <button role="menuitem" class="danger-text" onclick={() => act("delete")}>Delete</button>
         </div>

@@ -1,2 +1,7 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Auto detect text files and normalize them to LF in the repository and in every checkout:
+# tests read fixtures, templates and the Python lockfile byte for byte (include_str!, hashes),
+# so a Windows checkout must not turn them into CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

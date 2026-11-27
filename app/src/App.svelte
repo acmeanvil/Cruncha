@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { keys } from "./lib/keys";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { listen } from "@tauri-apps/api/event";
@@ -573,7 +574,7 @@
       {/if}
     {/if}
     {#if logFeed.unseenErrors}
-      <button class="errdot" title="New errors in the debug log (⌘⌥L)" aria-label="New errors in the debug log" onclick={act("Status bar: new errors", showLog)}></button>
+      <button class="errdot" title={keys("New errors in the debug log (⌘⌥L)")} aria-label="New errors in the debug log" onclick={act("Status bar: new errors", showLog)}></button>
     {/if}
     <span class="spacer"></span>
     <div class="file">
@@ -608,7 +609,7 @@
       </button>
       <button onclick={act("Document settings", () => documentSettings("document"))}>Document settings</button>
     {/if}
-    <button class="icon" title="Settings (⌘,)" aria-label="Settings" onclick={act("Settings", () => (settingsPage = "agents"))}>
+    <button class="icon" title={keys("Settings (⌘,)")} aria-label="Settings" onclick={act("Settings", () => (settingsPage = "agents"))}>
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-linecap="round" /></svg>
     </button>
   </header>
@@ -620,10 +621,10 @@
           <button class="tname" onclick={() => switchTab(t.id)} aria-current={t.id === doc?.id ? "page" : undefined}>
             {t.name.replace(/\.cruncha$/, "")}{#if badged.has(t.id)}<span class="tbadge" title="An agent proposed changes here"></span>{/if}
           </button>
-          <button class="tclose" aria-label="Close {t.name}" title="Close tab (⌘W)" onclick={() => closeTab(t.id)}>×</button>
+          <button class="tclose" aria-label="Close {t.name}" title={keys("Close tab (⌘W)")} onclick={() => closeTab(t.id)}>×</button>
         </div>
       {/each}
-      <button class="tnew" title="Open a document in a new tab (⌘T)" aria-label="Open a document in a new tab" onclick={act("New tab", openDocument)}>+</button>
+      <button class="tnew" title={keys("Open a document in a new tab (⌘T)")} aria-label="Open a document in a new tab" onclick={act("New tab", openDocument)}>+</button>
     </nav>
   {/if}
 

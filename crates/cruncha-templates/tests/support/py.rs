@@ -24,8 +24,7 @@ fn python() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CRUNCHA_TEST_PYTHON") {
         return Some(p.into());
     }
-    let base = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/io.github.acmeanvil.cruncha/python");
-    env::ready(&base, LOCK)
+    env::ready(&env::default_base()?, LOCK)
 }
 
 impl PyRunner {

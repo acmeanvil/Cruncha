@@ -1849,6 +1849,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1879,6 +1880,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # CI (ADR-0001, ADR-0012): licenses of every dependency, Rust (clippy + tests), the front end,
-# and the Python worker against the locked packages.
+# the Python worker against the locked packages, and Windows (ADR-0030).
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "windows*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -80,3 +81,37 @@ jobs:
           uv pip install --python .venv --require-hashes -r python/requirements.lock
       - run: .venv/bin/python -I python/tools/check_licenses.py python/requirements.lock
       - run: .venv/bin/python python/tests/test_worker.py
+
+  # ADR-0030: the workspace on Windows, with the worker's tests against the locked environment.
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: LF checkouts (tests read fixtures and the lockfile byte for byte)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Front end (the app crate embeds app/dist)
+        working-directory: app
+        run: npm ci && npm run build
+      - uses: astral-sh/setup-uv@v6
+      - name: The locked Python environment
+        shell: bash
+        run: |
+          uv venv --python 3.13 .venv
+          uv pip install --python .venv --require-hashes -r python/requirements.lock
+          echo "CRUNCHA_TEST_PYTHON=$GITHUB_WORKSPACE\.venv\Scripts\python.exe" >> "$GITHUB_ENV"
+      - name: Worker unit tests
+        run: .venv\Scripts\python.exe python\tests\test_worker.py
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

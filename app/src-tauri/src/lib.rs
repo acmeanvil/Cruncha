@@ -129,6 +129,18 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     MenuBuilder::new(app).items(&[&cruncha, &file, &edit, &view, &window]).build()
 }
 
+/// Windows and Linux have no default menu: a File menu, so Open (Ctrl+O) and Close Tab
+/// (Ctrl+W) reach the page as on macOS. The webview handles copy and paste itself.
+#[cfg(not(target_os = "macos"))]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+    let open = MenuItemBuilder::with_id("open", "&Open…").accelerator("CmdOrCtrl+O").build(app)?;
+    let close_tab = MenuItemBuilder::with_id("close_tab", "&Close Tab").accelerator("CmdOrCtrl+W").build(app)?;
+    let close_window = MenuItemBuilder::with_id("close_window", "E&xit").build(app)?;
+    let file = SubmenuBuilder::new(app, "&File").item(&open).separator().item(&close_tab).separator().item(&close_window).build()?;
+    MenuBuilder::new(app).items(&[&file]).build()
+}
+
 /// The in-app agent panel for the open document.
 type PanelState = std::sync::Arc<Mutex<agent_panel::Panel>>;
 
@@ -1026,11 +1038,24 @@ fn log_file(bytes: Option<u64>) -> Result<(String, String)> {
     Ok((path.display().to_string(), text))
 }
 
-/// Show the log file in Finder.
+/// Show the log file in Finder (Explorer on Windows; its folder elsewhere).
 #[tauri::command]
 fn log_reveal() -> Result<()> {
     let path = applog::path().ok_or("the debug log isn't open")?;
-    std::process::Command::new("open").arg("-R").arg(&path).spawn().map_err(|e| e.to_string())?;
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(&path);
+        c
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", path.display()));
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(path.parent().unwrap_or(&path));
+        c
+    };
+    cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1199,7 +1224,6 @@ pub fn run() {
                 }
             });
             app.manage::<Shared>(shared);
-            #[cfg(target_os = "macos")]
             app.set_menu(app_menu(app.handle())?)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
                 "close_tab" => {

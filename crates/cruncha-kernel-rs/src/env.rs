@@ -36,6 +36,7 @@ fn host() -> Option<&'static str> {
         ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
         ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
         ("x86_64", "windows") => "x86_64-pc-windows-msvc",
+        ("aarch64", "windows") => "aarch64-pc-windows-msvc",
         _ => return None,
     })
 }
@@ -51,7 +52,7 @@ pub fn ready(base: &Path) -> Option<Toolchain> {
 }
 
 async fn curl(url: &str, to: &Path) -> Result<(), String> {
-    let out = tokio::process::Command::new("curl")
+    let out = crate::no_window(&mut tokio::process::Command::new("curl"))
         .args(["--proto", "=https", "--tlsv1.2", "--silent", "--show-error", "--fail", "--location", "--output"])
         .arg(to)
         .arg(url)
@@ -92,7 +93,7 @@ pub async fn setup(base: &Path, progress: impl Fn(Step)) -> Result<Toolchain, St
         std::fs::set_permissions(&init, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     progress(Step::Installing);
-    let out = tokio::process::Command::new(&init)
+    let out = crate::no_window(&mut tokio::process::Command::new(&init))
         .args(["-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", RUST_VERSION, "--target", TARGET])
         .env("RUSTUP_HOME", base.join("rustup"))
         .env("CARGO_HOME", base.join("cargo"))

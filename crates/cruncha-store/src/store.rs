@@ -1107,16 +1107,24 @@ impl Store {
     }
 
     /// The save log (ADR-0023): every save a prune or archive removed, oldest first; with
-    /// `cell`, only the saves that wrote that cell.
+    /// `cell`, only the saves that wrote that cell. A prune logs its saves before it removes
+    /// them, so rows for saves still available (a prune interrupted before its point of no
+    /// return, finished by the next one) are left out.
     pub async fn archived(&self, cell: Option<&str>) -> Result<Vec<ArchivedSave>> {
-        let rows = match &self.archive {
-            None => Vec::new(),
-            Some(t) => archive::batches_to_rows(&scan(t).await?)?,
-        };
+        let earliest = self.earliest_version();
+        let rows: Vec<ArchivedSave> = self.archive_rows().await?.into_iter().filter(|r| r.version < earliest).collect();
         Ok(match cell {
             None => rows,
             Some(id) => rows.into_iter().filter(|r| r.cells.iter().any(|c| c == id)).collect(),
         })
+    }
+
+    /// Every row of the save log, including saves an interrupted prune logged but didn't remove.
+    async fn archive_rows(&self) -> Result<Vec<ArchivedSave>> {
+        match &self.archive {
+            None => Ok(Vec::new()),
+            Some(t) => archive::batches_to_rows(&scan(t).await?),
+        }
     }
 
     /// Make every version before `cutoff` unavailable (ADR-0011 §3, ADR-0023). Crash-safe:
@@ -1226,7 +1234,7 @@ impl Store {
 
     /// Append a save-log row for every save before `cutoff` not logged yet.
     async fn log_saves_before(&mut self, cutoff: u64, entries: &[LogEntry], actor: &str) -> Result<()> {
-        let logged: HashSet<u64> = self.archived(None).await?.into_iter().map(|r| r.version).collect();
+        let logged: HashSet<u64> = self.archive_rows().await?.into_iter().map(|r| r.version).collect();
         let saves: Vec<&LogEntry> = entries
             .iter()
             .filter(|e| e.version < cutoff && e.kind != CommitKind::Maintenance && !logged.contains(&e.version))

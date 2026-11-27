@@ -36,8 +36,7 @@ async fn main() {
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(1_000_000);
-    let base = PathBuf::from(std::env::var_os("HOME").unwrap())
-        .join("Library/Application Support/io.github.acmeanvil.cruncha/python");
+    let base = env::default_base().expect("a home directory");
     let python = env::ready(&base, LOCK).expect("run the setup_env example first");
     let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python");
 

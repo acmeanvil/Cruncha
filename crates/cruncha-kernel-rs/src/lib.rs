@@ -21,6 +21,17 @@ use std::time::{Duration, Instant};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Error, Result, Store};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+
+/// Windows: start a console program (cargo, rustup-init, curl) without a console window.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// `cmd` without a console window on Windows; nothing elsewhere.
+pub(crate) fn no_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 mod bindings {
@@ -47,13 +58,25 @@ impl Toolchain {
         t.cargo().exists().then_some(t)
     }
 
-    /// The default place: `~/Library/Application Support/io.github.acmeanvil.cruncha/rust`.
+    /// The default place, `<app data>/rust`: the app's data directory as Tauri's
+    /// `app_data_dir()` has it (`~/Library/Application Support/<id>` on macOS,
+    /// `%APPDATA%\<id>` on Windows, `$XDG_DATA_HOME/<id>` or `~/.local/share/<id>` elsewhere).
+    /// For tests and tools; the app asks Tauri.
     pub fn default_base() -> Option<PathBuf> {
-        Some(PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/io.github.acmeanvil.cruncha/rust"))
+        let var = |k| std::env::var_os(k).map(PathBuf::from).filter(|p: &PathBuf| p.is_absolute());
+        let home = || var("HOME").or_else(|| if cfg!(windows) { var("USERPROFILE") } else { None });
+        let data = if cfg!(target_os = "macos") {
+            home()?.join("Library/Application Support")
+        } else if cfg!(windows) {
+            var("APPDATA")?
+        } else {
+            var("XDG_DATA_HOME").or_else(|| Some(home()?.join(".local/share")))?
+        };
+        Some(data.join("io.github.acmeanvil.cruncha").join("rust"))
     }
 
     pub fn cargo(&self) -> PathBuf {
-        self.cargo_home.join("bin/cargo")
+        self.cargo_home.join("bin").join(if cfg!(windows) { "cargo.exe" } else { "cargo" })
     }
 
     /// Build the cell crate at `dir` (a `cdylib`) into `target`; returns the component path
@@ -61,6 +84,8 @@ impl Toolchain {
     pub fn build(&self, dir: &Path, target: &Path, release: bool) -> Result<(PathBuf, Duration)> {
         let t = Instant::now();
         let mut cmd = Command::new(self.cargo());
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
         cmd.arg("build").arg("--quiet").arg("--target").arg("wasm32-wasip2").arg("--manifest-path").arg(dir.join("Cargo.toml"));
         if release {
             cmd.arg("--release");

@@ -3,7 +3,7 @@
 //! set it up once (the tests then find it under the app's data directory). Without one, the
 //! tests say so and pass.
 
-use cruncha_kernel_py::{Config, Error, Kernel, Output, RunRequest, Status, env};
+use cruncha_kernel_py::{Config, Error, InterruptMode, Kernel, Output, RunRequest, Status, env};
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -18,9 +18,7 @@ fn python() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CRUNCHA_TEST_PYTHON") {
         return Some(p.into());
     }
-    let base = PathBuf::from(std::env::var_os("HOME")?)
-        .join("Library/Application Support/io.github.acmeanvil.cruncha/python");
-    env::ready(&base, LOCK)
+    env::ready(&env::default_base()?, LOCK)
 }
 
 async fn kernel() -> Option<Kernel> {
@@ -167,7 +165,11 @@ async fn errors_figures_and_interrupts() {
         .unwrap();
     assert_eq!(r.status, Status::Done);
 
-    // C code that ignores SIGINT (here: SIGINT blocked) gets the worker killed.
+    // C code that ignores SIGINT (here: SIGINT blocked) gets the worker killed. (Windows
+    // interrupts by message; message_interrupts_… covers its kill.)
+    if !cfg!(unix) {
+        return;
+    }
     let r = k
         .run(
             &RunRequest { cell: "H".into(), source: "import signal, time\nsignal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})\ntime.sleep(30)".into(), ..Default::default() },
@@ -176,6 +178,38 @@ async fn errors_figures_and_interrupts() {
         .await;
     assert_eq!(r.unwrap_err(), Error::Killed);
     tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!k.is_alive());
+}
+
+/// Windows' interrupt (an `interrupt` message read by a thread in the worker), checked here on
+/// every platform.
+#[tokio::test]
+async fn message_interrupts_stop_a_cell_and_the_worker_keeps_going() {
+    let Some(py) = python() else { return };
+    let mut c = Config::new(py, worker_dir());
+    c.kill_after = Duration::from_millis(1500);
+    c.interrupt = InterruptMode::Message;
+    let mut k = Kernel::start(c).await.expect("worker starts");
+    let run = |cell: &str, src: &str| RunRequest { cell: cell.into(), source: src.into(), defines: vec![], ..Default::default() };
+    for (cell, src) in [("L", "while True:\n    pass"), ("S", "import time\ntime.sleep(30)")] {
+        let t = Instant::now();
+        let r = k.run(&run(cell, src), Some(Duration::from_millis(300))).await.unwrap();
+        assert_eq!(r.status, Status::Interrupted, "{cell}");
+        assert!(t.elapsed() < Duration::from_secs(2), "{cell}: {:?}", t.elapsed());
+    }
+    let mut ok = run("OK", "z = 1");
+    ok.defines = vec!["z".into()];
+    assert_eq!(k.run(&ok, None).await.unwrap().status, Status::Done);
+    // An interrupt sent while nothing runs is dropped, not raised in the next cell.
+    k.interrupter().interrupt();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(k.run(&ok, None).await.unwrap().status, Status::Done);
+    // A cell that swallows the interrupt gets the worker killed.
+    let r = k
+        .run(&run("H", "while True:\n    try:\n        while True:\n            pass\n    except KeyboardInterrupt:\n        pass"), Some(Duration::from_millis(200)))
+        .await;
+    assert_eq!(r.unwrap_err(), Error::Killed);
+    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!k.is_alive());
 }
 
