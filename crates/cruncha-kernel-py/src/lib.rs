@@ -65,7 +65,7 @@ pub struct Config {
     pub worker_dir: PathBuf,
     /// Grace period between an interrupt and a kill.
     pub kill_after: Duration,
-    /// Run the worker in this sandbox (macOS; see [`sandbox`]). `None`: unsandboxed.
+    /// Run the worker in this sandbox (macOS and Windows; see [`sandbox`]). `None`: unsandboxed.
     pub sandbox: Option<sandbox::Sandbox>,
     /// How a running cell is interrupted.
     pub interrupt: InterruptMode,
@@ -287,19 +287,19 @@ impl Kernel {
     /// Start a worker and wait for its greeting.
     pub async fn start(config: Config) -> Result<Kernel> {
         let boot = "import sys; sys.path.insert(0, sys.argv[1]); from cruncha_worker.main import main; main()";
-        let mut cmd = match (&config.sandbox, sandbox::program()) {
-            (Some(sb), Some(exec)) => {
-                std::fs::create_dir_all(&sb.scratch)
-                    .map_err(|e| Error::Start(format!("{}: {e}", sb.scratch.display())))?;
-                let mut c = Command::new(exec);
-                c.arg("-p").arg(sb.profile()).arg(&config.python);
-                // Everything the worker writes goes to its scratch directory.
-                c.env("HOME", &sb.scratch).env("TMPDIR", &sb.scratch).env("MPLCONFIGDIR", sb.scratch.join("matplotlib"));
-                c.current_dir(&sb.scratch);
-                c
-            }
-            _ => Command::new(&config.python),
+        #[cfg(windows)]
+        if let Some(sb) = &config.sandbox {
+            let (sb, py) = (sb.clone(), config.python.clone());
+            tokio::task::spawn_blocking(move || sandbox::windows::prepare(&sb, &py))
+                .await
+                .map_err(|e| Error::Start(e.to_string()))?
+                .map_err(Error::Start)?;
+        }
+        let sandboxed = match &config.sandbox {
+            Some(sb) => sb.command(&config.python).map_err(Error::Start)?,
+            None => None,
         };
+        let mut cmd = sandboxed.unwrap_or_else(|| Command::new(&config.python));
         // -I: isolated (no PYTHON* variables, user site or current directory on the path);
         // -B: no bytecode written next to the worker's sources.
         cmd.args(["-I", "-B", "-c", boot])

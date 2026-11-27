@@ -24,15 +24,6 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::engine::{CellResult, Engine, PyNames};
 
-/// Why Python cells' code can't run on this platform: Windows has no worker sandbox yet
-/// (ADR-0030, proposed), and the worker must never run a document's code unconfined there.
-/// Scanning and renaming still work: they parse cells, never run them.
-const UNSANDBOXED: Option<&str> = if cfg!(windows) {
-    Some("Python cells don't run on Windows yet: the worker's sandbox isn't built (ADR-0030)")
-} else {
-    None
-};
-
 /// The packages Python cells get.
 pub const LOCK: &str = include_str!("../../../python/requirements.lock");
 
@@ -140,11 +131,17 @@ impl Python {
                 .interpreter()
                 .ok_or_else(|| KernelError::Start("Python isn't set up".into()))?;
             let mut config = Config::new(python, &self.worker_dir);
-            // ADR-0005: on macOS the worker reads only its environment and package, writes
-            // only its scratch directory, and has no network or subprocesses.
+            // ADR-0005, ADR-0030: on macOS and Windows the worker reads only its environment
+            // and package, writes only its scratch directory, and has no network or
+            // subprocesses. On Windows this program starts it in its AppContainer
+            // (`--py-sandbox`, main.rs); without that it doesn't start at all.
             config.sandbox = Some(cruncha_kernel_py::sandbox::Sandbox {
                 read: vec![self.base.clone(), self.worker_dir.clone()],
                 scratch: std::env::temp_dir().join(format!("cruncha-worker-{}", std::process::id())),
+                launcher: std::env::current_exe().ok().map(|program| cruncha_kernel_py::sandbox::Launcher {
+                    program,
+                    args: vec!["--py-sandbox".into()],
+                }),
             });
             *slot = Some(Kernel::start(config).await?);
         }
@@ -259,16 +256,12 @@ impl Python {
                 }
                 continue;
             }
-            let outcome = if let Some(why) = UNSANDBOXED {
-                Err(KernelError::Worker(why.into()))
-            } else {
-                match self.ensure(&mut slot).await {
-                    Ok(k) => {
-                        *self.interrupter.lock().unwrap() = Some(k.interrupter());
-                        k.run(&job.request, self.timeout).await
-                    }
-                    Err(e) => Err(e),
+            let outcome = match self.ensure(&mut slot).await {
+                Ok(k) => {
+                    *self.interrupter.lock().unwrap() = Some(k.interrupter());
+                    k.run(&job.request, self.timeout).await
                 }
+                Err(e) => Err(e),
             };
             *self.interrupter.lock().unwrap() = None;
             let outcome = outcome.map_err(|e| {

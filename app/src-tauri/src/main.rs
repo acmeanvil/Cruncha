@@ -3,6 +3,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // Windows (ADR-0030): the Python worker's launcher, which runs it in its AppContainer.
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--py-sandbox") {
+        std::process::exit(cruncha_kernel_py::sandbox::windows::launch(std::env::args_os().skip(2).collect()));
+    }
     // The built-in agent (ADR-0009): the agent panel starts this program as an ACP agent.
     let mut args = std::env::args().skip(1);
     let first = args.next();
