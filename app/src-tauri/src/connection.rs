@@ -165,9 +165,19 @@ mod tests {
         let mut c = Connection::new("http://127.0.0.1:4242/mcp", "secret", "2026-11-26T00:00:00Z".into());
         write(&file, &c).unwrap();
         assert!(!clean_stale(&file), "this process's own file stays");
-        c.pid = std::os::unix::process::parent_id(); // another live process of ours
+        // Another live process.
+        let mut other = if cfg!(windows) {
+            std::process::Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn()
+        }
+        .unwrap();
+        c.pid = other.id();
         write(&file, &c).unwrap();
-        assert!(!clean_stale(&file) && file.exists());
+        let kept = !clean_stale(&file) && file.exists();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert!(kept, "a live process's file stays");
         c.pid = 999_999; // no such process
         write(&file, &c).unwrap();
         assert!(clean_stale(&file) && !file.exists());
