@@ -68,7 +68,7 @@ jobs:
         run: npm ci && npm run build
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # Python- and Rust-cell tests skip here: their environments live in the macOS app data.
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
 
   python:
     runs-on: ubuntu-24.04
@@ -114,4 +114,4 @@ jobs:
       - name: Worker unit tests
         run: .venv\Scripts\python.exe python\tests\test_worker.py
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast

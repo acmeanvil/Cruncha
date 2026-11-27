@@ -87,6 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)] // Windows never adopts a login PATH (`:`-separated paths here)
     fn a_launchers_path_is_bare_a_shells_is_not() {
         let home = std::path::Path::new("/Users/x");
         assert!(looks_bare(Some("/usr/bin:/bin:/usr/sbin:/sbin"), home));
