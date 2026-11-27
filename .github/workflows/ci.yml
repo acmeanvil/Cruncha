@@ -85,9 +85,13 @@ jobs:
   # ADR-0030: the workspace on Windows, with the worker's tests against the locked environment.
   windows:
     runs-on: windows-2025
-    timeout-minutes: 90
+    # A cold build (DataFusion, wasmtime, Tauri) takes over an hour on these runners.
+    timeout-minutes: 180
     env:
       CARGO_INCREMENTAL: "0"
+      # Debug info is most of the link time on Windows; tests don't need it.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: LF checkouts (tests read fixtures and the lockfile byte for byte)
         run: git config --global core.autocrlf false
@@ -96,6 +100,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -113,5 +119,6 @@ jobs:
           echo "CRUNCHA_TEST_PYTHON=$GITHUB_WORKSPACE\.venv\Scripts\python.exe" >> "$GITHUB_ENV"
       - name: Worker unit tests
         run: .venv\Scripts\python.exe python\tests\test_worker.py
-      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --no-fail-fast
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+        if: always()
