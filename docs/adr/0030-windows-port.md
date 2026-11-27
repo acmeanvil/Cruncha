@@ -1,7 +1,7 @@
 # ADR-0030: Windows: the Python worker's sandbox, cell interrupts and packaging
 
-**Status:** Proposed
-**Date:** 2026-11-26
+**Status:** Accepted
+**Date:** 2026-11-26 (accepted 2026-11-27)
 **Deciders:** acmeanvil
 
 ## Context
@@ -33,7 +33,7 @@ Three things don't port:
 
 - **The interrupt:** the worker takes an interrupt mode as its first argument.
   - `signal` is today's SIGINT behaviour, and stays the default on Unix.
-  - `message` is the Windows default. A reader thread in the worker owns stdin: an `{"op": "interrupt"}` message calls `_thread.interrupt_main()`, and every other request waits in a queue for the main loop.
+  - `message` is the Windows default. A reader thread in the worker owns stdin: an `{"op": "interrupt"}` message signals the main thread with SIGINT (`signal.pthread_kill` on Unix, `signal.raise_signal` on Windows; `_thread.interrupt_main()` only as a fallback, because it doesn't wake a blocking call such as `time.sleep`), and every other request waits in a queue for the main loop.
   - The app writes the interrupt under the same lock that requests write their frames under, so an interrupt never splits a frame.
   - An interrupt that arrives while no cell runs is raised during the loop's timed wait and dropped. It never reaches the next cell.
 - **The kill:** `TerminateProcess` (through `windows-sys`, MIT or Apache-2.0).
@@ -111,7 +111,7 @@ Rejected.
 
 **Harder:**
 - Two sandboxes to keep equivalent.
-- A Windows CI job, about 15 minutes per run.
+- A Windows CI job: about 67 minutes from a cold cache, less once the build cache is kept.
 
 **To revisit:**
 - Linux, which still runs the worker unsandboxed (ADR-0005 item 2, seccomp).
