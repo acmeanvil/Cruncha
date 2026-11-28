@@ -5,7 +5,7 @@
 
 use cruncha_kernel_py::{Config, Error, InterruptMode, Kernel, Output, RunRequest, Status, env};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const LOCK: &str = include_str!("../../../python/requirements.lock");
@@ -250,7 +250,13 @@ async fn the_sandboxed_worker_computes_but_reaches_nothing() {
         return;
     }
     let scratch = tempfile::tempdir().unwrap();
-    let base = py.ancestors().find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "python")).unwrap().to_path_buf();
+    // The app's layout (`…/python/env-*/…`), or a venv elsewhere (CI's `.venv`; on Windows
+    // the launcher adds the venv's base interpreter itself).
+    let base = py
+        .ancestors()
+        .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "python"))
+        .unwrap_or_else(|| py.parent().and_then(Path::parent).expect("the interpreter is in an environment"))
+        .to_path_buf();
     let mut c = Config::new(py, worker_dir());
     let launcher = Launcher { program: env!("CARGO_BIN_EXE_cruncha-sandbox").into(), args: vec![] };
     c.sandbox = Some(Sandbox { read: vec![base, worker_dir()], scratch: scratch.path().join("w"), launcher: Some(launcher) });
