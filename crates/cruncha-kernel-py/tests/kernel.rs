@@ -5,7 +5,7 @@
 
 use cruncha_kernel_py::{Config, Error, InterruptMode, Kernel, Output, RunRequest, Status, env};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const LOCK: &str = include_str!("../../../python/requirements.lock");
@@ -241,16 +241,25 @@ async fn plotly_figures_arrive_as_json_specs() {
 
 #[tokio::test]
 async fn the_sandboxed_worker_computes_but_reaches_nothing() {
-    use cruncha_kernel_py::sandbox::{self, Sandbox};
+    use cruncha_kernel_py::sandbox::{self, Launcher, Sandbox};
     let Some(py) = python() else { return };
-    if sandbox::program().is_none() {
+    // macOS: sandbox-exec; Windows: an AppContainer and Job Object (ADR-0030), started by
+    // this crate's `cruncha-sandbox` launcher.
+    if sandbox::program().is_none() && !cfg!(windows) {
         eprintln!("no sandbox on this system; skipping");
         return;
     }
     let scratch = tempfile::tempdir().unwrap();
-    let base = py.ancestors().find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "python")).unwrap().to_path_buf();
+    // The app's layout (`…/python/env-*/…`), or a venv elsewhere (CI's `.venv`; on Windows
+    // the launcher adds the venv's base interpreter itself).
+    let base = py
+        .ancestors()
+        .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "python"))
+        .unwrap_or_else(|| py.parent().and_then(Path::parent).expect("the interpreter is in an environment"))
+        .to_path_buf();
     let mut c = Config::new(py, worker_dir());
-    c.sandbox = Some(Sandbox { read: vec![base, worker_dir()], scratch: scratch.path().join("w") });
+    let launcher = Launcher { program: env!("CARGO_BIN_EXE_cruncha-sandbox").into(), args: vec![] };
+    c.sandbox = Some(Sandbox { read: vec![base, worker_dir()], scratch: scratch.path().join("w"), launcher: Some(launcher) });
     let mut k = Kernel::start(c).await.expect("the sandboxed worker starts");
     let run = |src: &str| RunRequest { cell: "S".into(), source: src.into(), defines: vec!["r".into()], ..Default::default() };
     let value = |r: &cruncha_kernel_py::RunResult| r.defines.first().map(|d| d.summary.clone()).unwrap_or_default();
@@ -265,19 +274,45 @@ async fn the_sandboxed_worker_computes_but_reaches_nothing() {
     assert_eq!(r.outputs.len(), 2, "a PNG and a figure");
 
     // The user's files, the network and other programs are out of reach.
-    let home = std::env::var("HOME").unwrap();
+    let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap();
+    let probe = std::path::Path::new(&home).join("cruncha-sandbox-probe.txt");
+    // A file of the user's beside the scratch directory.
+    let secret = scratch.path().join("secret.txt");
+    std::fs::write(&secret, "secret").unwrap();
+    // System files are readable to every Windows app by design, so there: the user's AppData.
+    let system = match std::env::var("APPDATA") {
+        Ok(d) if cfg!(windows) => format!("import os\nr = str(len(os.listdir({d:?})))"),
+        _ => "r = open('/etc/hosts').read()".to_string(),
+    };
+    // A local server outside the sandbox (as the app's MCP server is). A socket the worker
+    // opens itself isn't a hole: Windows' loopback isolation is between containers and the rest.
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = server.local_addr().unwrap().port();
     for (what, src) in [
         ("home", format!("import os\nr = str(len(os.listdir({home:?})))")),
-        ("file", "r = open('/etc/hosts').read()".to_string()),
-        ("write", format!("open({:?}, 'w').write('x'); r = 'wrote'", format!("{home}/cruncha-sandbox-probe.txt"))),
+        ("file", system),
+        ("secret", format!("r = open({:?}).read()", secret.display().to_string())),
+        ("write", format!("open({:?}, 'w').write('x'); r = 'wrote'", probe.display().to_string())),
         ("net", "import socket\ns = socket.create_connection(('1.1.1.1', 443), timeout=3)\nr = 'connected'".to_string()),
-        ("exec", "import subprocess\nr = subprocess.run(['/bin/echo', 'hi'], capture_output=True).stdout.decode()".to_string()),
+        ("loopback", format!("import socket\nc = socket.create_connection(('127.0.0.1', {port}), timeout=3)\nr = 'connected'")),
+        ("exec", "import subprocess, sys\nr = subprocess.run([sys.executable, '-c', 'print(1)'], capture_output=True).stdout.decode()".to_string()),
     ] {
         let r = k.run(&run(&src), None).await.unwrap();
         assert_eq!(r.status, Status::Error, "{what}: {:?}", r.defines);
     }
-    assert!(!std::path::Path::new(&format!("{home}/cruncha-sandbox-probe.txt")).exists());
+    assert!(!probe.exists());
+    drop(server);
     // Its scratch directory is writable.
     let r = k.run(&run("import tempfile\nwith tempfile.NamedTemporaryFile() as f:\n    f.write(b'ok')\nr = 'ok'"), None).await.unwrap();
     assert_eq!(r.status, Status::Done, "{:?}", r.error);
+}
+
+#[tokio::test]
+async fn a_worker_that_dies_at_start_says_why() {
+    let Some(py) = python() else { return };
+    let empty = tempfile::tempdir().unwrap();
+    let Err(Error::Start(why)) = Kernel::start(Config::new(py, empty.path())).await else {
+        panic!("a worker without its package can't start")
+    };
+    assert!(why.contains("No module named 'cruncha_worker'"), "{why}");
 }

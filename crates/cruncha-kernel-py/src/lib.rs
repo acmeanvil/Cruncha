@@ -65,7 +65,7 @@ pub struct Config {
     pub worker_dir: PathBuf,
     /// Grace period between an interrupt and a kill.
     pub kill_after: Duration,
-    /// Run the worker in this sandbox (macOS; see [`sandbox`]). `None`: unsandboxed.
+    /// Run the worker in this sandbox (macOS and Windows; see [`sandbox`]). `None`: unsandboxed.
     pub sandbox: Option<sandbox::Sandbox>,
     /// How a running cell is interrupted.
     pub interrupt: InterruptMode,
@@ -274,6 +274,9 @@ fn kill_pid(pid: u32) {
     }
 }
 
+/// A running worker. Drop it before the tokio runtime it started on: on Windows that runtime's
+/// blocking pool holds the worker's pending stderr read, so dropping the runtime first waits
+/// for a worker that only dropping the kernel would stop.
 pub struct Kernel {
     config: Config,
     child: Child,
@@ -287,19 +290,19 @@ impl Kernel {
     /// Start a worker and wait for its greeting.
     pub async fn start(config: Config) -> Result<Kernel> {
         let boot = "import sys; sys.path.insert(0, sys.argv[1]); from cruncha_worker.main import main; main()";
-        let mut cmd = match (&config.sandbox, sandbox::program()) {
-            (Some(sb), Some(exec)) => {
-                std::fs::create_dir_all(&sb.scratch)
-                    .map_err(|e| Error::Start(format!("{}: {e}", sb.scratch.display())))?;
-                let mut c = Command::new(exec);
-                c.arg("-p").arg(sb.profile()).arg(&config.python);
-                // Everything the worker writes goes to its scratch directory.
-                c.env("HOME", &sb.scratch).env("TMPDIR", &sb.scratch).env("MPLCONFIGDIR", sb.scratch.join("matplotlib"));
-                c.current_dir(&sb.scratch);
-                c
-            }
-            _ => Command::new(&config.python),
+        #[cfg(windows)]
+        if let Some(sb) = &config.sandbox {
+            let (sb, py) = (sb.clone(), config.python.clone());
+            tokio::task::spawn_blocking(move || sandbox::windows::prepare(&sb, &py))
+                .await
+                .map_err(|e| Error::Start(e.to_string()))?
+                .map_err(Error::Start)?;
+        }
+        let sandboxed = match &config.sandbox {
+            Some(sb) => sb.command(&config.python).map_err(Error::Start)?,
+            None => None,
         };
+        let mut cmd = sandboxed.unwrap_or_else(|| Command::new(&config.python));
         // -I: isolated (no PYTHON* variables, user site or current directory on the path);
         // -B: no bytecode written next to the worker's sources.
         cmd.args(["-I", "-B", "-c", boot])
@@ -309,12 +312,30 @@ impl Kernel {
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         env::no_window(&mut cmd);
         let mut child = cmd
             .spawn()
             .map_err(|e| Error::Start(format!("{}: {e}", config.python.display())))?;
+        // The worker's own stderr (a crash before the protocol starts, or the Windows
+        // launcher's reason): drained so it never blocks, its tail kept for start errors.
+        let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
+        if let Some(mut err) = child.stderr.take() {
+            let tail = stderr_tail.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = [0u8; 4096];
+                while let Ok(n @ 1..) = err.read(&mut buf).await {
+                    let mut t = tail.lock().unwrap();
+                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if t.len() > 4000 {
+                        let cut = t.ceil_char_boundary(t.len() - 2000);
+                        t.replace_range(..cut, "…");
+                    }
+                }
+            });
+        }
         let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let mut k = Kernel {
@@ -330,16 +351,25 @@ impl Kernel {
                 pid: 0,
             },
         };
-        let h = tokio::time::timeout(
-            Duration::from_secs(30),
-            k.request(json!({"op": "hello"}), vec![]),
-        )
-        .await
-        .map_err(|_| Error::Start("the worker didn't answer within 30 s".into()))?
-        .map_err(|e| Error::Start(e.to_string()))?
-        .0;
-        k.hello = serde_json::from_value(h).map_err(|e| Error::Start(e.to_string()))?;
-        Ok(k)
+        let answer = tokio::time::timeout(Duration::from_secs(30), k.request(json!({"op": "hello"}), vec![])).await;
+        let mut why = match answer {
+            Ok(Ok((h, _))) => {
+                k.hello = serde_json::from_value(h).map_err(|e| Error::Start(e.to_string()))?;
+                return Ok(k);
+            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "the worker didn't answer within 30 s".to_owned(),
+        };
+        // Let a crashing worker finish exiting and its stderr arrive.
+        if let Ok(Ok(status)) = tokio::time::timeout(Duration::from_secs(2), k.child.wait()).await {
+            why.push_str(&format!(" ({status})"));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let tail = stderr_tail.lock().unwrap().trim().to_owned();
+        if !tail.is_empty() {
+            why.push_str(&format!(": {tail}"));
+        }
+        Err(Error::Start(why))
     }
 
     pub fn hello(&self) -> &Hello {

@@ -39,9 +39,69 @@ mod bindings {
 }
 use bindings::Cell as CellWorld;
 
-/// The guest prelude crate, built as a path dependency of each cell.
-pub fn prelude_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("guest/cruncha-prelude")
+/// The guest crates' sources, built into the binary so an installed app needs no source tree:
+/// the prelude and the `cruncha-units` it uses (paths relative to the guest directory).
+const GUEST: &[(&str, &str)] = &[
+    ("cruncha-prelude/Cargo.toml", include_str!("../guest/cruncha-prelude/Cargo.toml")),
+    ("cruncha-prelude/src/lib.rs", include_str!("../guest/cruncha-prelude/src/lib.rs")),
+    ("wit/cell.wit", include_str!("../wit/cell.wit")),
+    ("cruncha-units/Cargo.toml", include_str!("../../cruncha-units/Cargo.toml")),
+    ("cruncha-units/LICENSE-HURMET", include_str!("../../cruncha-units/LICENSE-HURMET")),
+    ("cruncha-units/src/lib.rs", include_str!("../../cruncha-units/src/lib.rs")),
+    ("cruncha-units/src/catalog.rs", include_str!("../../cruncha-units/src/catalog.rs")),
+    ("cruncha-units/src/jsmath.rs", include_str!("../../cruncha-units/src/jsmath.rs")),
+    ("cruncha-units/src/jsnum.rs", include_str!("../../cruncha-units/src/jsnum.rs")),
+    ("cruncha-units/src/rational.rs", include_str!("../../cruncha-units/src/rational.rs")),
+    ("cruncha-units/src/table.rs", include_str!("../../cruncha-units/src/table.rs")),
+    ("cruncha-units/src/units.rs", include_str!("../../cruncha-units/src/units.rs")),
+];
+
+/// A guest file as written out: the prelude finds `cruncha-units` and the cell world beside it, and
+/// `cruncha-units` states what it otherwise inherits from this repository's workspace.
+fn guest_text(path: &str, text: &'static str) -> std::borrow::Cow<'static, str> {
+    match path {
+        "cruncha-prelude/Cargo.toml" => text.replace("path = \"../../../cruncha-units\"", "path = \"../cruncha-units\"").into(),
+        "cruncha-units/Cargo.toml" => text
+            .replace("version.workspace = true", concat!("version = \"", env!("CARGO_PKG_VERSION"), "\""))
+            .replace("edition.workspace = true", "edition = \"2024\"")
+            .replace("license.workspace = true", concat!("license = \"", env!("CARGO_PKG_LICENSE"), "\""))
+            .into(),
+        "cruncha-prelude/src/lib.rs" => text.replace("path: \"../../wit\"", "path: \"../wit\"").into(),
+        _ => text.into(),
+    }
+}
+
+/// The prelude crate each cell depends on, written under `work` (`<work>/guest-<hash>/`, named
+/// by its contents, so a new app version writes a new one) the first time it's needed.
+pub fn prelude_dir(work: &Path) -> std::io::Result<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for (path, text) in GUEST {
+        let t = guest_text(path, text);
+        h.update((path.len() as u64).to_le_bytes());
+        h.update(path);
+        h.update((t.len() as u64).to_le_bytes());
+        h.update(t.as_bytes());
+    }
+    let hash: String = h.finalize()[..6].iter().map(|b| format!("{b:02x}")).collect();
+    let dir = work.join(format!("guest-{hash}"));
+    if !dir.join("cruncha-prelude/Cargo.toml").is_file() {
+        // Written aside and renamed into place, so a half-written copy is never used.
+        let tmp = work.join(format!(".guest-{hash}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        for (path, text) in GUEST {
+            let f = tmp.join(path);
+            std::fs::create_dir_all(f.parent().expect("a guest file is in a directory"))?;
+            std::fs::write(&f, guest_text(path, text).as_bytes())?;
+        }
+        if std::fs::rename(&tmp, &dir).is_err() {
+            let _ = std::fs::remove_dir_all(&tmp);
+            if !dir.join("cruncha-prelude/Cargo.toml").is_file() {
+                return Err(std::io::Error::other(format!("couldn't write {}", dir.display())));
+            }
+        }
+    }
+    Ok(dir.join("cruncha-prelude"))
 }
 
 /// Cruncha's Rust toolchain: a rustup home with `wasm32-wasip2`.
@@ -117,15 +177,17 @@ fn cell_crate_name(dir: &Path) -> Result<String> {
     Ok(name.replace('-', "_"))
 }
 
-/// Write a cell crate: `source` is the body of `lib.rs` after the prelude import.
+/// Write a cell crate: `source` is the body of `lib.rs` after the prelude import. The prelude
+/// goes beside it, in `dir`'s parent.
 pub fn write_cell(dir: &Path, name: &str, source: &str) -> Result<()> {
     std::fs::create_dir_all(dir.join("src"))?;
+    let prelude = prelude_dir(dir.parent().unwrap_or(dir))?;
     std::fs::write(
         dir.join("Cargo.toml"),
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n\
              [dependencies]\ncruncha-prelude = {{ path = {:?} }}\n\n[profile.release]\nopt-level = 2\ndebug = false\n\n[workspace]\n",
-            prelude_dir().display().to_string()
+            prelude.display().to_string()
         ),
     )?;
     std::fs::write(dir.join("src/lib.rs"), format!("use cruncha_prelude::*;\n\n{source}\n"))?;
@@ -244,5 +306,57 @@ impl Cell {
 
     pub fn sum(&mut self, xs: &[f64]) -> Result<f64> {
         self.bindings.call_sum(&mut self.store, xs)
+    }
+}
+
+#[cfg(test)]
+mod guest_tests {
+    use super::*;
+
+    fn files(root: &Path, under: &Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(under).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n != "target") {
+                    files(root, &p, out);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs" || x == "toml" || x == "wit") || p.ends_with("LICENSE-HURMET") {
+                out.push(p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+
+    #[test]
+    fn every_guest_source_is_embedded() {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let mut on_disk = Vec::new();
+        let prelude = Path::new(env!("CARGO_MANIFEST_DIR")).join("guest");
+        files(&prelude, &prelude.join("cruncha-prelude"), &mut on_disk);
+        let units = crates.join("cruncha-units");
+        files(crates, &units.join("src"), &mut on_disk);
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        files(here, &here.join("wit"), &mut on_disk);
+        on_disk.push("cruncha-units/Cargo.toml".into());
+        on_disk.push("cruncha-units/LICENSE-HURMET".into());
+        on_disk.sort();
+        let mut embedded: Vec<String> = GUEST.iter().map(|(p, _)| p.to_string()).collect();
+        embedded.sort();
+        assert_eq!(embedded, on_disk, "list new guest files in GUEST");
+    }
+
+    #[test]
+    fn the_written_prelude_stands_alone() {
+        let work = tempfile::tempdir().unwrap();
+        let p = prelude_dir(work.path()).unwrap();
+        assert_eq!(prelude_dir(work.path()).unwrap(), p, "written once, then reused");
+        let prelude = std::fs::read_to_string(p.join("Cargo.toml")).unwrap();
+        assert!(prelude.contains("cruncha-units = { path = \"../cruncha-units\" }"), "{prelude}");
+        let lib = std::fs::read_to_string(p.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("path: \"../wit\"") && p.parent().unwrap().join("wit/cell.wit").is_file());
+        let units = std::fs::read_to_string(p.parent().unwrap().join("cruncha-units/Cargo.toml")).unwrap();
+        assert!(!units.contains(".workspace"), "{units}");
+        assert!(units.contains("edition = \"2024\"") && units.contains("license = \"GPL-3.0-or-later\""), "{units}");
+        // Nothing left over from writing it.
+        assert_eq!(std::fs::read_dir(work.path()).unwrap().count(), 1);
     }
 }

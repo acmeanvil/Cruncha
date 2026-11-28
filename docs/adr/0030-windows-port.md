@@ -120,7 +120,7 @@ Rejected.
 
 1. [x] Interrupt by message and kill by `TerminateProcess`; tested on every platform.
 2. [x] No Python cell runs on Windows until item 3; scanning and renaming still work.
-3. [ ] The AppContainer + Job Object sandbox, with the sandbox test on Windows CI.
+3. [x] The AppContainer + Job Object sandbox, with the sandbox test on Windows CI. Delivered by `sandbox/windows.rs` (the app launches it as `cruncha-app --py-sandbox`, tests through the `cruncha-sandbox` binary); `the_sandboxed_worker_computes_but_reaches_nothing` passes on Windows CI, and Python cells now run there. Notes: the worker's stdin is an empty pipe because an AppContainer can't open NUL, and the loopback probe dials a server outside the container, since Windows allows a container to reach its own sockets.
 4. [x] Portable paths, console-less child processes, a File menu outside macOS, shortcut labels per platform, LF checkouts.
 5. [ ] Packaging: WebView2 bootstrapper, standalone uv download, signing, a release workflow.
 6. [ ] The agent connection file (`server.json`) gets an explicit owner-only ACL on Windows (Unix: 0600).

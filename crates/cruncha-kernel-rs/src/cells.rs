@@ -166,7 +166,8 @@ impl Cells {
             unsafe { self.runtime.load_precompiled(&bytes) }.map_err(|e| internal(e.to_string()))?
         } else {
             let name = format!("cell_{hash}");
-            write_crate(&dir, &name, code).map_err(|e| internal(e.to_string()))?;
+            let prelude = prelude_dir(&self.work).map_err(|e| internal(format!("the Rust prelude: {e}")))?;
+            write_crate(&dir, &name, code, &prelude).map_err(|e| internal(e.to_string()))?;
             let wasm = build(&self.toolchain, &dir, &self.work.join("target"), &name, start).await?;
             let bytes = self.runtime.precompile(&wasm).map_err(|e| internal(e.to_string()))?;
             let _ = std::fs::write(&cached, &bytes);
@@ -258,14 +259,14 @@ fn internal(message: String) -> CellError {
     CellError { kind: "internal".into(), message, line: None, detail: String::new() }
 }
 
-fn write_crate(dir: &Path, name: &str, code: &str) -> std::io::Result<()> {
+fn write_crate(dir: &Path, name: &str, code: &str, prelude: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir.join("src"))?;
     std::fs::write(
         dir.join("Cargo.toml"),
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n\
              [dependencies]\ncruncha-prelude = {{ path = {:?} }}\n\n[profile.release]\nopt-level = 2\ndebug = false\n\n[workspace]\n",
-            prelude_dir().display().to_string()
+            prelude.display().to_string()
         ),
     )?;
     std::fs::write(dir.join("src/lib.rs"), code)
