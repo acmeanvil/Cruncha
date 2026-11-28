@@ -274,6 +274,9 @@ fn kill_pid(pid: u32) {
     }
 }
 
+/// A running worker. Drop it before the tokio runtime it started on: on Windows that runtime's
+/// blocking pool holds the worker's pending stderr read, so dropping the runtime first waits
+/// for a worker that only dropping the kernel would stop.
 pub struct Kernel {
     config: Config,
     child: Child,

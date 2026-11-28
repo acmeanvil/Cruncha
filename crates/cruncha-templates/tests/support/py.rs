@@ -15,8 +15,10 @@ use cruncha_templates::{CodeOutcome, CodeRunner};
 const LOCK: &str = include_str!("../../../../python/requirements.lock");
 
 pub struct PyRunner {
-    rt: tokio::runtime::Runtime,
+    // Fields drop in order: the kernel (killing the worker) before the runtime. On Windows the
+    // runtime's drop waits for the kernel's pending stderr read, which ends only when the worker does.
     kernel: Kernel,
+    rt: tokio::runtime::Runtime,
     cells: usize,
 }
 
@@ -33,7 +35,7 @@ impl PyRunner {
         let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python");
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().ok()?;
         let kernel = rt.block_on(Kernel::start(Config::new(py, worker))).ok()?;
-        Some(PyRunner { rt, kernel, cells: 0 })
+        Some(PyRunner { kernel, rt, cells: 0 })
     }
 }
 

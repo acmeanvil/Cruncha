@@ -39,10 +39,13 @@ def _channels():
     so prints from C extensions can't corrupt the channel."""
     inp = os.fdopen(os.dup(0), "rb", buffering=0)
     out = os.fdopen(os.dup(1), "wb")
-    devnull = os.open(os.devnull, os.O_RDONLY)
-    os.dup2(devnull, 0)
+    # An empty pipe rather than os.devnull: Windows' AppContainer can't open NUL.
+    r, w = os.pipe()
+    os.close(w)
+    os.dup2(r, 0)
+    os.close(r)
     os.dup2(2, 1)
-    sys.stdin = open(os.devnull)
+    sys.stdin = open(0, closefd=False)
     return inp, out
 
 
