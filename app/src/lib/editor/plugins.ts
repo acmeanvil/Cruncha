@@ -62,6 +62,14 @@ export function currentBlock(state: EditorState): { index: number; pos: number; 
   if (sel instanceof NodeSelection && sel.$from.depth === 0) {
     return { index: sel.$from.index(0), pos: sel.from, node: sel.node };
   }
+  if (sel.$from.depth === 0) {
+    // A gap cursor between blocks or after the last one (after atom cells such as calcs): the
+    // block before it, so what goes "after the current block" lands at the cursor.
+    const index = Math.max(0, Math.min(sel.$from.index(0), state.doc.childCount) - 1);
+    let pos = 0;
+    for (let i = 0; i < index; i++) pos += state.doc.child(i).nodeSize;
+    return { index, pos, node: state.doc.child(index) };
+  }
   const index = sel.$from.index(0);
   const pos = sel.$from.before(1);
   return { index, pos, node: state.doc.child(index) };
