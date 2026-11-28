@@ -301,3 +301,13 @@ async fn the_sandboxed_worker_computes_but_reaches_nothing() {
     let r = k.run(&run("import tempfile\nwith tempfile.NamedTemporaryFile() as f:\n    f.write(b'ok')\nr = 'ok'"), None).await.unwrap();
     assert_eq!(r.status, Status::Done, "{:?}", r.error);
 }
+
+#[tokio::test]
+async fn a_worker_that_dies_at_start_says_why() {
+    let Some(py) = python() else { return };
+    let empty = tempfile::tempdir().unwrap();
+    let Err(Error::Start(why)) = Kernel::start(Config::new(py, empty.path())).await else {
+        panic!("a worker without its package can't start")
+    };
+    assert!(why.contains("No module named 'cruncha_worker'"), "{why}");
+}

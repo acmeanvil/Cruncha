@@ -309,12 +309,30 @@ impl Kernel {
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         env::no_window(&mut cmd);
         let mut child = cmd
             .spawn()
             .map_err(|e| Error::Start(format!("{}: {e}", config.python.display())))?;
+        // The worker's own stderr (a crash before the protocol starts, or the Windows
+        // launcher's reason): drained so it never blocks, its tail kept for start errors.
+        let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
+        if let Some(mut err) = child.stderr.take() {
+            let tail = stderr_tail.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = [0u8; 4096];
+                while let Ok(n @ 1..) = err.read(&mut buf).await {
+                    let mut t = tail.lock().unwrap();
+                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if t.len() > 4000 {
+                        let cut = t.ceil_char_boundary(t.len() - 2000);
+                        t.replace_range(..cut, "…");
+                    }
+                }
+            });
+        }
         let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let mut k = Kernel {
@@ -330,16 +348,25 @@ impl Kernel {
                 pid: 0,
             },
         };
-        let h = tokio::time::timeout(
-            Duration::from_secs(30),
-            k.request(json!({"op": "hello"}), vec![]),
-        )
-        .await
-        .map_err(|_| Error::Start("the worker didn't answer within 30 s".into()))?
-        .map_err(|e| Error::Start(e.to_string()))?
-        .0;
-        k.hello = serde_json::from_value(h).map_err(|e| Error::Start(e.to_string()))?;
-        Ok(k)
+        let answer = tokio::time::timeout(Duration::from_secs(30), k.request(json!({"op": "hello"}), vec![])).await;
+        let mut why = match answer {
+            Ok(Ok((h, _))) => {
+                k.hello = serde_json::from_value(h).map_err(|e| Error::Start(e.to_string()))?;
+                return Ok(k);
+            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "the worker didn't answer within 30 s".to_owned(),
+        };
+        // Let a crashing worker finish exiting and its stderr arrive.
+        if let Ok(Ok(status)) = tokio::time::timeout(Duration::from_secs(2), k.child.wait()).await {
+            why.push_str(&format!(" ({status})"));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let tail = stderr_tail.lock().unwrap().trim().to_owned();
+        if !tail.is_empty() {
+            why.push_str(&format!(": {tail}"));
+        }
+        Err(Error::Start(why))
     }
 
     pub fn hello(&self) -> &Hello {
