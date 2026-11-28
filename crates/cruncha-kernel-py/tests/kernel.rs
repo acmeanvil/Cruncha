@@ -284,19 +284,24 @@ async fn the_sandboxed_worker_computes_but_reaches_nothing() {
         Ok(d) if cfg!(windows) => format!("import os\nr = str(len(os.listdir({d:?})))"),
         _ => "r = open('/etc/hosts').read()".to_string(),
     };
+    // A local server outside the sandbox (as the app's MCP server is). A socket the worker
+    // opens itself isn't a hole: Windows' loopback isolation is between containers and the rest.
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = server.local_addr().unwrap().port();
     for (what, src) in [
         ("home", format!("import os\nr = str(len(os.listdir({home:?})))")),
         ("file", system),
         ("secret", format!("r = open({:?}).read()", secret.display().to_string())),
         ("write", format!("open({:?}, 'w').write('x'); r = 'wrote'", probe.display().to_string())),
         ("net", "import socket\ns = socket.create_connection(('1.1.1.1', 443), timeout=3)\nr = 'connected'".to_string()),
-        ("loopback", "import socket\ns = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen()\nc = socket.create_connection(s.getsockname(), timeout=3)\nr = 'connected'".to_string()),
+        ("loopback", format!("import socket\nc = socket.create_connection(('127.0.0.1', {port}), timeout=3)\nr = 'connected'")),
         ("exec", "import subprocess, sys\nr = subprocess.run([sys.executable, '-c', 'print(1)'], capture_output=True).stdout.decode()".to_string()),
     ] {
         let r = k.run(&run(&src), None).await.unwrap();
         assert_eq!(r.status, Status::Error, "{what}: {:?}", r.defines);
     }
     assert!(!probe.exists());
+    drop(server);
     // Its scratch directory is writable.
     let r = k.run(&run("import tempfile\nwith tempfile.NamedTemporaryFile() as f:\n    f.write(b'ok')\nr = 'ok'"), None).await.unwrap();
     assert_eq!(r.status, Status::Done, "{:?}", r.error);
