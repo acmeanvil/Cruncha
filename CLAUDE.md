@@ -50,7 +50,7 @@ python/                    the worker (stdlib-only protocol; numeric packages on
   requirements.in/.lock    the packages Python cells get (lock compiled by uv with hashes; a new lock means a new environment)
   tests/test_worker.py     unittest; tools/scan_check.py (scan vs bytecode, S4)
 crates/cruncha-kernel-rs/  Rust cells (ADR-0006): scan.rs (syn: top-level lets define, free names read), rename.rs (proc_macro2 token renames), cells.rs (generated crate per source + input types, cached builds, cell-line errors), env.rs (setup: rustup-init, checksum, warm build),
-                           wit/cell.wit (the cell world), guest/cruncha-prelude (Quantity on cruncha-units, Plain in/out; built only for wasm32-wasip2; not a workspace member),
+                           wit/cell.wit (the cell world), guest/cruncha-prelude (Quantity on cruncha-units, Plain in/out; built only for wasm32-wasip2; not a workspace member; embedded with cruncha-units' sources and wit/ in the binary (`GUEST`) and written to `<work>/guest-<hash>/` by `prelude_dir`, so an installed app needs no source tree),
                            src/lib.rs (Toolchain: Cruncha's rustup home; build with a shared target dir; Runtime/Cell: wasmtime, empty WASI context, epoch timeouts),
                            examples/rs_bench.rs (S5), tests/cell.rs (sandbox and timeout; skips without the toolchain)
 crates/cruncha-report/     reports (spike S6, ADR-0015): model.rs (Report, blocks, statuses), world.rs (in-memory Typst World: no files, network or packages),
